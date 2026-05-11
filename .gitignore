@@ -1,0 +1,38 @@
+# Binaries
+atmapi
+atmapi.exe
+
+# Dependencies
+vendor/
+node_modules/
+
+# Build
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config
+config.yaml
+config.local.yaml
+
+# Data
+data/
+*.db
+*.sqlite
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.env.local
