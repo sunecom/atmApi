@@ -16,6 +16,10 @@ import (
 
 // RegisterRoutes 注册所有路由
 func RegisterRoutes(r *gin.Engine) {
+	// 静态页面
+	r.Static("/static", "./web/static")
+	r.GET("/", indexPage)
+
 	// 健康检查
 	r.GET("/health", healthCheck)
 
@@ -42,6 +46,11 @@ func RegisterRoutes(r *gin.Engine) {
 		v1.POST("/chat/completions", chatCompletions)
 		v1.GET("/models", listModels)
 	}
+}
+
+// 首页
+func indexPage(c *gin.Context) {
+	c.File("./web/static/index.html")
 }
 
 // 健康检查
