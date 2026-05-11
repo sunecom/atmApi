@@ -212,11 +212,11 @@
             <h3>说明</h3>
             <div class="muted">
               这里是最小可用后台，不追求前端炫技，先追求业务闭环：<br/><br/>
-              1. 渠道可创建<br/>
-              2. Token 可创建<br/>
+              1. 渠道可创建 / 编辑 / 删除<br/>
+              2. Token 可创建 / 编辑 / 删除<br/>
               3. 模型可测试<br/>
               4. fallback 可验证<br/><br/>
-              下一阶段再做：编辑、删除、登录态、权限、统计图表。
+              下一阶段：登录页、权限控制、统计图表。
             </div>
           </div>
         </div>
@@ -265,14 +265,44 @@
           <td>${ch.weight}</td>
           <td><code>${ch.base_url || ''}</code></td>
           <td>${ch.models || ''}</td>
+          <td>
+            <button class="secondary" style="padding:4px 8px;font-size:12px" onclick="editChannel(${ch.id})">编辑</button>
+            <button class="danger" style="padding:4px 8px;font-size:12px" onclick="deleteChannel(${ch.id})">删除</button>
+          </td>
         </tr>
       `).join('');
       document.getElementById('channelsTableWrap').innerHTML = `
         <table>
-          <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>优先级</th><th>权重</th><th>Base URL</th><th>模型</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="7">暂无数据</td></tr>'}</tbody>
+          <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>优先级</th><th>权重</th><th>Base URL</th><th>模型</th><th>操作</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="8">暂无数据</td></tr>'}</tbody>
         </table>
       `;
+    }
+
+    async function editChannel(id) {
+      const res = await fetch('/api/v1/channels');
+      const data = await safeJson(res);
+      const ch = (data.data || []).find(c => c.id === id);
+      if (!ch) return alert('渠道不存在');
+      document.getElementById('ch_name').value = ch.name;
+      document.getElementById('ch_type').value = ch.type;
+      document.getElementById('ch_key').value = ch.key;
+      document.getElementById('ch_base_url').value = ch.base_url;
+      document.getElementById('ch_models').value = ch.models;
+      document.getElementById('ch_mapping').value = ch.model_mapping || '';
+      document.getElementById('ch_priority').value = ch.priority;
+      document.getElementById('ch_weight').value = ch.weight;
+      // 保存编辑 ID 用于更新
+      window._editingChannelId = id;
+      showTab('channels', document.querySelectorAll('.nav button')[1]);
+    }
+
+    async function deleteChannel(id) {
+      if (!confirm('确定删除该渠道？')) return;
+      const res = await fetch('/api/v1/channels/' + id, { method: 'DELETE' });
+      const data = await safeJson(res);
+      setText('channelCreateOut', data);
+      loadChannels();
     }
 
     async function createChannel() {
@@ -287,13 +317,22 @@
         priority: Number(document.getElementById('ch_priority').value || 0),
         weight: Number(document.getElementById('ch_weight').value || 0),
       };
-      const res = await fetch('/api/v1/channels', {
-        method: 'POST',
+      const isEdit = !!window._editingChannelId;
+      const url = isEdit ? '/api/v1/channels/' + window._editingChannelId : '/api/v1/channels';
+      const method = isEdit ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await safeJson(res);
       setText('channelCreateOut', data);
+      window._editingChannelId = null;
+      document.getElementById('ch_name').value = '';
+      document.getElementById('ch_key').value = '';
+      document.getElementById('ch_base_url').value = '';
+      document.getElementById('ch_models').value = '';
+      document.getElementById('ch_mapping').value = '';
       loadChannels();
     }
 
@@ -308,14 +347,40 @@
           <td>${tk.user_id}</td>
           <td>${tk.unlimited_quota ? '无限' : tk.remain_quota}</td>
           <td>${tk.expired_time}</td>
+          <td>
+            <button class="secondary" style="padding:4px 8px;font-size:12px" onclick="editToken(${tk.id})">编辑</button>
+            <button class="danger" style="padding:4px 8px;font-size:12px" onclick="deleteToken(${tk.id})">删除</button>
+          </td>
         </tr>
       `).join('');
       document.getElementById('tokensTableWrap').innerHTML = `
         <table>
-          <thead><tr><th>ID</th><th>名称</th><th>Key</th><th>User</th><th>配额</th><th>过期</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="6">暂无数据</td></tr>'}</tbody>
+          <thead><tr><th>ID</th><th>名称</th><th>Key</th><th>User</th><th>配额</th><th>过期</th><th>操作</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="7">暂无数据</td></tr>'}</tbody>
         </table>
       `;
+    }
+
+    async function editToken(id) {
+      const res = await fetch('/api/v1/tokens');
+      const data = await safeJson(res);
+      const tk = (data.data || []).find(t => t.id === id);
+      if (!tk) return alert('Token 不存在');
+      document.getElementById('tk_user_id').value = tk.user_id;
+      document.getElementById('tk_name').value = tk.name;
+      document.getElementById('tk_remain_quota').value = tk.remain_quota;
+      document.getElementById('tk_expired_time').value = tk.expired_time;
+      document.getElementById('tk_unlimited').checked = tk.unlimited_quota;
+      window._editingTokenId = id;
+      showTab('tokens', document.querySelectorAll('.nav button')[2]);
+    }
+
+    async function deleteToken(id) {
+      if (!confirm('确定删除该 Token？')) return;
+      const res = await fetch('/api/v1/tokens/' + id, { method: 'DELETE' });
+      const data = await safeJson(res);
+      setText('tokenCreateOut', data);
+      loadTokens();
     }
 
     async function createToken() {
@@ -326,16 +391,21 @@
         unlimited_quota: document.getElementById('tk_unlimited').checked,
         expired_time: Number(document.getElementById('tk_expired_time').value || 0),
       };
-      const res = await fetch('/api/v1/tokens', {
-        method: 'POST',
+      const isEdit = !!window._editingTokenId;
+      const url = isEdit ? '/api/v1/tokens/' + window._editingTokenId : '/api/v1/tokens';
+      const method = isEdit ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await safeJson(res);
       setText('tokenCreateOut', data);
-      if (data.token && data.token.key) {
+      if (!isEdit && data.token && data.token.key) {
         document.getElementById('test_token').value = data.token.key;
       }
+      window._editingTokenId = null;
+      document.getElementById('tk_name').value = '';
       loadTokens();
     }
 
