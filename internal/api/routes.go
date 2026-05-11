@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"atmapi/internal/middleware"
 	"atmapi/internal/model"
 	"atmapi/internal/service"
 
@@ -26,25 +27,32 @@ func RegisterRoutes(r *gin.Engine) {
 	// API v1 路由组
 	v1 := r.Group("/api/v1")
 	{
-		// 认证
+		// 认证（无需登录）
 		v1.POST("/login", login)
 		v1.POST("/register", register)
 
-		// Token 管理
-		v1.GET("/tokens", getTokens)
-		v1.POST("/tokens", createToken)
-		v1.PUT("/tokens/:id", updateToken)
-		v1.DELETE("/tokens/:id", deleteToken)
-
-		// 渠道管理
-		v1.GET("/channels", getChannels)
-		v1.POST("/channels", createChannel)
-		v1.PUT("/channels/:id", updateChannel)
-		v1.DELETE("/channels/:id", deleteChannel)
-
-		// 模型路由（核心功能）
-		v1.POST("/chat/completions", chatCompletions)
+		// 公开接口
 		v1.GET("/models", listModels)
+
+		// 需要认证的管理接口
+		managed := v1.Group("")
+		managed.Use(middleware.AuthRequired())
+		{
+			// Token 管理
+			managed.GET("/tokens", getTokens)
+			managed.POST("/tokens", createToken)
+			managed.PUT("/tokens/:id", updateToken)
+			managed.DELETE("/tokens/:id", deleteToken)
+
+			// 渠道管理
+			managed.GET("/channels", getChannels)
+			managed.POST("/channels", createChannel)
+			managed.PUT("/channels/:id", updateChannel)
+			managed.DELETE("/channels/:id", deleteChannel)
+
+			// 模型路由
+			managed.POST("/chat/completions", chatCompletions)
+		}
 	}
 }
 
@@ -81,8 +89,16 @@ func login(c *gin.Context) {
 		return
 	}
 
+	// 生成 JWT
+	token, err := middleware.GenerateToken(user.ID, user.Username, user.Role)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 token 失败"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":      "登录成功",
+		"token":        token,
 		"user_id":      user.ID,
 		"username":     user.Username,
 		"display_name": user.DisplayName,

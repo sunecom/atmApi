@@ -81,6 +81,23 @@
     .off { background:#3b1720; color:#fca5a5; }
     .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; background:rgba(59,130,246,.15); color:#93c5fd; border:1px solid rgba(59,130,246,.25); }
     .hidden { display:none; }
+    .login-overlay {
+      position:fixed; inset:0; background:#0b1020; display:flex;
+      align-items:center; justify-content:center; z-index:999;
+    }
+    .login-box {
+      background:#11182d; border:1px solid #2c3a63; border-radius:20px;
+      padding:40px; width:380px; text-align:center;
+    }
+    .login-box h2 { margin:0 0 20px; font-size:24px; }
+    .login-box input { margin-bottom:12px; }
+    .login-box button { width:100%; margin-top:8px; }
+    .user-bar {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:8px 0; border-bottom:1px solid #1f2a44; margin-bottom:12px;
+    }
+    .user-bar .user-info { font-size:13px; color:#9fb0d1; }
+    .user-bar button { padding:6px 10px; font-size:12px; background:#dc2626; }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
       .sidebar { position: relative; height: auto; }
@@ -89,10 +106,27 @@
   </style>
 </head>
 <body>
+  <!-- 登录遮罩 -->
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-box">
+      <span class="pill">ATM API</span>
+      <h2>管理员登录</h2>
+      <input id="loginUser" placeholder="用户名" />
+      <input id="loginPass" type="password" placeholder="密码" />
+      <button onclick="doLogin()">登录</button>
+      <div id="loginErr" class="muted" style="margin-top:12px;color:#fca5a5"></div>
+      <div class="muted" style="margin-top:16px">默认账号：admin / admin123</div>
+    </div>
+  </div>
+
   <div class="layout">
     <aside class="sidebar">
       <div class="brand">atmApi</div>
       <div class="desc">国产替代 Plus 的最小后台。先跑通，再做厚。</div>
+      <div id="userBar" class="user-bar hidden">
+        <span id="userInfo" class="user-info"></span>
+        <button onclick="doLogout()">退出</button>
+      </div>
       <div class="nav">
         <button class="active" onclick="showTab('dashboard', this)">总览面板</button>
         <button onclick="showTab('channels', this)">渠道管理</button>
@@ -225,6 +259,64 @@
   </div>
 
   <script>
+    // ===== 认证管理 =====
+    function getToken() { return localStorage.getItem('atmapi_token') || ''; }
+    function setToken(t) { localStorage.setItem('atmapi_token', t); }
+    function clearToken() { localStorage.removeItem('atmapi_token'); }
+    function authHeaders() {
+      const t = getToken();
+      return t ? { 'Authorization': 'Bearer ' + t } : {};
+    }
+
+    async function doLogin() {
+      const username = document.getElementById('loginUser').value.trim();
+      const password = document.getElementById('loginPass').value;
+      const errEl = document.getElementById('loginErr');
+      errEl.textContent = '';
+      const res = await fetch('/api/v1/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await safeJson(res);
+      if (res.ok && data.token) {
+        setToken(data.token);
+        showApp(data);
+      } else {
+        errEl.textContent = data.error || '登录失败';
+      }
+    }
+
+    function doLogout() {
+      clearToken();
+      document.getElementById('loginOverlay').classList.remove('hidden');
+      document.getElementById('userBar').classList.add('hidden');
+    }
+
+    function showApp(userData) {
+      document.getElementById('loginOverlay').classList.add('hidden');
+      document.getElementById('userBar').classList.remove('hidden');
+      const name = (userData && userData.display_name) || (userData && userData.username) || '管理员';
+      const role = (userData && userData.role) === 100 ? '管理员' : '用户';
+      document.getElementById('userInfo').textContent = name + ' \u00b7 ' + role;
+    }
+
+    // 页面加载时检查 token
+    (function checkAuth() {
+      const t = getToken();
+      if (t) {
+        fetch('/api/v1/channels', { headers: authHeaders() }).then(async r => {
+          if (r.ok) {
+            document.getElementById('loginOverlay').classList.add('hidden');
+            document.getElementById('userBar').classList.remove('hidden');
+            document.getElementById('userInfo').textContent = '\u5df2\u767b\u5f55';
+          } else {
+            clearToken();
+          }
+        }).catch(() => clearToken());
+      }
+    })();
+
     function showTab(name, btn) {
       document.querySelectorAll('.tab').forEach(el => el.classList.add('hidden'));
       document.getElementById('tab-' + name).classList.remove('hidden');
@@ -254,7 +346,8 @@
     }
 
     async function loadChannels() {
-      const res = await fetch('/api/v1/channels');
+      const res = await fetch('/api/v1/channels', { headers: authHeaders() });
+      if (res.status === 401) return setText('channelsTableWrap', '请先登录');
       const data = await safeJson(res);
       const rows = (data.data || []).map(ch => `
         <tr>
@@ -280,7 +373,7 @@
     }
 
     async function editChannel(id) {
-      const res = await fetch('/api/v1/channels');
+      const res = await fetch('/api/v1/channels', { headers: authHeaders() });
       const data = await safeJson(res);
       const ch = (data.data || []).find(c => c.id === id);
       if (!ch) return alert('渠道不存在');
@@ -299,7 +392,10 @@
 
     async function deleteChannel(id) {
       if (!confirm('确定删除该渠道？')) return;
-      const res = await fetch('/api/v1/channels/' + id, { method: 'DELETE' });
+      const res = await fetch('/api/v1/channels/' + id, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
       const data = await safeJson(res);
       setText('channelCreateOut', data);
       loadChannels();
@@ -322,7 +418,7 @@
       const method = isEdit ? 'PUT' : 'POST';
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(payload),
       });
       const data = await safeJson(res);
@@ -337,7 +433,8 @@
     }
 
     async function loadTokens() {
-      const res = await fetch('/api/v1/tokens');
+      const res = await fetch('/api/v1/tokens', { headers: authHeaders() });
+      if (res.status === 401) return setText('tokensTableWrap', '请先登录');
       const data = await safeJson(res);
       const rows = (data.data || []).map(tk => `
         <tr>
@@ -362,7 +459,7 @@
     }
 
     async function editToken(id) {
-      const res = await fetch('/api/v1/tokens');
+      const res = await fetch('/api/v1/tokens', { headers: authHeaders() });
       const data = await safeJson(res);
       const tk = (data.data || []).find(t => t.id === id);
       if (!tk) return alert('Token 不存在');
@@ -377,7 +474,10 @@
 
     async function deleteToken(id) {
       if (!confirm('确定删除该 Token？')) return;
-      const res = await fetch('/api/v1/tokens/' + id, { method: 'DELETE' });
+      const res = await fetch('/api/v1/tokens/' + id, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
       const data = await safeJson(res);
       setText('tokenCreateOut', data);
       loadTokens();
@@ -396,7 +496,7 @@
       const method = isEdit ? 'PUT' : 'POST';
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(payload),
       });
       const data = await safeJson(res);
