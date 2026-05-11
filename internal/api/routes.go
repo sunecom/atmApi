@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -295,7 +296,8 @@ func chatCompletions(c *gin.Context) {
 	defer resp.Body.Close()
 
 	// 返回上游响应
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	respBody, _ := io.ReadAll(resp.Body)
+	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 }
 
 // 列出可用模型

@@ -27,10 +27,12 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*htt
 	}
 
 	// 3. 获取支持该模型的渠道列表（按优先级排序）
+	log.Printf("[路由] 查找模型: %s", targetModel)
 	channels, err := getChannelsForModel(targetModel)
 	if err != nil {
 		return nil, fmt.Errorf("获取渠道失败：%w", err)
 	}
+	log.Printf("[路由] 找到 %d 个渠道", len(channels))
 
 	if len(channels) == 0 {
 		return nil, fmt.Errorf("没有可用渠道")
@@ -39,8 +41,10 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*htt
 	// 4. 尝试每个渠道（自动 fallback）
 	var lastErr error
 	for _, channel := range channels {
+		log.Printf("[路由] 尝试渠道: %s (status=%d)", channel.Name, channel.Status)
 		// 检查渠道状态
 		if channel.Status != 1 {
+			log.Printf("[路由] 渠道 %s 未启用，跳过", channel.Name)
 			continue
 		}
 
@@ -55,6 +59,14 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*htt
 		if err != nil {
 			lastErr = err
 			log.Printf("渠道 %s 失败：%v", channel.Name, err)
+			continue
+		}
+
+		// 检查响应状态码，4xx/5xx 触发 fallback
+		if resp.StatusCode >= 400 {
+			lastErr = fmt.Errorf("渠道 %s 返回 HTTP %d", channel.Name, resp.StatusCode)
+			log.Printf("渠道 %s 返回 HTTP %d，触发 fallback", channel.Name, resp.StatusCode)
+			resp.Body.Close()
 			continue
 		}
 
