@@ -28,10 +28,10 @@ RUN apk add --no-cache ca-certificates
 COPY --from=builder /app/atmapi .
 
 # 暴露端口
-EXPOSE 3000
+EXPOSE 3002
 
 # 健康检查
-HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost:3000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost:3002/health || exit 1
 
 # 启动
 CMD ["./atmapi"]
