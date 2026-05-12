@@ -253,3 +253,55 @@ go build -o atmapi .
 <p align="center">
   Made with 🦐 by <a href="https://github.com/sunecom">AiToMoney</a>
 </p>
+
+---
+
+## 🚀 生产环境部署
+
+### 快速部署（推荐）
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/sunecom/atmApi.git
+cd atmApi
+
+# 2. 配置 systemd 服务
+sudo cp deploy/atmapi.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable atmapi
+sudo systemctl start atmapi
+
+# 3. 配置 Nginx 反向代理（HTTPS）
+sudo cp deploy/nginx.conf /etc/nginx/sites-available/atmapi
+sudo ln -s /etc/nginx/sites-available/atmapi /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl restart nginx
+
+# 4. 配置定时备份
+(crontab -l 2>/dev/null; echo "0 2 * * * /path/to/atmApi/deploy/backup.sh") | crontab -
+```
+
+### 性能指标
+
+| 接口 | 100 次请求耗时 | 平均响应时间 |
+|------|--------------|-------------|
+| /health | ~0.7s | ~7ms |
+| /api/v1/login | ~0.4s (50 次) | ~8ms |
+| /api/v1/channels | ~0.7s | ~7ms |
+
+### 监控与维护
+
+```bash
+# 查看服务状态
+sudo systemctl status atmapi
+
+# 查看日志
+tail -f data/atmapi.log
+
+# 手动备份
+./deploy/backup.sh
+
+# 性能压测
+./deploy/benchmark.sh
+```
+
+详细文档见 [deploy/README.md](deploy/README.md)
