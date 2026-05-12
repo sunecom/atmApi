@@ -1,6 +1,6 @@
 # atmApi 项目进度
 
-## ✅ 已完成（v0.1.0）
+## ✅ 已完成（v1.0.0）
 - [x] 服务启动 + 守护脚本
 - [x] 登录修复（CORS + checkAuth + CSS）
 - [x] UI 优化（One API 风格）
@@ -18,7 +18,7 @@
 - [x] 批量操作
 - [x] Docker 配置
 - [x] README + 使用指南
-- [x] GitHub Release v0.1.0
+- [x] GitHub Release v1.0.0
 
 ## 📊 完成度: 95%
 

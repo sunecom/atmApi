@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/status-v0.1.0-success" alt="Status">
+  <img src="https://img.shields.io/badge/status-v1.0.0-success" alt="Status">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/go-1.22-purple" alt="Go">
   <img src="https://img.shields.io/badge/AiToMoney-%F0%9F%A6%90-orange" alt="AiToMoney">
