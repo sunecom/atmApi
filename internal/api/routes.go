@@ -55,6 +55,7 @@ func RegisterRoutes(r *gin.Engine) {
 
 			managed.GET("/logs", getLogs)
 			managed.GET("/usage", getUsageStats)
+			managed.GET("/settings", getSystemSettings)
 			managed.GET("/logs/export", exportLogs)
 			managed.POST("/chat/completions", chatCompletions)
 		}
@@ -405,4 +406,20 @@ func exportLogs(c *gin.Context) {
 			log.TokenName, log.ChannelName, log.Model,
 			log.StatusCode, log.DurationMs))
 	}
+}
+
+// 系统设置
+func getSystemSettings(c *gin.Context) {
+	settings := gin.H{
+		"version": "0.1.0",
+		"database": "SQLite",
+		"port": 3002,
+		"jwt_auth": true,
+		"cors": true,
+		"channels_count": func() int64 { var c int64; model.DB.Model(&model.Channel{}).Count(&c); return c }(),
+		"tokens_count": func() int64 { var c int64; model.DB.Model(&model.Token{}).Count(&c); return c }(),
+		"users_count": func() int64 { var c int64; model.DB.Model(&model.User{}).Count(&c); return c }(),
+		"logs_count": func() int64 { var c int64; model.DB.Model(&model.RequestLog{}).Count(&c); return c }(),
+	}
+	c.JSON(http.StatusOK, gin.H{"data": settings})
 }
