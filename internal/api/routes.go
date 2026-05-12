@@ -69,6 +69,9 @@ func RegisterRoutes(r *gin.Engine) {
 			// 请求日志
 			managed.GET("/logs", getLogs)
 
+			// 用量统计
+			managed.GET("/usage", getUsageStats)
+
 			// 模型路由
 			managed.POST("/chat/completions", chatCompletions)
 		}
@@ -368,4 +371,67 @@ func extractToken(c *gin.Context) string {
 
 func parseModels(modelsStr string) []string {
 	return strings.Split(modelsStr, ",")
+}
+
+// 用量统计
+func getUsageStats(c *gin.Context) {
+	type DailyStat struct {
+		Date   string `json:"date"`
+		Count  int64  `json:"count"`
+		AvgMs  int64  `json:"avg_ms"`
+		Errors int64  `json:"errors"`
+	}
+	var dailyStats []DailyStat
+	model.DB.Raw(`
+		SELECT date(created_at) as date,
+			count(*) as count,
+			CAST(AVG(duration_ms) AS INTEGER) as avg_ms,
+			SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as errors
+		FROM request_logs
+		WHERE created_at > datetime('now', '-7 days')
+		GROUP BY date(created_at)
+		ORDER BY date DESC
+	`).Scan(&dailyStats)
+
+	// 总统计
+	var totalCount, totalErrors int64
+	var avgDuration int64
+	model.DB.Model(&model.RequestLog{}).Count(&totalCount)
+	model.DB.Model(&model.RequestLog{}).Where("status_code >= 400").Count(&totalErrors)
+	model.DB.Raw("SELECT CAST(AVG(duration_ms) AS INTEGER) FROM request_logs").Scan(&avgDuration)
+
+	// 按 Token 统计
+	type TokenStat struct {
+		TokenName string `json:"token_name"`
+		Count     int64  `json:"count"`
+	}
+	var tokenStats []TokenStat
+	model.DB.Raw(`
+		SELECT token_name, count(*) as count
+		FROM request_logs
+		GROUP BY token_name
+		ORDER BY count DESC
+		LIMIT 10
+	`).Scan(&tokenStats)
+
+	// 按渠道统计
+	var channelStats []TokenStat
+	model.DB.Raw(`
+		SELECT channel_name as token_name, count(*) as count
+		FROM request_logs
+		GROUP BY channel_name
+		ORDER BY count DESC
+		LIMIT 10
+	`).Scan(&channelStats)
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"total_requests": totalCount,
+			"total_errors":   totalErrors,
+			"avg_duration_ms": avgDuration,
+			"daily":          dailyStats,
+			"by_token":       tokenStats,
+			"by_channel":     channelStats,
+		},
+	})
 }
