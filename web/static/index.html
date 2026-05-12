@@ -981,6 +981,13 @@
     }
 
     async function loadSettings() {
+      const res = await fetch("/api/v1/settings", { headers: authHeaders() });
+      if (res.status === 401) return setText("settingsOut", "请先登录");
+      const data = await safeJson(res);
+      const d = data.data || {};
+      const s = { version: d.version, database: d.database, port: d.port, channels: d.channels_count, tokens: d.tokens_count, users: d.users_count, logs: d.logs_count };
+      document.getElementById("settingsOut").textContent = JSON.stringify(s, null, 2);
+      return;
       const data = { version: '0.1.0', database: 'SQLite', port: 3002, jwt_auth: true, cors: true, ai_friends: 'AiToMoney 虾主联盟' };
       document.getElementById('settingsOut').textContent = JSON.stringify(data, null, 2);
     }
