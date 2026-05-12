@@ -251,7 +251,7 @@ go build -o atmapi .
 [MIT License](LICENSE)
 
 <p align="center">
-  Made with 🦐 by <a href="https://github.com/sunecom">AiToMoney</a>
+  Made with 🦐 by <a href="https://www.aitomoney.online">AiToMoney 虾主联盟</a>
 </p>
 
 ---
