@@ -474,7 +474,7 @@
         <div class="grid">
           <div class="card span-12">
             <div class="card-title">请求日志</div>
-            <button class="btn btn-primary mb-4" onclick="loadLogs()">刷新日志</button>
+            <button class="btn btn-primary mb-4" onclick="loadLogs()">刷新日志</button> <button class="btn btn-success mb-4" onclick="exportLogs()">📥 导出 CSV</button>
             <div id="logsWrap" class="muted">等待加载…</div>
           </div>
         </div>
@@ -1064,5 +1064,25 @@ function updateChannelStatus(id, status) {
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
     body: JSON.stringify({ status })
   }).then(() => loadChannels());
+}
+</script>
+<script>
+function exportLogs() {
+  const token = localStorage.getItem('atmapi_token');
+  const a = document.createElement('a');
+  a.href = '/api/v1/logs/export';
+  a.download = 'atmapi_logs.csv';
+  a.setRequestHeader = function(name, value) {
+    // This won't work for anchor tags, but the backend handles auth via query param
+  };
+  // Use fetch to get the data, then create blob
+  fetch('/api/v1/logs/export', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(res => res.blob())
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      a.href = url;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
 }
 </script>
