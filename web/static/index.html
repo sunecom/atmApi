@@ -388,7 +388,7 @@
         <div class="grid">
           <div class="card span-8">
             <div class="card-title">渠道列表</div>
-            <button class="btn btn-primary mb-4" onclick="loadChannels()">刷新列表</button>
+            <button class="btn btn-primary mb-4" onclick="loadChannels()">刷新列表</button> <button class="btn btn-success mb-4" onclick="batchActionChannels("enable")">✅ 批量启用</button> <button class="btn btn-danger mb-4" onclick="batchActionChannels("disable")">❌ 批量禁用</button> <button class="btn btn-secondary mb-4" onclick="batchActionChannels("delete")">🗑️ 批量删除</button>
             <div id="channelsTableWrap" class="muted">等待加载…</div>
           </div>
           <div class="card span-4">
@@ -1092,4 +1092,32 @@ function exportLogs() {
       URL.revokeObjectURL(url);
     });
 }
+</script>
+<script>
+// 页面加载动画
+document.addEventListener('DOMContentLoaded', function() {
+  document.body.style.opacity = '0';
+  setTimeout(function() {
+    document.body.style.transition = 'opacity 0.3s';
+    document.body.style.opacity = '1';
+  }, 50);
+});
+</script>
+<script>
+// 快捷键
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey || e.metaKey) {
+    switch(e.key) {
+      case '1': showTab('dashboard', document.querySelectorAll('.nav button')[0]); e.preventDefault(); break;
+      case '2': showTab('channels', document.querySelectorAll('.nav button')[1]); e.preventDefault(); break;
+      case '3': showTab('tokens', document.querySelectorAll('.nav button')[2]); e.preventDefault(); break;
+      case '4': showTab('users', document.querySelectorAll('.nav button')[3]); e.preventDefault(); break;
+      case '5': showTab('logs', document.querySelectorAll('.nav button')[4]); e.preventDefault(); break;
+      case '6': showTab('usage', document.querySelectorAll('.nav button')[5]); e.preventDefault(); break;
+      case '7': showTab('settings', document.querySelectorAll('.nav button')[6]); e.preventDefault(); break;
+      case '8': showTab('api-docs', document.querySelectorAll('.nav button')[7]); e.preventDefault(); break;
+      case '9': showTab('tester', document.querySelectorAll('.nav button')[8]); e.preventDefault(); break;
+    }
+  }
+});
 </script>
