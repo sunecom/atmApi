@@ -55,6 +55,7 @@ func RegisterRoutes(r *gin.Engine) {
 
 			managed.GET("/logs", getLogs)
 			managed.GET("/usage", getUsageStats)
+			managed.GET("/logs/export", exportLogs)
 			managed.POST("/chat/completions", chatCompletions)
 		}
 
@@ -387,4 +388,21 @@ func extractToken(c *gin.Context) string {
 
 func parseModels(modelsStr string) []string {
 	return strings.Split(modelsStr, ",")
+}
+
+// 导出日志为 CSV
+func exportLogs(c *gin.Context) {
+	var logs []model.RequestLog
+	model.DB.Order("id DESC").Limit(1000).Find(&logs)
+	
+	c.Header("Content-Type", "text/csv")
+	c.Header("Content-Disposition", "attachment; filename=atmapi_logs.csv")
+	
+	c.Writer.WriteString("ID,Time,Token,Channel,Model,Status,Duration(ms)\n")
+	for _, log := range logs {
+		c.Writer.WriteString(fmt.Sprintf("%d,%s,%s,%s,%s,%d,%d\n",
+			log.ID, log.CreatedAt.Format("2006-01-02 15:04:05"),
+			log.TokenName, log.ChannelName, log.Model,
+			log.StatusCode, log.DurationMs))
+	}
 }
