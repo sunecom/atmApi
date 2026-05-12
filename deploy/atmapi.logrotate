@@ -1,0 +1,12 @@
+/home/admin/.openclaw/workspace/atmApi/data/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 admin admin
+    postrotate
+        kill -USR1 $(cat /home/admin/.openclaw/workspace/atmApi/data/atmapi.pid 2>/dev/null) 2>/dev/null || true
+    endscript
+}

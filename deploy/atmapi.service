@@ -1,0 +1,21 @@
+[Unit]
+Description=atmApi Service
+After=network.target
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/.openclaw/workspace/atmApi
+ExecStart=/home/admin/.openclaw/workspace/atmApi/atmapi
+Restart=always
+RestartSec=10
+Environment=PORT=3002
+Environment=DB_TYPE=sqlite
+Environment=DB_PATH=./data/atmapi.db
+
+# 安全配置
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
