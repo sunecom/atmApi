@@ -313,12 +313,17 @@
   <!-- 登录遮罩 -->
   <div id="loginOverlay" class="login-overlay">
     <div class="login-box">
-      <div class="login-title">atmApi 管理后台</div>
+      <div style="margin-bottom:24px;text-align:center;">
+        <div style="font-size:32px;font-weight:800;margin-bottom:4px;">🏧 atmApi</div>
+        <div style="font-size:12px;color:var(--text-dim);">你的 AI 模型自动提款机</div>
+      </div>
+      <div class="login-title">管理员登录</div>
       <input id="loginUser" placeholder="用户名" />
       <input id="loginPass" type="password" placeholder="密码" />
-      <button class="btn btn-primary" onclick="doLogin()">登录</button>
+      <button class="btn btn-primary" onclick="doLogin()" style="margin-top:8px;">登录</button>
       <div id="loginErr" class="muted" style="margin-top:12px;color:var(--danger);font-size:12px;"></div>
-      <div class="login-hint">默认账号：admin / admin123</div>
+      <div class="login-hint" style="margin-top:20px;">默认账号：admin / admin123</div>
+      <div style="text-align:center;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);">🦐 AiToMoney 出品</div>
     </div>
   </div>
 
@@ -396,7 +401,16 @@
             <input id="ch_key" placeholder="API Key" />
             <input id="ch_base_url" placeholder="Base URL" />
             <input id="ch_models" placeholder="模型，逗号分隔" />
-            <textarea id="ch_mapping" placeholder='模型映射 JSON'></textarea>
+            <div style="margin-bottom:12px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                <span style="font-size:12px;color:var(--text-muted);">模型映射（可选）</span>
+                <button class="btn btn-secondary btn-sm" onclick="addMappingRow()" style="padding:2px 8px;">+ 添加映射</button>
+              </div>
+              <div id="mappingRows">
+                <div class="muted" style="font-size:11px;margin-bottom:8px;">请求模型 → 渠道模型，不配置则使用同名</div>
+              </div>
+              <textarea id="ch_mapping" placeholder='模型映射 JSON' style="display:none;"></textarea>
+            </div>
             <div class="row">
               <input id="ch_priority" value="10" placeholder="优先级" />
               <input id="ch_weight" value="10" placeholder="权重" />
@@ -683,12 +697,52 @@
       document.getElementById('ch_key').value = ch.key;
       document.getElementById('ch_base_url').value = ch.base_url;
       document.getElementById('ch_models').value = ch.models;
-      document.getElementById('ch_mapping').value = ch.model_mapping || '';
+      loadMappingJson(ch.model_mapping || '');
       document.getElementById('ch_priority').value = ch.priority;
       document.getElementById('ch_weight').value = ch.weight;
       window._editingChannelId = id;
       showTab('channels', document.querySelectorAll('.nav button')[1]);
     }
+
+    // ===== 模型映射可视化编辑 =====
+    function addMappingRow(fromVal, toVal) {
+      const container = document.getElementById('mappingRows');
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.marginBottom = '8px';
+      row.innerHTML = '' +
+        '<input style="flex:1;margin-bottom:0;" placeholder="请求模型" value="' + (fromVal || '') + '" oninput="buildMappingJson()" />' +
+        '<span style="color:var(--text-dim);line-height:34px;">→</span>' +
+        '<input style="flex:1;margin-bottom:0;" placeholder="渠道模型" value="' + (toVal || '') + '" oninput="buildMappingJson()" />' +
+        '<button class="btn btn-danger btn-sm" onclick="this.parentElement.remove();buildMappingJson()" style="padding:2px 8px;height:34px;">×</button>';
+      container.appendChild(row);
+      buildMappingJson();
+    }
+
+    function buildMappingJson() {
+      const rows = document.querySelectorAll('#mappingRows .row');
+      const map = {};
+      rows.forEach(function(row) {
+        const inputs = row.querySelectorAll('input');
+        if (inputs.length >= 2 && inputs[0].value.trim() && inputs[1].value.trim()) {
+          map[inputs[0].value.trim()] = inputs[1].value.trim();
+        }
+      });
+      const json = Object.keys(map).length > 0 ? JSON.stringify(map, null, 2) : '';
+      document.getElementById('ch_mapping').value = json;
+    }
+
+    function loadMappingJson(jsonStr) {
+      // 清空现有行
+      document.getElementById('mappingRows').innerHTML = '';
+      try {
+        const map = JSON.parse(jsonStr || '{}');
+        Object.keys(map).forEach(function(k) {
+          addMappingRow(k, map[k]);
+        });
+      } catch(e) {}
+    }
+    // ===== 结束 =====
 
     async function testChannelById(id) {
       const btn = event.target;
@@ -734,6 +788,7 @@
       document.getElementById('ch_base_url').value = '';
       document.getElementById('ch_models').value = '';
       document.getElementById('ch_mapping').value = '';
+      document.getElementById('mappingRows').innerHTML = '';
       loadChannels();
     }
 
