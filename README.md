@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/status-alpha-blue" alt="Status">
+  <img src="https://img.shields.io/badge/status-v0.1.0-success" alt="Status">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/go-1.22-purple" alt="Go">
   <img src="https://img.shields.io/badge/AiToMoney-%F0%9F%A6%90-orange" alt="AiToMoney">
@@ -24,8 +24,8 @@
 
 ## 📸 截图
 
-> 管理后台预览：
-> ![后台首页](TODO: screenshot placeholder)
+> 管理后台预览（等待补充截图）：
+> ![后台首页](https://via.placeholder.com/800x500/1e1e2e/4f46e5?text=atmApi+Admin+Dashboard)
 
 ---
 
@@ -96,8 +96,11 @@ go build -o atmapi .
 
 ### 3. 全中文管理后台
 
-- 渠道管理（增删改查 + 编辑）
-- Token 管理（创建 + 配额控制）
+- 渠道管理（增删改查 + 编辑 + 在线测试）
+- Token 管理（创建 + 配额控制 + 搜索）
+- 用户管理（角色权限）
+- 请求日志（查看 + 导出 CSV + 时间筛选）
+- 用量统计（含图表）
 - 模型测试（在线调试）
 - 一键启动，开箱即用
 
@@ -186,6 +189,8 @@ go build -o atmapi .
 }
 ```
 
+映射在「新增渠道」的「模型映射 JSON」字段中设置。
+
 ---
 
 ## 🔄 与 One API 对比
@@ -198,18 +203,31 @@ go build -o atmapi .
 | 前端框架 | React | 原生 JS（轻量） |
 | 默认数据库 | MySQL | SQLite |
 | 团队品牌 | 无 | AiToMoney 出品 |
+| 渠道在线测试 | 无 | ✅ |
+| 模型映射可视化 | 无 | ✅ |
 
 ---
 
-## 📝 TODO
+## 📝 功能清单
 
-- [ ] 请求日志查看
-- [ ] 用量统计面板
-- [ ] 渠道在线测试
-- [ ] 批量操作
-- [ ] 模型映射可视化编辑
-- [ ] 登录页优化
-- [ ] 管理员权限控制
+### ✅ 已实现
+- [x] 多渠道管理（CRUD + 测试 + 模型映射可视化）
+- [x] Token 管理（配额 + 过期时间 + 搜索）
+- [x] 用户管理（角色权限）
+- [x] 模型路由 + 自动 Fallback
+- [x] 请求日志（查看 + 导出 CSV + 时间筛选）
+- [x] 用量统计（含图表）
+- [x] 系统设置
+- [x] API 文档页
+- [x] 批量操作
+- [x] 快捷键支持（Ctrl+1-9）
+- [x] 页面加载动画
+
+### 🚧 计划中
+- [ ] 更多图表类型
+- [ ] 性能优化
+- [ ] 单元测试
+- [ ] 国际化支持
 
 ---
 
