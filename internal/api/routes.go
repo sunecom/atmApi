@@ -18,7 +18,6 @@ import (
 
 // RegisterRoutes 注册所有路由
 func RegisterRoutes(r *gin.Engine) {
-	// CORS 中间件
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -30,69 +29,55 @@ func RegisterRoutes(r *gin.Engine) {
 		c.Next()
 	})
 
-	// 静态页面
 	r.Static("/static", "./web/static")
 	r.GET("/", indexPage)
-
-	// 健康检查
 	r.GET("/health", healthCheck)
 
-	// API v1 路由组
 	v1 := r.Group("/api/v1")
 	{
-		// 认证（无需登录）
 		v1.POST("/login", login)
 		v1.POST("/register", register)
-
-		// 公开接口
 		v1.GET("/models", listModels)
 
-		// 需要认证的管理接口
 		managed := v1.Group("")
 		managed.Use(middleware.AuthRequired())
 		{
-			// Token 管理
 			managed.GET("/tokens", getTokens)
 			managed.POST("/tokens", createToken)
 			managed.PUT("/tokens/:id", updateToken)
 			managed.DELETE("/tokens/:id", deleteToken)
 
-			// 渠道管理
 			managed.GET("/channels", getChannels)
 			managed.POST("/channels", createChannel)
 			managed.PUT("/channels/:id", updateChannel)
 			managed.DELETE("/channels/:id", deleteChannel)
-
-			// 渠道测试
 			managed.POST("/channels/:id/test", testChannel)
 
-			// 请求日志
 			managed.GET("/logs", getLogs)
-
-			// 用量统计
 			managed.GET("/usage", getUsageStats)
-
-			// 模型路由
 			managed.POST("/chat/completions", chatCompletions)
+		}
+
+		admin := v1.Group("")
+		admin.Use(middleware.AuthRequired())
+		admin.Use(middleware.AdminRequired())
+		{
+			admin.GET("/users", getUsers)
+			admin.POST("/users", createUser)
+			admin.PUT("/users/:id", updateUser)
+			admin.DELETE("/users/:id", deleteUser)
 		}
 	}
 }
 
-// 首页
-func indexPage(c *gin.Context) {
-	c.File("./web/static/index.html")
-}
+func indexPage(c *gin.Context)     { c.File("./web/static/index.html") }
 
-// 健康检查
 func healthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "ok",
-		"version": "0.1.0",
-		"time":    time.Now().Format("2006-01-02 15:04:05"),
-	})
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "version": "0.1.0", "time": time.Now().Format("2006-01-02 15:04:05")})
 }
 
-// 登录
+// ===== 登录认证 =====
+
 func login(c *gin.Context) {
 	var req struct {
 		Username string `json:"username" binding:"required"`
@@ -103,8 +88,7 @@ func login(c *gin.Context) {
 		return
 	}
 	var user model.User
-	result := model.DB.Where("username = ? AND password = ? AND status = ?", req.Username, req.Password, 1).First(&user)
-	if result.Error != nil {
+	if err := model.DB.Where("username = ? AND password = ? AND status = ?", req.Username, req.Password, 1).First(&user).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
 	}
@@ -120,7 +104,6 @@ func login(c *gin.Context) {
 	})
 }
 
-// 注册
 func register(c *gin.Context) {
 	var req struct {
 		Username    string `json:"username" binding:"required"`
@@ -150,7 +133,8 @@ func register(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": "注册成功", "user_id": user.ID})
 }
 
-// Token CRUD
+// ===== Token 管理 =====
+
 func getTokens(c *gin.Context) {
 	var tokens []model.Token
 	model.DB.Find(&tokens)
@@ -210,7 +194,8 @@ func deleteToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
-// Channel CRUD
+// ===== 渠道管理 =====
+
 func getChannels(c *gin.Context) {
 	var channels []model.Channel
 	model.DB.Order("priority DESC, weight DESC").Find(&channels)
@@ -258,7 +243,6 @@ func deleteChannel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
-// 渠道测试
 func testChannel(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
@@ -275,19 +259,14 @@ func testChannel(c *gin.Context) {
 	statusCode, err := service.TestChannel(channel)
 	duration := time.Since(startTime).Milliseconds()
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false, "channel": channel.Name,
-			"error": err.Error(), "duration_ms": duration,
-		})
+		c.JSON(http.StatusOK, gin.H{"success": false, "channel": channel.Name, "error": err.Error(), "duration_ms": duration})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true, "channel": channel.Name,
-		"status_code": statusCode, "duration_ms": duration,
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "channel": channel.Name, "status_code": statusCode, "duration_ms": duration})
 }
 
-// 模型路由（核心功能）- 带请求日志
+// ===== 模型路由（核心功能） =====
+
 func chatCompletions(c *gin.Context) {
 	startTime := time.Now()
 	tokenKey := extractToken(c)
@@ -297,7 +276,6 @@ func chatCompletions(c *gin.Context) {
 	}
 	var apiToken model.Token
 	model.DB.Where("key = ?", tokenKey).First(&apiToken)
-
 	body, err := service.ReadBody(c.Request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求失败"})
@@ -310,7 +288,6 @@ func chatCompletions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
 		return
 	}
-
 	result, err := service.RouteRequest(req.Model, body, tokenKey)
 	if err != nil {
 		duration := time.Since(startTime).Milliseconds()
@@ -322,7 +299,6 @@ func chatCompletions(c *gin.Context) {
 		return
 	}
 	defer result.Response.Body.Close()
-
 	respBody, _ := io.ReadAll(result.Response.Body)
 	duration := time.Since(startTime).Milliseconds()
 	model.DB.Create(&model.RequestLog{
@@ -332,14 +308,16 @@ func chatCompletions(c *gin.Context) {
 	c.Data(result.Response.StatusCode, result.Response.Header.Get("Content-Type"), respBody)
 }
 
-// 获取请求日志
+// ===== 请求日志 =====
+
 func getLogs(c *gin.Context) {
 	var logs []model.RequestLog
 	model.DB.Order("id DESC").Limit(100).Find(&logs)
 	c.JSON(http.StatusOK, gin.H{"data": logs})
 }
 
-// 列出可用模型
+// ===== 模型列表 =====
+
 func listModels(c *gin.Context) {
 	var channels []model.Channel
 	model.DB.Where("status = ?", 1).Find(&channels)
@@ -356,7 +334,45 @@ func listModels(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": modelList})
 }
 
-// 辅助函数
+// ===== 用量统计 =====
+
+func getUsageStats(c *gin.Context) {
+	type DailyStat struct {
+		Date   string `json:"date"`
+		Count  int64  `json:"count"`
+		AvgMs  int64  `json:"avg_ms"`
+		Errors int64  `json:"errors"`
+	}
+	var dailyStats []DailyStat
+	model.DB.Raw(`SELECT date(created_at) as date, count(*) as count,
+		CAST(AVG(duration_ms) AS INTEGER) as avg_ms,
+		SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as errors
+		FROM request_logs WHERE created_at > datetime('now', '-7 days')
+		GROUP BY date(created_at) ORDER BY date DESC`).Scan(&dailyStats)
+
+	var totalCount, totalErrors int64
+	var avgDuration int64
+	model.DB.Model(&model.RequestLog{}).Count(&totalCount)
+	model.DB.Model(&model.RequestLog{}).Where("status_code >= 400").Count(&totalErrors)
+	model.DB.Raw("SELECT CAST(AVG(duration_ms) AS INTEGER) FROM request_logs").Scan(&avgDuration)
+
+	type TokenStat struct {
+		TokenName string `json:"token_name"`
+		Count     int64  `json:"count"`
+	}
+	var tokenStats, channelStats []TokenStat
+	model.DB.Raw("SELECT token_name, count(*) as count FROM request_logs GROUP BY token_name ORDER BY count DESC LIMIT 10").Scan(&tokenStats)
+	model.DB.Raw("SELECT channel_name as token_name, count(*) as count FROM request_logs GROUP BY channel_name ORDER BY count DESC LIMIT 10").Scan(&channelStats)
+
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"total_requests": totalCount, "total_errors": totalErrors,
+		"avg_duration_ms": avgDuration, "daily": dailyStats,
+		"by_token": tokenStats, "by_channel": channelStats,
+	}})
+}
+
+// ===== 辅助函数 =====
+
 func generateTokenKey() string {
 	return fmt.Sprintf("atm-%d", time.Now().UnixNano())
 }
@@ -371,67 +387,4 @@ func extractToken(c *gin.Context) string {
 
 func parseModels(modelsStr string) []string {
 	return strings.Split(modelsStr, ",")
-}
-
-// 用量统计
-func getUsageStats(c *gin.Context) {
-	type DailyStat struct {
-		Date   string `json:"date"`
-		Count  int64  `json:"count"`
-		AvgMs  int64  `json:"avg_ms"`
-		Errors int64  `json:"errors"`
-	}
-	var dailyStats []DailyStat
-	model.DB.Raw(`
-		SELECT date(created_at) as date,
-			count(*) as count,
-			CAST(AVG(duration_ms) AS INTEGER) as avg_ms,
-			SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as errors
-		FROM request_logs
-		WHERE created_at > datetime('now', '-7 days')
-		GROUP BY date(created_at)
-		ORDER BY date DESC
-	`).Scan(&dailyStats)
-
-	// 总统计
-	var totalCount, totalErrors int64
-	var avgDuration int64
-	model.DB.Model(&model.RequestLog{}).Count(&totalCount)
-	model.DB.Model(&model.RequestLog{}).Where("status_code >= 400").Count(&totalErrors)
-	model.DB.Raw("SELECT CAST(AVG(duration_ms) AS INTEGER) FROM request_logs").Scan(&avgDuration)
-
-	// 按 Token 统计
-	type TokenStat struct {
-		TokenName string `json:"token_name"`
-		Count     int64  `json:"count"`
-	}
-	var tokenStats []TokenStat
-	model.DB.Raw(`
-		SELECT token_name, count(*) as count
-		FROM request_logs
-		GROUP BY token_name
-		ORDER BY count DESC
-		LIMIT 10
-	`).Scan(&tokenStats)
-
-	// 按渠道统计
-	var channelStats []TokenStat
-	model.DB.Raw(`
-		SELECT channel_name as token_name, count(*) as count
-		FROM request_logs
-		GROUP BY channel_name
-		ORDER BY count DESC
-		LIMIT 10
-	`).Scan(&channelStats)
-
-	c.JSON(http.StatusOK, gin.H{
-		"data": gin.H{
-			"total_requests": totalCount,
-			"total_errors":   totalErrors,
-			"avg_duration_ms": avgDuration,
-			"daily":          dailyStats,
-			"by_token":       tokenStats,
-			"by_channel":     channelStats,
-		},
-	})
 }

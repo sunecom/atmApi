@@ -336,6 +336,7 @@
         <button class="active" onclick="showTab('dashboard', this)">总览面板</button>
         <button onclick="showTab('channels', this)">渠道管理</button>
         <button onclick="showTab('tokens', this)">Token 管理</button>
+        <button onclick="showTab('users', this)">用户管理</button>
         <button onclick="showTab('logs', this)">请求日志 <span id="logBadge" class="badge badge-success" style="display:none;">0</span></button>
         <button onclick="showTab('usage', this)">用量统计</button>
         <button onclick="showTab('settings', this)">系统设置</button>
@@ -427,6 +428,29 @@
             </div>
             <button class="btn btn-success" onclick="createToken()">创建 / 保存</button>
             <pre id="tokenCreateOut" style="margin-top:12px;">填写表单后创建…</pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-users" class="tab hidden">
+        <div class="grid">
+          <div class="card span-8">
+            <div class="card-title">用户列表</div>
+            <button class="btn btn-primary mb-4" onclick="loadUsers()">刷新列表</button>
+            <div id="usersWrap" class="muted">等待加载…</div>
+          </div>
+          <div class="card span-4">
+            <div class="card-title">新增用户</div>
+            <input id="usr_username" placeholder="用户名" />
+            <input id="usr_password" type="password" placeholder="密码（至少6位）" />
+            <input id="usr_display" placeholder="显示名称" />
+            <input id="usr_email" placeholder="邮箱" />
+            <div class="row">
+              <input id="usr_role" value="1" placeholder="角色(100=管理员)" />
+              <input id="usr_quota" value="-1" placeholder="配额(-1=无限)" />
+            </div>
+            <button class="btn btn-success" onclick="createUser()">创建用户</button>
+            <pre id="userCreateOut" style="margin-top:12px;">填写表单后创建…</pre>
           </div>
         </div>
       </section>
@@ -782,6 +806,47 @@
       loadTokens();
     }
 
+    async function loadUsers() {
+      const res = await fetch('/api/v1/users', { headers: authHeaders() });
+      if (res.status === 401) return setText('usersWrap', '请先登录');
+      const data = await safeJson(res);
+      const rows = (data.data || []).map(u => {
+        const role = u.role === 100 ? '<span class="badge badge-success">管理员</span>' : '<span class="badge badge-warning">普通用户</span>';
+        const status = u.status === 1 ? '<span class="badge badge-success">启用</span>' : '<span class="badge badge-danger">禁用</span>';
+        return '<tr><td>' + u.id + '</td><td>' + u.username + '</td><td>' + (u.display_name || '-') + '</td><td>' + role + '</td><td>' + status + '</td><td>' + (u.quota === -1 ? '无限' : u.quota) + '</td><td>' + new Date(u.created_at).toLocaleString() + '</td><td>' +
+          '<button class="btn btn-danger btn-sm" onclick="deleteUser(' + u.id + ')">删除</button></td></tr>';
+      }).join('');
+      document.getElementById('usersWrap').innerHTML = '<table><thead><tr><th>ID</th><th>用户名</th><th>显示名</th><th>角色</th><th>状态</th><th>配额</th><th>创建时间</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="8">暂无数据</td></tr>') + '</tbody></table>';
+    }
+
+    async function createUser() {
+      const payload = {
+        username: document.getElementById('usr_username').value.trim(),
+        password: document.getElementById('usr_password').value,
+        display_name: document.getElementById('usr_display').value.trim(),
+        email: document.getElementById('usr_email').value.trim(),
+        role: Number(document.getElementById('usr_role').value || 1),
+        quota: Number(document.getElementById('usr_quota').value || 0),
+      };
+      const res = await fetch('/api/v1/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(payload),
+      });
+      setText('userCreateOut', await safeJson(res));
+      document.getElementById('usr_username').value = '';
+      document.getElementById('usr_password').value = '';
+      document.getElementById('usr_display').value = '';
+      document.getElementById('usr_email').value = '';
+      loadUsers();
+    }
+
+    async function deleteUser(id) {
+      if (!confirm('确定删除该用户？')) return;
+      const res = await fetch('/api/v1/users/' + id, { method: 'DELETE', headers: authHeaders() });
+      setText('userCreateOut', await safeJson(res));
+      loadUsers();
+    }
+
     async function loadLogs() {
       const res = await fetch('/api/v1/logs', { headers: authHeaders() });
       if (res.status === 401) return setText('logsWrap', '请先登录');
@@ -858,6 +923,7 @@
     loadModels();
     loadChannels();
     loadTokens();
+    loadUsers();
     loadLogs();
     loadUsage();
     loadSettings();
