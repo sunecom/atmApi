@@ -4,104 +4,295 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>atmApi 管理后台</title>
+  <link rel="icon" href="logo.png"/>
   <style>
-    :root { color-scheme: light dark; }
-    * { box-sizing: border-box; }
+    :root {
+      --bg-dark: #121212;
+      --bg-card: #1e1e2e;
+      --bg-hover: #2a2a3e;
+      --bg-input: #252538;
+      --border: #3a3a5a;
+      --primary: #4f46e5;
+      --primary-hover: #6366f1;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --text-main: #e4e4e7;
+      --text-muted: #a1a1aa;
+      --text-dim: #71717a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background: #0b1020;
-      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-main);
+      font-size: 13px;
+      line-height: 1.5;
     }
-    .layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+    .layout { display: flex; min-height: 100vh; }
+    
+    /* Sidebar */
     .sidebar {
-      background: #0a0f1d;
-      border-right: 1px solid #1f2a44;
-      padding: 24px 16px;
-      position: sticky; top: 0; height: 100vh;
+      width: 240px;
+      background: var(--bg-card);
+      border-right: 1px solid var(--border);
+      padding: 20px 0;
+      position: fixed;
+      height: 100vh;
+      overflow-y: auto;
     }
-    .brand { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
-    .desc { color: #8ea3c7; font-size: 13px; line-height: 1.6; margin-bottom: 18px; }
+    .brand {
+      padding: 0 20px 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+    }
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 4px;
+    }
+    .brand-desc {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+    .nav { padding: 0 12px; }
     .nav button {
-      width: 100%; text-align: left; margin-bottom: 10px; padding: 12px 14px;
-      background: #10172b; color: #dbeafe; border: 1px solid #223150; border-radius: 12px; cursor: pointer;
+      width: 100%;
+      text-align: left;
+      padding: 10px 14px;
+      margin-bottom: 4px;
+      background: transparent;
+      color: var(--text-muted);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s;
     }
-    .nav button.active { background: #1d4ed8; border-color: #2563eb; }
-    .main { padding: 28px; }
-    .hero {
-      background: linear-gradient(135deg, #11182d, #17213d);
-      border: 1px solid #2c3a63;
-      border-radius: 20px;
+    .nav button:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+    }
+    .nav button.active {
+      background: var(--primary);
+      color: #fff;
+    }
+    
+    /* Main */
+    .main {
+      flex: 1;
+      margin-left: 240px;
       padding: 24px;
-      margin-bottom: 22px;
     }
-    h1,h2,h3 { margin: 0 0 12px; }
-    .sub { color: #9fb0d1; line-height: 1.7; }
-    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+    .header {
+      margin-bottom: 24px;
+    }
+    .header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .header p {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    
+    /* Cards */
     .card {
-      grid-column: span 12;
-      background: #11182d;
-      border: 1px solid #2c3a63;
-      border-radius: 16px;
-      padding: 18px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
     }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--text-main);
+    }
+    
+    /* Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 20px;
+    }
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
     .span-6 { grid-column: span 6; }
     .span-4 { grid-column: span 4; }
-    .span-8 { grid-column: span 8; }
-    .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
-    input, textarea, select {
-      width: 100%; padding: 10px 12px; border-radius: 10px;
-      border: 1px solid #34456f; background: #0d1426; color: #e6edf3;
-    }
-    textarea { min-height: 110px; resize: vertical; }
-    button {
-      background: #3b82f6; color: #fff; border: none; padding: 10px 14px;
-      border-radius: 10px; cursor: pointer; font-weight: 700;
-    }
-    button.secondary { background: #334155; }
-    button.success { background: #16a34a; }
-    button.warn { background: #d97706; }
-    button.danger { background: #dc2626; }
+    
+    /* Tables */
     table {
-      width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;
-      overflow: hidden; border-radius: 12px;
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
     }
     th, td {
-      padding: 12px 10px; border-bottom: 1px solid #233253; text-align: left; vertical-align: top;
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
     }
-    th { color: #93c5fd; background: #0d1426; }
-    code, pre {
-      white-space: pre-wrap; word-break: break-word; background: #0a1120; border: 1px solid #233253;
-      border-radius: 12px; padding: 14px; color: #cfe3ff;
-      overflow: auto;
+    th {
+      color: var(--text-muted);
+      font-weight: 500;
+      background: var(--bg-hover);
     }
-    .muted { color: #94a3b8; font-size: 13px; }
-    .badge { display:inline-block; padding:3px 8px; border-radius:999px; font-size:12px; }
-    .ok { background:#16351f; color:#86efac; }
-    .off { background:#3b1720; color:#fca5a5; }
-    .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; background:rgba(59,130,246,.15); color:#93c5fd; border:1px solid rgba(59,130,246,.25); }
-    .hidden { display:none; }
+    tr:hover {
+      background: var(--bg-hover);
+    }
+    
+    /* Buttons */
+    .btn {
+      display: inline-block;
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 500;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: var(--primary-hover);
+    }
+    .btn-success {
+      background: var(--success);
+      color: #fff;
+    }
+    .btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+    .btn-secondary {
+      background: var(--bg-hover);
+      color: var(--text-main);
+    }
+    .btn-sm {
+      padding: 4px 10px;
+      font-size: 11px;
+    }
+    
+    /* Inputs */
+    input, textarea, select {
+      width: 100%;
+      padding: 8px 12px;
+      font-size: 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-main);
+      margin-bottom: 12px;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+    .row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .row > * {
+      flex: 1;
+      margin-bottom: 0;
+    }
+    
+    /* Badges */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 11px;
+      border-radius: 999px;
+    }
+    .badge-success {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+    }
+    .badge-danger {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--danger);
+    }
+    
+    /* Login Overlay */
     .login-overlay {
-      position:fixed; inset:0; background:#0b1020; display:flex;
-      align-items:center; justify-content:center; z-index:999;
+      position: fixed;
+      inset: 0;
+      background: var(--bg-dark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
     }
     .login-box {
-      background:#11182d; border:1px solid #2c3a63; border-radius:20px;
-      padding:40px; width:380px; text-align:center;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 40px;
+      width: 360px;
     }
-    .login-box h2 { margin:0 0 20px; font-size:24px; }
-    .login-box input { margin-bottom:12px; }
-    .login-box button { width:100%; margin-top:8px; }
+    .login-title {
+      font-size: 20px;
+      font-weight: 600;
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .login-box button {
+      width: 100%;
+      margin-top: 8px;
+    }
+    .login-hint {
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 16px;
+    }
+    
+    /* User Bar */
     .user-bar {
-      display:flex; align-items:center; justify-content:space-between;
-      padding:8px 0; border-bottom:1px solid #1f2a44; margin-bottom:12px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
-    .user-bar .user-info { font-size:13px; color:#9fb0d1; }
-    .user-bar button { padding:6px 10px; font-size:12px; background:#dc2626; }
+    .user-info {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    
+    /* Utils */
+    .hidden { display: none !important; }
+    .muted { color: var(--text-muted); }
+    .mb-4 { margin-bottom: 16px; }
+    
+    /* Code */
+    code, pre {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 11px;
+      color: var(--text-muted);
+      overflow-x: auto;
+    }
+    
     @media (max-width: 980px) {
-      .layout { grid-template-columns: 1fr; }
-      .sidebar { position: relative; height: auto; }
-      .span-6, .span-4, .span-8 { grid-column: span 12; }
+      .sidebar { position: relative; width: 100%; height: auto; }
+      .main { margin-left: 0; }
+      .span-8, .span-6, .span-4 { grid-column: span 12; }
     }
   </style>
 </head>
@@ -109,23 +300,28 @@
   <!-- 登录遮罩 -->
   <div id="loginOverlay" class="login-overlay">
     <div class="login-box">
-      <span class="pill">ATM API</span>
-      <h2>管理员登录</h2>
+      <div class="login-title">atmApi 管理后台</div>
       <input id="loginUser" placeholder="用户名" />
       <input id="loginPass" type="password" placeholder="密码" />
-      <button onclick="doLogin()">登录</button>
-      <div id="loginErr" class="muted" style="margin-top:12px;color:#fca5a5"></div>
-      <div class="muted" style="margin-top:16px">默认账号：admin / admin123</div>
+      <button class="btn btn-primary" onclick="doLogin()">登录</button>
+      <div id="loginErr" class="muted" style="margin-top:12px;color:var(--danger);font-size:12px;"></div>
+      <div class="login-hint">默认账号：admin / admin123</div>
     </div>
   </div>
 
   <div class="layout">
     <aside class="sidebar">
-      <div class="brand">atmApi</div>
-      <div class="desc">国产替代 Plus 的最小后台。先跑通，再做厚。</div>
+      <div class="brand">
+        <div class="brand-title">atmApi</div>
+        <div class="brand-desc">国产替代 Plus 的最小后台</div>
+      </div>
+      <div style="padding:16px 20px;margin-top:20px;border-top:1px solid var(--border);">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">🦐 AiToMoney 出品</div>
+        <div style="font-size:11px;color:var(--text-dim);line-height:1.6;">一个人可以走得很快<br/>一群虾可以折腾得更远</div>
+      </div>
       <div id="userBar" class="user-bar hidden">
         <span id="userInfo" class="user-info"></span>
-        <button onclick="doLogout()">退出</button>
+        <button class="btn btn-danger btn-sm" onclick="doLogout()">退出</button>
       </div>
       <div class="nav">
         <button class="active" onclick="showTab('dashboard', this)">总览面板</button>
@@ -136,30 +332,25 @@
     </aside>
 
     <main class="main">
-      <section class="hero">
-        <span class="pill">ATM API · Admin Preview</span>
-        <h1>后台管理界面已上线</h1>
-        <div class="sub">
-          这一版先解决三个本质问题：<b>能看、能配、能测</b>。<br/>
-          你现在可以直接在网页里查看渠道、查看 Token、创建新渠道、创建新 Token，并测试模型路由。
-        </div>
-      </section>
-
       <section id="tab-dashboard" class="tab">
+        <div class="header">
+          <h1>后台管理界面已上线</h1>
+          <p>这一版先解决三个本质问题：<b>能看、能配、能测</b>。你现在可以直接在网页里查看渠道、查看 Token、创建新渠道、创建新 Token，并测试模型路由。</p>
+        </div>
         <div class="grid">
           <div class="card span-4">
-            <h3>健康状态</h3>
-            <div class="row"><button onclick="loadHealth()">刷新状态</button></div>
+            <div class="card-title">健康状态</div>
+            <button class="btn btn-primary mb-4" onclick="loadHealth()">刷新状态</button>
             <pre id="healthOut">等待加载…</pre>
           </div>
           <div class="card span-4">
-            <h3>模型聚合</h3>
-            <div class="row"><button onclick="loadModels()">刷新模型</button></div>
+            <div class="card-title">模型聚合</div>
+            <button class="btn btn-primary mb-4" onclick="loadModels()">刷新模型</button>
             <pre id="modelsOut">等待加载…</pre>
           </div>
           <div class="card span-4">
-            <h3>快速说明</h3>
-            <div class="muted">
+            <div class="card-title">快速说明</div>
+            <div class="muted" style="font-size:12px;line-height:1.8;">
               - 根路径现在是后台首页<br/>
               - /health 是健康检查<br/>
               - /api/v1/models 是聚合模型列表<br/>
@@ -172,17 +363,16 @@
       <section id="tab-channels" class="tab hidden">
         <div class="grid">
           <div class="card span-8">
-            <h3>渠道列表</h3>
-            <div class="row">
-              <button onclick="loadChannels()">刷新列表</button>
-            </div>
+            <div class="card-title">渠道列表</div>
+            <button class="btn btn-primary mb-4" onclick="loadChannels()">刷新列表</button>
             <div id="channelsTableWrap" class="muted">等待加载…</div>
           </div>
           <div class="card span-4">
-            <h3>新增渠道</h3>
+            <div class="card-title">新增渠道</div>
             <input id="ch_name" placeholder="渠道名称，例如 DeepSeek - 备用" />
             <div class="row">
-              <input id="ch_type" value="1" placeholder="类型，默认 1" />
+              <input id="ch_type" value="1" placeholder="类型" />
+              <input id="ch_status" value="1" placeholder="状态" />
             </div>
             <input id="ch_key" placeholder="API Key" />
             <input id="ch_base_url" placeholder="Base URL，例如 https://api.deepseek.com" />
@@ -192,10 +382,8 @@
               <input id="ch_priority" value="10" placeholder="优先级" />
               <input id="ch_weight" value="10" placeholder="权重" />
             </div>
-            <div class="row">
-              <button class="success" onclick="createChannel()">创建渠道</button>
-            </div>
-            <pre id="channelCreateOut">填写表单后可直接创建…</pre>
+            <button class="btn btn-success" onclick="createChannel()">创建渠道</button>
+            <pre id="channelCreateOut" style="margin-top:12px;">填写表单后可直接创建…</pre>
           </div>
         </div>
       </section>
@@ -203,27 +391,23 @@
       <section id="tab-tokens" class="tab hidden">
         <div class="grid">
           <div class="card span-8">
-            <h3>Token 列表</h3>
-            <div class="row">
-              <button onclick="loadTokens()">刷新列表</button>
-            </div>
+            <div class="card-title">Token 列表</div>
+            <button class="btn btn-primary mb-4" onclick="loadTokens()">刷新列表</button>
             <div id="tokensTableWrap" class="muted">等待加载…</div>
           </div>
           <div class="card span-4">
-            <h3>新增 Token</h3>
-            <input id="tk_user_id" value="1" placeholder="用户 ID，默认 1" />
-            <input id="tk_name" placeholder="Token 名称，例如 测试 Token" />
+            <div class="card-title">新增 Token</div>
+            <input id="tk_user_id" value="1" placeholder="用户 ID" />
+            <input id="tk_name" placeholder="Token 名称" />
             <div class="row">
-              <input id="tk_remain_quota" value="-1" placeholder="剩余配额，-1 表示无限" />
-              <input id="tk_expired_time" value="-1" placeholder="过期时间，-1 永不过期" />
+              <input id="tk_remain_quota" value="-1" placeholder="剩余配额 (-1 无限)" />
+              <input id="tk_expired_time" value="-1" placeholder="过期时间 (-1 永不过期)" />
             </div>
-            <div class="row">
-              <label><input id="tk_unlimited" type="checkbox" checked /> 无限配额</label>
+            <div style="margin-bottom:12px;">
+              <label><input id="tk_unlimited" type="checkbox" checked style="width:auto;margin-right:6px;" /> 无限配额</label>
             </div>
-            <div class="row">
-              <button class="success" onclick="createToken()">创建 Token</button>
-            </div>
-            <pre id="tokenCreateOut">填写表单后可直接创建…</pre>
+            <button class="btn btn-success" onclick="createToken()">创建 Token</button>
+            <pre id="tokenCreateOut" style="margin-top:12px;">填写表单后可直接创建…</pre>
           </div>
         </div>
       </section>
@@ -231,20 +415,16 @@
       <section id="tab-tester" class="tab hidden">
         <div class="grid">
           <div class="card span-6">
-            <h3>模型测试</h3>
+            <div class="card-title">模型测试</div>
             <input id="test_token" placeholder="输入 Token，例如 atm-xxxx" />
-            <div class="row">
-              <input id="test_model" value="qwen3.5-plus" placeholder="模型名" />
-            </div>
+            <input id="test_model" value="qwen3.5-plus" placeholder="模型名" />
             <textarea id="test_prompt">回复 OK，并告诉我当前实际命中了哪个模型与哪个渠道。</textarea>
-            <div class="row">
-              <button onclick="testChat()">测试 chat/completions</button>
-            </div>
-            <pre id="chatOut">填入 Token 后点击测试…</pre>
+            <button class="btn btn-primary" onclick="testChat()">测试 chat/completions</button>
+            <pre id="chatOut" style="margin-top:12px;">填入 Token 后点击测试…</pre>
           </div>
           <div class="card span-6">
-            <h3>说明</h3>
-            <div class="muted">
+            <div class="card-title">说明</div>
+            <div class="muted" style="font-size:12px;line-height:1.8;">
               这里是最小可用后台，不追求前端炫技，先追求业务闭环：<br/><br/>
               1. 渠道可创建 / 编辑 / 删除<br/>
               2. Token 可创建 / 编辑 / 删除<br/>
@@ -258,7 +438,27 @@
     </main>
   </div>
 
+  <!-- 底部联盟信息 -->
+  <footer style="background:var(--bg-card);border-top:1px solid var(--border);padding:24px;margin-left:240px;">
+    <div style="max-width:1200px;margin:0 auto;text-align:center;">
+      <div style="font-size:14px;font-weight:600;margin-bottom:8px;">🦐 AiToMoney 虾主联盟</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">一个人可以走得很快，一群虾可以折腾得更远</div>
+      <div style="display:flex;justify-content:center;gap:24px;margin-bottom:16px;">
+        <div style="text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">QQ 群</div>
+          <div style="font-size:12px;color:var(--text-main);">242249487</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">入群暗号</div>
+          <div style="font-size:12px;color:var(--text-main);">我是一只虾，正在水里瞎折腾</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);">扫码加入虾主联盟，与同行者一起折腾</div>
+    </div>
+  </footer>
+
   <script>
+    console.log('=== 页面加载，JS 版本：2026-05-12 11:20 ===');
     // ===== 认证管理 =====
     function getToken() { return localStorage.getItem('atmapi_token') || ''; }
     function setToken(t) { localStorage.setItem('atmapi_token', t); }
@@ -269,21 +469,45 @@
     }
 
     async function doLogin() {
+      console.log('=== doLogin 开始执行 ===');
       const username = document.getElementById('loginUser').value.trim();
       const password = document.getElementById('loginPass').value;
       const errEl = document.getElementById('loginErr');
+      const loginBtn = document.querySelector('#loginOverlay button');
+      console.log('用户名:', username);
       errEl.textContent = '';
-      const res = await fetch('/api/v1/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-      const data = await safeJson(res);
-      if (res.ok && data.token) {
-        setToken(data.token);
-        showApp(data);
-      } else {
-        errEl.textContent = data.error || '登录失败';
+      loginBtn.disabled = true;
+      loginBtn.textContent = '登录中...';
+      console.log('开始发送请求...');
+      try {
+        const res = await fetch('/api/v1/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        console.log('响应状态码:', res.status);
+        const text = await res.text();
+        console.log('响应原文:', text);
+        const data = JSON.parse(text);
+        console.log('解析后的数据:', data);
+        if (res.ok && data.token) {
+          console.log('登录成功，保存 Token');
+          setToken(data.token);
+          console.log('Token 已保存到 localStorage');
+          console.log('调用 showApp');
+          showApp(data);
+          console.log('showApp 执行完成');
+        } else {
+          console.log('登录失败');
+          errEl.textContent = data.error || '登录失败';
+          loginBtn.disabled = false;
+          loginBtn.textContent = '登录';
+        }
+      } catch (e) {
+        console.error('登录异常:', e);
+        errEl.textContent = '网络错误：' + e.message;
+        loginBtn.disabled = false;
+        loginBtn.textContent = '登录';
       }
     }
 
@@ -294,26 +518,45 @@
     }
 
     function showApp(userData) {
-      document.getElementById('loginOverlay').classList.add('hidden');
-      document.getElementById('userBar').classList.remove('hidden');
+      console.log('showApp 被调用，userData:', userData);
+      const overlay = document.getElementById('loginOverlay');
+      const userBar = document.getElementById('userBar');
+      const userInfo = document.getElementById('userInfo');
+      console.log('overlay:', overlay);
+      console.log('userBar:', userBar);
+      overlay.classList.add('hidden');
+      userBar.classList.remove('hidden');
       const name = (userData && userData.display_name) || (userData && userData.username) || '管理员';
       const role = (userData && userData.role) === 100 ? '管理员' : '用户';
-      document.getElementById('userInfo').textContent = name + ' \u00b7 ' + role;
+      userInfo.textContent = name + ' · ' + role;
+      console.log('登录成功！已切换到主界面');
     }
 
     // 页面加载时检查 token
     (function checkAuth() {
       const t = getToken();
+      console.log('checkAuth: Token 存在 =', !!t);
       if (t) {
+        // 先显示主界面，避免闪烁
+        document.getElementById('loginOverlay').classList.add('hidden');
+        document.getElementById('userBar').classList.remove('hidden');
+        document.getElementById('userInfo').textContent = '已登录';
+        // 然后在后台验证 token 是否有效
         fetch('/api/v1/channels', { headers: authHeaders() }).then(async r => {
-          if (r.ok) {
-            document.getElementById('loginOverlay').classList.add('hidden');
-            document.getElementById('userBar').classList.remove('hidden');
-            document.getElementById('userInfo').textContent = '\u5df2\u767b\u5f55';
-          } else {
+          if (!r.ok) {
+            console.log('checkAuth: Token 已失效，清除');
             clearToken();
+            document.getElementById('loginOverlay').classList.remove('hidden');
+            document.getElementById('userBar').classList.add('hidden');
+          } else {
+            console.log('checkAuth: Token 验证成功');
           }
-        }).catch(() => clearToken());
+        }).catch((e) => {
+          console.log('checkAuth: 验证失败', e);
+          clearToken();
+          document.getElementById('loginOverlay').classList.remove('hidden');
+          document.getElementById('userBar').classList.add('hidden');
+        });
       }
     })();
 
@@ -336,13 +579,8 @@
       setText('healthOut', await safeJson(res));
     }
 
-    async function loadModels() {
-      const res = await fetch('/api/v1/models');
-      setText('modelsOut', await safeJson(res));
-    }
-
     function channelStatusBadge(status) {
-      return status === 1 ? '<span class="badge ok">启用</span>' : '<span class="badge off">禁用</span>';
+      return status === 1 ? '<span class="badge badge-success">启用</span>' : '<span class="badge badge-danger">禁用</span>';
     }
 
     async function loadChannels() {
@@ -359,8 +597,8 @@
           <td><code>${ch.base_url || ''}</code></td>
           <td>${ch.models || ''}</td>
           <td>
-            <button class="secondary" style="padding:4px 8px;font-size:12px" onclick="editChannel(${ch.id})">编辑</button>
-            <button class="danger" style="padding:4px 8px;font-size:12px" onclick="deleteChannel(${ch.id})">删除</button>
+            <button class="btn btn-secondary btn-sm" onclick="editChannel(${ch.id})">编辑</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteChannel(${ch.id})">删除</button>
           </td>
         </tr>
       `).join('');
@@ -385,7 +623,6 @@
       document.getElementById('ch_mapping').value = ch.model_mapping || '';
       document.getElementById('ch_priority').value = ch.priority;
       document.getElementById('ch_weight').value = ch.weight;
-      // 保存编辑 ID 用于更新
       window._editingChannelId = id;
       showTab('channels', document.querySelectorAll('.nav button')[1]);
     }
@@ -409,7 +646,7 @@
         base_url: document.getElementById('ch_base_url').value.trim(),
         models: document.getElementById('ch_models').value.trim(),
         model_mapping: document.getElementById('ch_mapping').value.trim(),
-        status: 1,
+        status: Number(document.getElementById('ch_status').value || 1),
         priority: Number(document.getElementById('ch_priority').value || 0),
         weight: Number(document.getElementById('ch_weight').value || 0),
       };
@@ -445,8 +682,8 @@
           <td>${tk.unlimited_quota ? '无限' : tk.remain_quota}</td>
           <td>${tk.expired_time}</td>
           <td>
-            <button class="secondary" style="padding:4px 8px;font-size:12px" onclick="editToken(${tk.id})">编辑</button>
-            <button class="danger" style="padding:4px 8px;font-size:12px" onclick="deleteToken(${tk.id})">删除</button>
+            <button class="btn btn-secondary btn-sm" onclick="editToken(${tk.id})">编辑</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteToken(${tk.id})">删除</button>
           </td>
         </tr>
       `).join('');

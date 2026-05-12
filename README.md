@@ -1,124 +1,237 @@
-# atmApi
+<p align="center">
+  <img src="https://img.shields.io/badge/status-alpha-blue" alt="Status">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/go-1.22-purple" alt="Go">
+  <img src="https://img.shields.io/badge/AiToMoney-%F0%9F%A6%90-orange" alt="AiToMoney">
+</p>
 
-**ATM API — 你的 AI 模型自动提款机**
+<h1 align="center">🏧 ATM API</h1>
+<p align="center"><b>你的 AI 模型自动提款机</b></p>
 
-atmApi 是 AiToMoney 团队开源的 AI 模型 API 管理平台，基于 One API 设计理念重构，专为国内开发者打造。
+<p align="center">
+  🇨🇳 全中文后台 · 🔄 多渠道自动 Fallback · 🐳 一键部署<br/>
+  <i>One API 的国产替代 Plus — 更贴近中国开发者的使用习惯</i>
+</p>
 
-## ✨ 核心特性
-
-- 🇨🇳 **全中文界面** - 国人习惯，开箱即用
-- 🔄 **多渠道自动 Fallback** - 通义/DeepSeek/GLM 等国产模型自动切换
-- 📊 **实时用量监控** - 图表 + 告警，用量一目了然
-- 💳 **内置充值/账单** - 微信/支付宝扫码自动充值
-- 🐳 **Docker 一键部署** - 一条命令搞定
-
-## 🚀 快速开始
-
-### Docker 部署（推荐）
-
-```bash
-# 一键启动
-docker run -d --name atmapi -p 3000:3000 -v /data/atmapi:/data ghcr.io/sunecom/atmapi:latest
-
-# 访问管理后台
-# http://localhost:3000
-# 默认账号：admin / admin123
-```
-
-### 本地开发
-
-```bash
-# 克隆项目
-git clone https://github.com/sunecom/atmApi.git
-cd atmApi
-
-# 安装依赖
-go mod download
-
-# 启动服务
-go run main.go
-
-# 访问 http://localhost:3000
-```
-
-## 📚 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 后端 | Go + Gin + GORM |
-| 前端 | Vue3 + Element Plus（开发中） |
-| 数据库 | SQLite（默认）/ MySQL |
-| 部署 | Docker |
-
-## 📁 项目结构
-
-```
-atmApi/
-├── cmd/              # 入口文件
-├── internal/         # 内部代码
-│   ├── api/          # API 路由
-│   ├── config/       # 配置管理
-│   ├── model/        # 数据模型
-│   ├── service/      # 业务逻辑
-│   └── middleware/   # 中间件
-├── web/              # 前端代码（开发中）
-├── config/           # 配置文件
-├── scripts/          # 脚本
-└── docs/             # 文档
-```
-
-## 🔌 API 文档
-
-### 基础端点
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/health` | 健康检查 |
-| POST | `/api/v1/login` | 用户登录 |
-| POST | `/api/v1/register` | 用户注册 |
-| GET | `/api/v1/tokens` | 获取 Token 列表 |
-| POST | `/api/v1/tokens` | 创建 Token |
-| PUT | `/api/v1/tokens/:id` | 更新 Token |
-| DELETE | `/api/v1/tokens/:id` | 删除 Token |
-| GET | `/api/v1/channels` | 获取渠道列表 |
-| POST | `/api/v1/channels` | 创建渠道 |
-| PUT | `/api/v1/channels/:id` | 更新渠道 |
-| DELETE | `/api/v1/channels/:id` | 删除渠道 |
-| POST | `/api/v1/chat/completions` | 模型路由（核心功能） |
-| GET | `/api/v1/models` | 列出可用模型 |
-
-### 多渠道路由示例
-
-```bash
-# 请求会自动路由到可用渠道
-curl -X POST http://localhost:3000/api/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3.5-plus",
-    "messages": [{"role": "user", "content": "你好"}]
-  }'
-```
-
-## 📝 开发计划
-
-| 阶段 | 时间 | 里程碑 |
-|------|------|--------|
-| MVP | 2026-05-18 | ✅ 基础 CRUD + 多渠道路由 |
-| Beta | 2026-05-25 | 监控告警 + Docker 部署 |
-| v1.0 | 2026-06-01 | 内置充值 + 账单管理 |
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 PR！
-
-## 📄 开源协议
-
-MIT License
+<p align="center">
+  <a href="#-快速开始">快速开始</a> ·
+  <a href="#-核心功能">核心功能</a> ·
+  <a href="#-技术架构">技术架构</a> ·
+  <a href="#-配置指南">配置指南</a>
+</p>
 
 ---
 
-**AiToMoney 虾主联盟** 🦐
-> 一个人可以走得很快，一群虾可以折腾得更远
+## 📸 截图
 
-QQ 群：242249487
+> 管理后台预览：
+> ![后台首页](TODO: screenshot placeholder)
+
+---
+
+## 🚀 快速开始
+
+### 方式一：直接运行（推荐）
+
+```bash
+# 1. 下载二进制
+wget https://github.com/sunecom/atmApi/releases/latest/download/atmapi
+chmod +x atmapi
+
+# 2. 启动（默认端口 3000）
+PORT=3002 ./atmapi
+
+# 3. 访问
+open http://localhost:3002
+```
+
+### 方式二：Docker 部署
+
+```bash
+docker run -d --name atmapi -p 3002:3002 \
+  -v ./data:/app/data \
+  sunecom/atmapi:latest
+```
+
+### 方式三：从源码编译
+
+```bash
+git clone https://github.com/sunecom/atmApi.git
+cd atmApi
+go build -o atmapi .
+./atmapi
+```
+
+### 默认账号
+
+```
+用户名：admin
+密码：admin123
+```
+
+---
+
+## 💡 核心功能
+
+### 1. 多渠道统一接入
+
+将通义千问、DeepSeek、GoToken 等多个上游模型服务统一纳入同一个系统管理。
+
+```
+请求 → ATM API → [通义千问] ← 主渠道
+               → [DeepSeek]  ← 自动 Fallback
+```
+
+**好处**：一个入口管理所有模型，上游切换零成本。
+
+### 2. 自动 Fallback
+
+当主渠道不可用时（4xx/5xx/超时），自动切换到备用渠道。
+
+```
+主渠道通义千问挂了 → 自动切 DeepSeek → 还不行切 GoToken
+```
+
+**效果**：模型服务不稳定时，业务不停。
+
+### 3. 全中文管理后台
+
+- 渠道管理（增删改查 + 编辑）
+- Token 管理（创建 + 配额控制）
+- 模型测试（在线调试）
+- 一键启动，开箱即用
+
+### 4. Token 配额管理
+
+- 为每个调用方生成独立的 API Token
+- 支持无限配额 / 有限配额
+- 支持过期时间设置
+- 方便做用量统计和权限控制
+
+---
+
+## 🏗 技术架构
+
+```
+┌──────────────────────┐
+│     HTTP 请求入口     │
+│  localhost:3002       │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│    Gin 路由层         │
+│  Auth / Middleware    │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│    业务逻辑层          │
+│  渠道管理 / Token管理  │
+│  模型路由 / Fallback   │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│    GORM + SQLite     │
+│    (可切换 MySQL)     │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│   上游模型服务          │
+│ 通义千问/DeepSeek/...  │
+└──────────────────────┘
+```
+
+### 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 后端框架 | Go + Gin |
+| 数据库 | GORM + SQLite（支持 MySQL） |
+| 认证 | JWT Token |
+| 前端 | 原生 HTML + JS |
+| 部署 | 二进制 / Docker |
+
+---
+
+## ⚙️ 配置指南
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PORT` | `3000` | 服务端口 |
+| `DB_TYPE` | `sqlite` | 数据库类型（sqlite / mysql） |
+| `DB_PATH` | `./data/atmapi.db` | 数据库路径 |
+| `JWT_SECRET` | `atmapi-jwt-secret-2026` | JWT 签名密钥 |
+| `LOG_LEVEL` | `info` | 日志级别 |
+
+### 添加上游渠道
+
+1. 登录后台（admin/admin123）
+2. 进入「渠道管理」
+3. 填写：
+   - 渠道名称
+   - API Key
+   - Base URL
+   - 支持的模型列表
+   - 优先级和权重
+
+### 模型映射
+
+支持将请求模型名映射到实际渠道模型：
+
+```json
+{
+  "qwen3.5-plus": "deepseek-v4-flash",
+  "gpt-4": "qwen-turbo"
+}
+```
+
+---
+
+## 🔄 与 One API 对比
+
+| 特性 | One API | ATM API |
+|------|---------|---------|
+| 界面语言 | 英文为主 | 全中文 |
+| Fallback | 需手动配置 | 默认启用 |
+| 部署复杂度 | 中等 | 极简 |
+| 前端框架 | React | 原生 JS（轻量） |
+| 默认数据库 | MySQL | SQLite |
+| 团队品牌 | 无 | AiToMoney 出品 |
+
+---
+
+## 📝 TODO
+
+- [ ] 请求日志查看
+- [ ] 用量统计面板
+- [ ] 渠道在线测试
+- [ ] 批量操作
+- [ ] 模型映射可视化编辑
+- [ ] 登录页优化
+- [ ] 管理员权限控制
+
+---
+
+## 🦐 关于 AiToMoney
+
+<p align="center">
+  <b>一个人可以走得很快，一群虾可以折腾得更远</b>
+</p>
+
+**AiToMoney 虾主联盟** — 由一群不满足于打工、用 AI 技术创造真实价值的实践者组成。
+
+| 平台 | 信息 |
+|------|------|
+| **QQ 群** | 242249487 |
+| **入群暗号** | "我是一只虾，正在水里瞎折腾" |
+
+---
+
+## 📄 许可证
+
+[MIT License](LICENSE)
+
+<p align="center">
+  Made with 🦐 by <a href="https://github.com/sunecom">AiToMoney</a>
+</p>
