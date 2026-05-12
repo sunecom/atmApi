@@ -12,10 +12,7 @@ RestartSec=10
 Environment=PORT=3002
 Environment=DB_TYPE=sqlite
 Environment=DB_PATH=./data/atmapi.db
-
-# 安全配置
-NoNewPrivileges=true
-PrivateTmp=true
+Environment=GIN_MODE=release
 
 [Install]
 WantedBy=multi-user.target
