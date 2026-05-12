@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +63,9 @@ func RegisterRoutes(r *gin.Engine) {
 			managed.PUT("/channels/:id", updateChannel)
 			managed.DELETE("/channels/:id", deleteChannel)
 
+			// 渠道测试
+			managed.POST("/channels/:id/test", testChannel)
+
 			// 请求日志
 			managed.GET("/logs", getLogs)
 
@@ -91,33 +95,25 @@ func login(c *gin.Context) {
 		Username string `json:"username" binding:"required"`
 		Password string `json:"password" binding:"required"`
 	}
-
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	var user model.User
 	result := model.DB.Where("username = ? AND password = ? AND status = ?", req.Username, req.Password, 1).First(&user)
 	if result.Error != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
 	}
-
-	// 生成 JWT
 	token, err := middleware.GenerateToken(user.ID, user.Username, user.Role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 token 失败"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"message":      "登录成功",
-		"token":        token,
-		"user_id":      user.ID,
-		"username":     user.Username,
-		"display_name": user.DisplayName,
-		"role":         user.Role,
+		"message": "登录成功", "token": token,
+		"user_id": user.ID, "username": user.Username,
+		"display_name": user.DisplayName, "role": user.Role,
 	})
 }
 
@@ -129,49 +125,35 @@ func register(c *gin.Context) {
 		DisplayName string `json:"display_name"`
 		Email       string `json:"email"`
 	}
-
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	// 检查用户名是否已存在
 	var count int64
 	model.DB.Model(&model.User{}).Where("username = ?", req.Username).Count(&count)
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"error": "用户名已存在"})
 		return
 	}
-
 	user := model.User{
-		Username:    req.Username,
-		Password:    req.Password,
-		DisplayName: req.DisplayName,
-		Email:       req.Email,
-		Role:        1,
-		Status:      1,
-		Quota:       100000, // 默认配额
+		Username: req.Username, Password: req.Password,
+		DisplayName: req.DisplayName, Email: req.Email,
+		Role: 1, Status: 1, Quota: 100000,
 	}
-
 	if err := model.DB.Create(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "注册失败"})
 		return
 	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "注册成功",
-		"user_id": user.ID,
-	})
+	c.JSON(http.StatusCreated, gin.H{"message": "注册成功", "user_id": user.ID})
 }
 
-// 获取 Token 列表
+// Token CRUD
 func getTokens(c *gin.Context) {
 	var tokens []model.Token
 	model.DB.Find(&tokens)
 	c.JSON(http.StatusOK, gin.H{"data": tokens})
 }
 
-// 创建 Token
 func createToken(c *gin.Context) {
 	var req struct {
 		UserID         uint   `json:"user_id" binding:"required"`
@@ -180,38 +162,23 @@ func createToken(c *gin.Context) {
 		UnlimitedQuota bool   `json:"unlimited_quota"`
 		ExpiredTime    int64  `json:"expired_time"`
 	}
-
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	// 生成随机 token key
-	key := generateTokenKey()
-
 	token := model.Token{
-		UserID:         req.UserID,
-		Name:           req.Name,
-		Key:            key,
-		Status:         1,
-		RemainQuota:    req.RemainQuota,
-		UnlimitedQuota: req.UnlimitedQuota,
-		ExpiredTime:    req.ExpiredTime,
-		CreatedTime:    time.Now().Unix(),
+		UserID: req.UserID, Name: req.Name, Key: generateTokenKey(),
+		Status: 1, RemainQuota: req.RemainQuota,
+		UnlimitedQuota: req.UnlimitedQuota, ExpiredTime: req.ExpiredTime,
+		CreatedTime: time.Now().Unix(),
 	}
-
 	if err := model.DB.Create(&token).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
 		return
 	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "Token 创建成功",
-		"token":   token,
-	})
+	c.JSON(http.StatusCreated, gin.H{"message": "Token 创建成功", "token": token})
 }
 
-// 更新 Token
 func updateToken(c *gin.Context) {
 	id := c.Param("id")
 	var token model.Token
@@ -219,56 +186,47 @@ func updateToken(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Token 不存在"})
 		return
 	}
-
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	if err := model.DB.Model(&token).Updates(req).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "更新成功", "token": token})
 }
 
-// 删除 Token
 func deleteToken(c *gin.Context) {
 	id := c.Param("id")
 	if err := model.DB.Delete(&model.Token{}, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
-// 获取渠道列表
+// Channel CRUD
 func getChannels(c *gin.Context) {
 	var channels []model.Channel
 	model.DB.Order("priority DESC, weight DESC").Find(&channels)
 	c.JSON(http.StatusOK, gin.H{"data": channels})
 }
 
-// 创建渠道
 func createChannel(c *gin.Context) {
 	var req model.Channel
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	if err := model.DB.Create(&req).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
 		return
 	}
-
 	c.JSON(http.StatusCreated, gin.H{"message": "渠道创建成功", "channel": req})
 }
 
-// 更新渠道
 func updateChannel(c *gin.Context) {
 	id := c.Param("id")
 	var channel model.Channel
@@ -276,55 +234,72 @@ func updateChannel(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "渠道不存在"})
 		return
 	}
-
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	if err := model.DB.Model(&channel).Updates(req).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "更新成功", "channel": channel})
 }
 
-// 删除渠道
 func deleteChannel(c *gin.Context) {
 	id := c.Param("id")
 	if err := model.DB.Delete(&model.Channel{}, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
+}
+
+// 渠道测试
+func testChannel(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效 ID"})
+		return
+	}
+	var channel model.Channel
+	if err := model.DB.First(&channel, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "渠道不存在"})
+		return
+	}
+	startTime := time.Now()
+	statusCode, err := service.TestChannel(channel)
+	duration := time.Since(startTime).Milliseconds()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false, "channel": channel.Name,
+			"error": err.Error(), "duration_ms": duration,
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true, "channel": channel.Name,
+		"status_code": statusCode, "duration_ms": duration,
+	})
 }
 
 // 模型路由（核心功能）- 带请求日志
 func chatCompletions(c *gin.Context) {
 	startTime := time.Now()
-
-	// 获取 token
 	tokenKey := extractToken(c)
 	if tokenKey == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少认证 token"})
 		return
 	}
-
-	// 查找 token 信息（用于日志）
 	var apiToken model.Token
 	model.DB.Where("key = ?", tokenKey).First(&apiToken)
 
-	// 读取请求体
 	body, err := service.ReadBody(c.Request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求失败"})
 		return
 	}
-
-	// 解析请求获取目标模型
 	var req struct {
 		Model string `json:"model"`
 	}
@@ -333,38 +308,25 @@ func chatCompletions(c *gin.Context) {
 		return
 	}
 
-	// 路由请求
-	resp, err := service.RouteRequest(req.Model, body, tokenKey)
+	result, err := service.RouteRequest(req.Model, body, tokenKey)
 	if err != nil {
-		// 记录失败日志
 		duration := time.Since(startTime).Milliseconds()
 		model.DB.Create(&model.RequestLog{
-			TokenName:   apiToken.Name,
-			ChannelName: "无可用渠道",
-			Model:       req.Model,
-			StatusCode:  502,
-			DurationMs:  duration,
+			TokenName: apiToken.Name, ChannelName: "无可用渠道",
+			Model: req.Model, StatusCode: 502, DurationMs: duration,
 		})
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	defer resp.Body.Close()
+	defer result.Response.Body.Close()
 
-	// 读取上游响应
-	respBody, _ := io.ReadAll(resp.Body)
-
-	// 记录成功日志
+	respBody, _ := io.ReadAll(result.Response.Body)
 	duration := time.Since(startTime).Milliseconds()
 	model.DB.Create(&model.RequestLog{
-		TokenName:   apiToken.Name,
-		ChannelName: "已路由", // service 层可优化为返回实际渠道名
-		Model:       req.Model,
-		StatusCode:  resp.StatusCode,
-		DurationMs:  duration,
+		TokenName: apiToken.Name, ChannelName: result.ChannelName,
+		Model: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
 	})
-
-	// 返回上游响应
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
+	c.Data(result.Response.StatusCode, result.Response.Header.Get("Content-Type"), respBody)
 }
 
 // 获取请求日志
@@ -378,19 +340,16 @@ func getLogs(c *gin.Context) {
 func listModels(c *gin.Context) {
 	var channels []model.Channel
 	model.DB.Where("status = ?", 1).Find(&channels)
-
 	models := make(map[string]bool)
 	for _, ch := range channels {
 		for _, m := range parseModels(ch.Models) {
 			models[m] = true
 		}
 	}
-
 	modelList := make([]string, 0, len(models))
 	for m := range models {
 		modelList = append(modelList, m)
 	}
-
 	c.JSON(http.StatusOK, gin.H{"data": modelList})
 }
 

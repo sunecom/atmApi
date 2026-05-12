@@ -13,8 +13,14 @@ import (
 	"atmapi/internal/model"
 )
 
+// RouteRequestResult 路由请求结果
+type RouteRequestResult struct {
+	Response    *http.Response
+	ChannelName string
+}
+
 // RouteRequest 路由请求到合适的渠道
-func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*http.Response, error) {
+func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*RouteRequestResult, error) {
 	// 1. 验证 token
 	token, err := validateToken(tokenKey)
 	if err != nil {
@@ -42,19 +48,14 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*htt
 	var lastErr error
 	for _, channel := range channels {
 		log.Printf("[路由] 尝试渠道: %s (status=%d)", channel.Name, channel.Status)
-		// 检查渠道状态
 		if channel.Status != 1 {
 			log.Printf("[路由] 渠道 %s 未启用，跳过", channel.Name)
 			continue
 		}
 
-		// 应用模型映射
 		mappedModel := applyModelMapping(channel.ModelMapping, targetModel)
-
-		// 替换请求体中的模型名
 		modifiedBody := replaceModelInRequest(requestBody, mappedModel)
 
-		// 发送请求
 		resp, err := sendToChannel(channel, modifiedBody)
 		if err != nil {
 			lastErr = err
@@ -62,7 +63,6 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*htt
 			continue
 		}
 
-		// 检查响应状态码，4xx/5xx 触发 fallback
 		if resp.StatusCode >= 400 {
 			lastErr = fmt.Errorf("渠道 %s 返回 HTTP %d", channel.Name, resp.StatusCode)
 			log.Printf("渠道 %s 返回 HTTP %d，触发 fallback", channel.Name, resp.StatusCode)
@@ -73,10 +73,31 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*htt
 		// 更新配额
 		updateQuota(token, 1)
 
-		return resp, nil
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name}, nil
 	}
 
 	return nil, fmt.Errorf("所有渠道均失败：%w", lastErr)
+}
+
+// TestChannel 测试单个渠道连通性
+func TestChannel(channel model.Channel) (int, error) {
+	testBody := []byte(`{"model":"test","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
+	url := channel.BaseURL + "/v1/chat/completions"
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(testBody))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+channel.Key)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
 }
 
 // validateToken 验证 token
@@ -87,7 +108,6 @@ func validateToken(key string) (*model.Token, error) {
 		return nil, fmt.Errorf("token 不存在或已禁用")
 	}
 
-	// 检查过期时间
 	if token.ExpiredTime > 0 && time.Now().Unix() > token.ExpiredTime {
 		token.Status = 3
 		model.DB.Save(&token)
@@ -100,7 +120,6 @@ func validateToken(key string) (*model.Token, error) {
 // getChannelsForModel 获取支持指定模型的渠道列表
 func getChannelsForModel(modelName string) ([]model.Channel, error) {
 	var channels []model.Channel
-	// 查询支持该模型的渠道
 	result := model.DB.Where(
 		"models LIKE ? AND status = ?",
 		"%"+modelName+"%",
@@ -110,7 +129,6 @@ func getChannelsForModel(modelName string) ([]model.Channel, error) {
 	if result.Error != nil {
 		return nil, result.Error
 	}
-
 	return channels, nil
 }
 
@@ -119,16 +137,13 @@ func applyModelMapping(mappingJSON string, originalModel string) string {
 	if mappingJSON == "" {
 		return originalModel
 	}
-
 	var mapping map[string]string
 	if err := json.Unmarshal([]byte(mappingJSON), &mapping); err != nil {
 		return originalModel
 	}
-
 	if mapped, ok := mapping[originalModel]; ok {
 		return mapped
 	}
-
 	return originalModel
 }
 
@@ -138,7 +153,6 @@ func replaceModelInRequest(body []byte, newModel string) []byte {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body
 	}
-
 	req["model"] = newModel
 	newBody, _ := json.Marshal(req)
 	return newBody
@@ -147,19 +161,13 @@ func replaceModelInRequest(body []byte, newModel string) []byte {
 // sendToChannel 发送请求到指定渠道
 func sendToChannel(channel model.Channel, body []byte) (*http.Response, error) {
 	url := channel.BaseURL + "/v1/chat/completions"
-
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+channel.Key)
-
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
+	client := &http.Client{Timeout: 30 * time.Second}
 	return client.Do(req)
 }
 

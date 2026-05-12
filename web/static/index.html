@@ -601,13 +601,11 @@
       return '<span class="badge badge-danger">' + code + '</span>';
     }
 
-    async function loadChannels() {
+        async function loadChannels() {
       const res = await fetch('/api/v1/channels', { headers: authHeaders() });
       if (res.status === 401) return setText('channelsTableWrap', '请先登录');
       const data = await safeJson(res);
       const rows = (data.data || []).map(ch => {
-        let mapping = '';
-        try { mapping = JSON.stringify(JSON.parse(ch.model_mapping || '{}')); } catch(e) { mapping = ch.model_mapping || ''; }
         return '<tr>' +
           '<td>' + ch.id + '</td>' +
           '<td>' + ch.name + '</td>' +
@@ -617,6 +615,7 @@
           '<td><code>' + (ch.base_url || '') + '</code></td>' +
           '<td>' + (ch.models || '') + '</td>' +
           '<td>' +
+            '<button class="btn btn-primary btn-sm" onclick="testChannelById(' + ch.id + ')">测试</button> ' +
             '<button class="btn btn-secondary btn-sm" onclick="editChannel(' + ch.id + ')">编辑</button> ' +
             '<button class="btn btn-danger btn-sm" onclick="deleteChannel(' + ch.id + ')">删除</button>' +
           '</td>' +
@@ -641,6 +640,17 @@
       document.getElementById('ch_weight').value = ch.weight;
       window._editingChannelId = id;
       showTab('channels', document.querySelectorAll('.nav button')[1]);
+    }
+
+    async function testChannelById(id) {
+      const btn = event.target;
+      btn.disabled = true;
+      btn.textContent = '测试中...';
+      const res = await fetch('/api/v1/channels/' + id + '/test', { method: 'POST', headers: authHeaders() });
+      const data = await safeJson(res);
+      alert(JSON.stringify(data, null, 2));
+      btn.disabled = false;
+      btn.textContent = '测试';
     }
 
     async function deleteChannel(id) {
