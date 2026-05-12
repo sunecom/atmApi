@@ -42,7 +42,7 @@ func InitDB(cfg *config.Config) {
 	}
 
 	// 自动迁移
-	err = DB.AutoMigrate(&User{}, &Token{}, &Channel{})
+	err = DB.AutoMigrate(&User{}, &Token{}, &Channel{}, &RequestLog{})
 	if err != nil {
 		log.Fatalf("数据库迁移失败：%v", err)
 	}

@@ -41,6 +41,8 @@
       position: fixed;
       height: 100vh;
       overflow-y: auto;
+      display: flex;
+      flex-direction: column;
     }
     .brand {
       padding: 0 20px 20px;
@@ -58,7 +60,7 @@
       color: var(--text-dim);
       line-height: 1.4;
     }
-    .nav { padding: 0 12px; }
+    .nav { padding: 0 12px; flex: 1; }
     .nav button {
       width: 100%;
       text-align: left;
@@ -79,6 +81,13 @@
     .nav button.active {
       background: var(--primary);
       color: #fff;
+    }
+    .sidebar-footer {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.6;
     }
     
     /* Main */
@@ -225,6 +234,10 @@
       background: rgba(239, 68, 68, 0.15);
       color: var(--danger);
     }
+    .badge-warning {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--warning);
+    }
     
     /* Login Overlay */
     .login-overlay {
@@ -313,11 +326,7 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-title">atmApi</div>
-        <div class="brand-desc">国产替代 Plus 的最小后台</div>
-      </div>
-      <div style="padding:16px 20px;margin-top:20px;border-top:1px solid var(--border);">
-        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">🦐 AiToMoney 出品</div>
-        <div style="font-size:11px;color:var(--text-dim);line-height:1.6;">一个人可以走得很快<br/>一群虾可以折腾得更远</div>
+        <div class="brand-desc">国产替代 Plus · 你的 AI 模型自动提款机</div>
       </div>
       <div id="userBar" class="user-bar hidden">
         <span id="userInfo" class="user-info"></span>
@@ -327,7 +336,12 @@
         <button class="active" onclick="showTab('dashboard', this)">总览面板</button>
         <button onclick="showTab('channels', this)">渠道管理</button>
         <button onclick="showTab('tokens', this)">Token 管理</button>
+        <button onclick="showTab('logs', this)">请求日志 <span id="logBadge" class="badge badge-success" style="display:none;">0</span></button>
         <button onclick="showTab('tester', this)">模型测试</button>
+      </div>
+      <div class="sidebar-footer">
+        <div>🦐 AiToMoney 出品</div>
+        <div>一个人可以走得很快<br/>一群虾可以折腾得更远</div>
       </div>
     </aside>
 
@@ -335,7 +349,7 @@
       <section id="tab-dashboard" class="tab">
         <div class="header">
           <h1>后台管理界面已上线</h1>
-          <p>这一版先解决三个本质问题：<b>能看、能配、能测</b>。你现在可以直接在网页里查看渠道、查看 Token、创建新渠道、创建新 Token，并测试模型路由。</p>
+          <p>这一版先解决三个本质问题：<b>能看、能配、能测</b>。</p>
         </div>
         <div class="grid">
           <div class="card span-4">
@@ -351,10 +365,11 @@
           <div class="card span-4">
             <div class="card-title">快速说明</div>
             <div class="muted" style="font-size:12px;line-height:1.8;">
-              - 根路径现在是后台首页<br/>
+              - 根路径是后台首页<br/>
               - /health 是健康检查<br/>
-              - /api/v1/models 是聚合模型列表<br/>
-              - chat/completions 支持 fallback
+              - /api/v1/models 是模型列表<br/>
+              - chat/completions 支持 fallback<br/>
+              - 请求日志自动记录
             </div>
           </div>
         </div>
@@ -368,22 +383,23 @@
             <div id="channelsTableWrap" class="muted">等待加载…</div>
           </div>
           <div class="card span-4">
-            <div class="card-title">新增渠道</div>
-            <input id="ch_name" placeholder="渠道名称，例如 DeepSeek - 备用" />
+            <div class="card-title">新建 / 编辑渠道</div>
+            <div class="muted" style="font-size:11px;margin-bottom:8px;">编辑时自动填充表单，修改后点击创建保存。</div>
+            <input id="ch_name" placeholder="渠道名称" />
             <div class="row">
               <input id="ch_type" value="1" placeholder="类型" />
-              <input id="ch_status" value="1" placeholder="状态" />
+              <input id="ch_status" value="1" placeholder="状态（1启用）" />
             </div>
             <input id="ch_key" placeholder="API Key" />
-            <input id="ch_base_url" placeholder="Base URL，例如 https://api.deepseek.com" />
-            <input id="ch_models" placeholder="模型列表，逗号分隔" />
-            <textarea id="ch_mapping" placeholder='模型映射 JSON，例如 {"qwen3.5-plus":"deepseek-v4-flash"}'></textarea>
+            <input id="ch_base_url" placeholder="Base URL" />
+            <input id="ch_models" placeholder="模型，逗号分隔" />
+            <textarea id="ch_mapping" placeholder='模型映射 JSON'></textarea>
             <div class="row">
               <input id="ch_priority" value="10" placeholder="优先级" />
               <input id="ch_weight" value="10" placeholder="权重" />
             </div>
-            <button class="btn btn-success" onclick="createChannel()">创建渠道</button>
-            <pre id="channelCreateOut" style="margin-top:12px;">填写表单后可直接创建…</pre>
+            <button class="btn btn-success" onclick="createChannel()">创建 / 保存</button>
+            <pre id="channelCreateOut" style="margin-top:12px;">填写表单后创建…</pre>
           </div>
         </div>
       </section>
@@ -396,18 +412,29 @@
             <div id="tokensTableWrap" class="muted">等待加载…</div>
           </div>
           <div class="card span-4">
-            <div class="card-title">新增 Token</div>
+            <div class="card-title">新建 / 编辑 Token</div>
+            <div class="muted" style="font-size:11px;margin-bottom:8px;">编辑时自动填充表单，修改后点击创建保存。</div>
             <input id="tk_user_id" value="1" placeholder="用户 ID" />
             <input id="tk_name" placeholder="Token 名称" />
             <div class="row">
               <input id="tk_remain_quota" value="-1" placeholder="剩余配额 (-1 无限)" />
-              <input id="tk_expired_time" value="-1" placeholder="过期时间 (-1 永不过期)" />
+              <input id="tk_expired_time" value="-1" placeholder="过期 (-1 永不过期)" />
             </div>
             <div style="margin-bottom:12px;">
               <label><input id="tk_unlimited" type="checkbox" checked style="width:auto;margin-right:6px;" /> 无限配额</label>
             </div>
-            <button class="btn btn-success" onclick="createToken()">创建 Token</button>
-            <pre id="tokenCreateOut" style="margin-top:12px;">填写表单后可直接创建…</pre>
+            <button class="btn btn-success" onclick="createToken()">创建 / 保存</button>
+            <pre id="tokenCreateOut" style="margin-top:12px;">填写表单后创建…</pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-logs" class="tab hidden">
+        <div class="grid">
+          <div class="card span-12">
+            <div class="card-title">请求日志</div>
+            <button class="btn btn-primary mb-4" onclick="loadLogs()">刷新日志</button>
+            <div id="logsWrap" class="muted">等待加载…</div>
           </div>
         </div>
       </section>
@@ -425,12 +452,12 @@
           <div class="card span-6">
             <div class="card-title">说明</div>
             <div class="muted" style="font-size:12px;line-height:1.8;">
-              这里是最小可用后台，不追求前端炫技，先追求业务闭环：<br/><br/>
+              这里是最小可用后台，先追求业务闭环：<br/><br/>
               1. 渠道可创建 / 编辑 / 删除<br/>
               2. Token 可创建 / 编辑 / 删除<br/>
-              3. 模型可测试<br/>
-              4. fallback 可验证<br/><br/>
-              下一阶段：登录页、权限控制、统计图表。
+              3. 请求日志自动记录<br/>
+              4. 模型可在线测试<br/>
+              5. fallback 可验证
             </div>
           </div>
         </div>
@@ -458,7 +485,7 @@
   </footer>
 
   <script>
-    console.log('=== 页面加载，JS 版本：2026-05-12 11:20 ===');
+    console.log('=== atmApi 管理后台 v0.1.0 ===');
     // ===== 认证管理 =====
     function getToken() { return localStorage.getItem('atmapi_token') || ''; }
     function setToken(t) { localStorage.setItem('atmapi_token', t); }
@@ -469,36 +496,25 @@
     }
 
     async function doLogin() {
-      console.log('=== doLogin 开始执行 ===');
       const username = document.getElementById('loginUser').value.trim();
       const password = document.getElementById('loginPass').value;
       const errEl = document.getElementById('loginErr');
       const loginBtn = document.querySelector('#loginOverlay button');
-      console.log('用户名:', username);
       errEl.textContent = '';
       loginBtn.disabled = true;
       loginBtn.textContent = '登录中...';
-      console.log('开始发送请求...');
       try {
         const res = await fetch('/api/v1/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password }),
         });
-        console.log('响应状态码:', res.status);
         const text = await res.text();
-        console.log('响应原文:', text);
         const data = JSON.parse(text);
-        console.log('解析后的数据:', data);
         if (res.ok && data.token) {
-          console.log('登录成功，保存 Token');
           setToken(data.token);
-          console.log('Token 已保存到 localStorage');
-          console.log('调用 showApp');
           showApp(data);
-          console.log('showApp 执行完成');
         } else {
-          console.log('登录失败');
           errEl.textContent = data.error || '登录失败';
           loginBtn.disabled = false;
           loginBtn.textContent = '登录';
@@ -518,41 +534,30 @@
     }
 
     function showApp(userData) {
-      console.log('showApp 被调用，userData:', userData);
       const overlay = document.getElementById('loginOverlay');
       const userBar = document.getElementById('userBar');
       const userInfo = document.getElementById('userInfo');
-      console.log('overlay:', overlay);
-      console.log('userBar:', userBar);
       overlay.classList.add('hidden');
       userBar.classList.remove('hidden');
       const name = (userData && userData.display_name) || (userData && userData.username) || '管理员';
       const role = (userData && userData.role) === 100 ? '管理员' : '用户';
       userInfo.textContent = name + ' · ' + role;
-      console.log('登录成功！已切换到主界面');
     }
 
     // 页面加载时检查 token
     (function checkAuth() {
       const t = getToken();
-      console.log('checkAuth: Token 存在 =', !!t);
       if (t) {
-        // 先显示主界面，避免闪烁
         document.getElementById('loginOverlay').classList.add('hidden');
         document.getElementById('userBar').classList.remove('hidden');
         document.getElementById('userInfo').textContent = '已登录';
-        // 然后在后台验证 token 是否有效
         fetch('/api/v1/channels', { headers: authHeaders() }).then(async r => {
           if (!r.ok) {
-            console.log('checkAuth: Token 已失效，清除');
             clearToken();
             document.getElementById('loginOverlay').classList.remove('hidden');
             document.getElementById('userBar').classList.add('hidden');
-          } else {
-            console.log('checkAuth: Token 验证成功');
           }
-        }).catch((e) => {
-          console.log('checkAuth: 验证失败', e);
+        }).catch(() => {
           clearToken();
           document.getElementById('loginOverlay').classList.remove('hidden');
           document.getElementById('userBar').classList.add('hidden');
@@ -579,35 +584,45 @@
       setText('healthOut', await safeJson(res));
     }
 
+    async function loadModels() {
+      const res = await fetch('/api/v1/models');
+      setText('modelsOut', await safeJson(res));
+    }
+
     function channelStatusBadge(status) {
-      return status === 1 ? '<span class="badge badge-success">启用</span>' : '<span class="badge badge-danger">禁用</span>';
+      return status === 1 ? '<span class="badge badge-success">启用</span>' :
+             status === 2 ? '<span class="badge badge-warning">禁用</span>' :
+             '<span class="badge badge-danger">未知</span>';
+    }
+
+    function logStatusBadge(code) {
+      if (code >= 200 && code < 300) return '<span class="badge badge-success">' + code + '</span>';
+      if (code >= 400 && code < 500) return '<span class="badge badge-warning">' + code + '</span>';
+      return '<span class="badge badge-danger">' + code + '</span>';
     }
 
     async function loadChannels() {
       const res = await fetch('/api/v1/channels', { headers: authHeaders() });
       if (res.status === 401) return setText('channelsTableWrap', '请先登录');
       const data = await safeJson(res);
-      const rows = (data.data || []).map(ch => `
-        <tr>
-          <td>${ch.id}</td>
-          <td>${ch.name}</td>
-          <td>${channelStatusBadge(ch.status)}</td>
-          <td>${ch.priority}</td>
-          <td>${ch.weight}</td>
-          <td><code>${ch.base_url || ''}</code></td>
-          <td>${ch.models || ''}</td>
-          <td>
-            <button class="btn btn-secondary btn-sm" onclick="editChannel(${ch.id})">编辑</button>
-            <button class="btn btn-danger btn-sm" onclick="deleteChannel(${ch.id})">删除</button>
-          </td>
-        </tr>
-      `).join('');
-      document.getElementById('channelsTableWrap').innerHTML = `
-        <table>
-          <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>优先级</th><th>权重</th><th>Base URL</th><th>模型</th><th>操作</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="8">暂无数据</td></tr>'}</tbody>
-        </table>
-      `;
+      const rows = (data.data || []).map(ch => {
+        let mapping = '';
+        try { mapping = JSON.stringify(JSON.parse(ch.model_mapping || '{}')); } catch(e) { mapping = ch.model_mapping || ''; }
+        return '<tr>' +
+          '<td>' + ch.id + '</td>' +
+          '<td>' + ch.name + '</td>' +
+          '<td>' + channelStatusBadge(ch.status) + '</td>' +
+          '<td>' + ch.priority + '</td>' +
+          '<td>' + ch.weight + '</td>' +
+          '<td><code>' + (ch.base_url || '') + '</code></td>' +
+          '<td>' + (ch.models || '') + '</td>' +
+          '<td>' +
+            '<button class="btn btn-secondary btn-sm" onclick="editChannel(' + ch.id + ')">编辑</button> ' +
+            '<button class="btn btn-danger btn-sm" onclick="deleteChannel(' + ch.id + ')">删除</button>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+      document.getElementById('channelsTableWrap').innerHTML = '<table><thead><tr><th>ID</th><th>名称</th><th>状态</th><th>优先级</th><th>权重</th><th>Base URL</th><th>模型</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="8">暂无数据</td></tr>') + '</tbody></table>';
     }
 
     async function editChannel(id) {
@@ -617,6 +632,7 @@
       if (!ch) return alert('渠道不存在');
       document.getElementById('ch_name').value = ch.name;
       document.getElementById('ch_type').value = ch.type;
+      document.getElementById('ch_status').value = ch.status;
       document.getElementById('ch_key').value = ch.key;
       document.getElementById('ch_base_url').value = ch.base_url;
       document.getElementById('ch_models').value = ch.models;
@@ -629,12 +645,8 @@
 
     async function deleteChannel(id) {
       if (!confirm('确定删除该渠道？')) return;
-      const res = await fetch('/api/v1/channels/' + id, {
-        method: 'DELETE',
-        headers: authHeaders(),
-      });
-      const data = await safeJson(res);
-      setText('channelCreateOut', data);
+      const res = await fetch('/api/v1/channels/' + id, { method: 'DELETE', headers: authHeaders() });
+      setText('channelCreateOut', await safeJson(res));
       loadChannels();
     }
 
@@ -642,11 +654,11 @@
       const payload = {
         name: document.getElementById('ch_name').value.trim(),
         type: Number(document.getElementById('ch_type').value || 1),
+        status: Number(document.getElementById('ch_status').value || 1),
         key: document.getElementById('ch_key').value.trim(),
         base_url: document.getElementById('ch_base_url').value.trim(),
         models: document.getElementById('ch_models').value.trim(),
         model_mapping: document.getElementById('ch_mapping').value.trim(),
-        status: Number(document.getElementById('ch_status').value || 1),
         priority: Number(document.getElementById('ch_priority').value || 0),
         weight: Number(document.getElementById('ch_weight').value || 0),
       };
@@ -654,12 +666,10 @@
       const url = isEdit ? '/api/v1/channels/' + window._editingChannelId : '/api/v1/channels';
       const method = isEdit ? 'PUT' : 'POST';
       const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        method, headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(payload),
       });
-      const data = await safeJson(res);
-      setText('channelCreateOut', data);
+      setText('channelCreateOut', await safeJson(res));
       window._editingChannelId = null;
       document.getElementById('ch_name').value = '';
       document.getElementById('ch_key').value = '';
@@ -673,26 +683,23 @@
       const res = await fetch('/api/v1/tokens', { headers: authHeaders() });
       if (res.status === 401) return setText('tokensTableWrap', '请先登录');
       const data = await safeJson(res);
-      const rows = (data.data || []).map(tk => `
-        <tr>
-          <td>${tk.id}</td>
-          <td>${tk.name}</td>
-          <td><code>${tk.key}</code></td>
-          <td>${tk.user_id}</td>
-          <td>${tk.unlimited_quota ? '无限' : tk.remain_quota}</td>
-          <td>${tk.expired_time}</td>
-          <td>
-            <button class="btn btn-secondary btn-sm" onclick="editToken(${tk.id})">编辑</button>
-            <button class="btn btn-danger btn-sm" onclick="deleteToken(${tk.id})">删除</button>
-          </td>
-        </tr>
-      `).join('');
-      document.getElementById('tokensTableWrap').innerHTML = `
-        <table>
-          <thead><tr><th>ID</th><th>名称</th><th>Key</th><th>User</th><th>配额</th><th>过期</th><th>操作</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="7">暂无数据</td></tr>'}</tbody>
-        </table>
-      `;
+      const rows = (data.data || []).map(tk => {
+        const created = tk.created_time ? new Date(tk.created_time * 1000).toLocaleString() : '-';
+        const expired = tk.expired_time > 0 ? new Date(tk.expired_time * 1000).toLocaleString() : '永不过期';
+        return '<tr>' +
+          '<td>' + tk.id + '</td>' +
+          '<td>' + tk.name + '</td>' +
+          '<td><code>' + tk.key + '</code></td>' +
+          '<td>' + (tk.unlimited_quota ? '无限' : tk.remain_quota) + '</td>' +
+          '<td>' + expired + '</td>' +
+          '<td>' + created + '</td>' +
+          '<td>' +
+            '<button class="btn btn-secondary btn-sm" onclick="editToken(' + tk.id + ')">编辑</button> ' +
+            '<button class="btn btn-danger btn-sm" onclick="deleteToken(' + tk.id + ')">删除</button>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+      document.getElementById('tokensTableWrap').innerHTML = '<table><thead><tr><th>ID</th><th>名称</th><th>Key</th><th>配额</th><th>过期</th><th>创建</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7">暂无数据</td></tr>') + '</tbody></table>';
     }
 
     async function editToken(id) {
@@ -711,12 +718,8 @@
 
     async function deleteToken(id) {
       if (!confirm('确定删除该 Token？')) return;
-      const res = await fetch('/api/v1/tokens/' + id, {
-        method: 'DELETE',
-        headers: authHeaders(),
-      });
-      const data = await safeJson(res);
-      setText('tokenCreateOut', data);
+      const res = await fetch('/api/v1/tokens/' + id, { method: 'DELETE', headers: authHeaders() });
+      setText('tokenCreateOut', await safeJson(res));
       loadTokens();
     }
 
@@ -732,8 +735,7 @@
       const url = isEdit ? '/api/v1/tokens/' + window._editingTokenId : '/api/v1/tokens';
       const method = isEdit ? 'PUT' : 'POST';
       const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        method, headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(payload),
       });
       const data = await safeJson(res);
@@ -744,6 +746,27 @@
       window._editingTokenId = null;
       document.getElementById('tk_name').value = '';
       loadTokens();
+    }
+
+    async function loadLogs() {
+      const res = await fetch('/api/v1/logs', { headers: authHeaders() });
+      if (res.status === 401) return setText('logsWrap', '请先登录');
+      const data = await safeJson(res);
+      const badge = document.getElementById('logBadge');
+      badge.style.display = '';
+      const rows = (data.data || []).map(log => {
+        const t = new Date(log.created_at).toLocaleString();
+        return '<tr>' +
+          '<td>' + log.id + '</td>' +
+          '<td>' + t + '</td>' +
+          '<td>' + log.token_name + '</td>' +
+          '<td>' + log.channel_name + '</td>' +
+          '<td>' + log.model + '</td>' +
+          '<td>' + logStatusBadge(log.status_code) + '</td>' +
+          '<td>' + log.duration_ms + 'ms</td>' +
+        '</tr>';
+      }).join('');
+      document.getElementById('logsWrap').innerHTML = '<table><thead><tr><th>ID</th><th>时间</th><th>Token</th><th>渠道</th><th>模型</th><th>状态</th><th>耗时</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7">暂无请求日志</td></tr>') + '</tbody></table>';
     }
 
     async function testChat() {
@@ -757,19 +780,17 @@
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + token,
         },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: 128,
-        }),
+        body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 128 }),
       });
       setText('chatOut', await safeJson(res));
     }
 
+    // 初始加载
     loadHealth();
     loadModels();
     loadChannels();
     loadTokens();
+    loadLogs();
   </script>
 </body>
 </html>

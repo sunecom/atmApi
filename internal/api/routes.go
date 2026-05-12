@@ -62,6 +62,9 @@ func RegisterRoutes(r *gin.Engine) {
 			managed.PUT("/channels/:id", updateChannel)
 			managed.DELETE("/channels/:id", deleteChannel)
 
+			// 请求日志
+			managed.GET("/logs", getLogs)
+
 			// 模型路由
 			managed.POST("/chat/completions", chatCompletions)
 		}
@@ -299,14 +302,20 @@ func deleteChannel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
-// 模型路由（核心功能）
+// 模型路由（核心功能）- 带请求日志
 func chatCompletions(c *gin.Context) {
+	startTime := time.Now()
+
 	// 获取 token
 	tokenKey := extractToken(c)
 	if tokenKey == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少认证 token"})
 		return
 	}
+
+	// 查找 token 信息（用于日志）
+	var apiToken model.Token
+	model.DB.Where("key = ?", tokenKey).First(&apiToken)
 
 	// 读取请求体
 	body, err := service.ReadBody(c.Request)
@@ -327,14 +336,42 @@ func chatCompletions(c *gin.Context) {
 	// 路由请求
 	resp, err := service.RouteRequest(req.Model, body, tokenKey)
 	if err != nil {
+		// 记录失败日志
+		duration := time.Since(startTime).Milliseconds()
+		model.DB.Create(&model.RequestLog{
+			TokenName:   apiToken.Name,
+			ChannelName: "无可用渠道",
+			Model:       req.Model,
+			StatusCode:  502,
+			DurationMs:  duration,
+		})
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 
-	// 返回上游响应
+	// 读取上游响应
 	respBody, _ := io.ReadAll(resp.Body)
+
+	// 记录成功日志
+	duration := time.Since(startTime).Milliseconds()
+	model.DB.Create(&model.RequestLog{
+		TokenName:   apiToken.Name,
+		ChannelName: "已路由", // service 层可优化为返回实际渠道名
+		Model:       req.Model,
+		StatusCode:  resp.StatusCode,
+		DurationMs:  duration,
+	})
+
+	// 返回上游响应
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
+}
+
+// 获取请求日志
+func getLogs(c *gin.Context) {
+	var logs []model.RequestLog
+	model.DB.Order("id DESC").Limit(100).Find(&logs)
+	c.JSON(http.StatusOK, gin.H{"data": logs})
 }
 
 // 列出可用模型
@@ -344,7 +381,6 @@ func listModels(c *gin.Context) {
 
 	models := make(map[string]bool)
 	for _, ch := range channels {
-		// 解析 models 字段
 		for _, m := range parseModels(ch.Models) {
 			models[m] = true
 		}
@@ -360,7 +396,6 @@ func listModels(c *gin.Context) {
 
 // 辅助函数
 func generateTokenKey() string {
-	// 简单实现，实际应该用 crypto/rand
 	return fmt.Sprintf("atm-%d", time.Now().UnixNano())
 }
 
@@ -373,6 +408,5 @@ func extractToken(c *gin.Context) string {
 }
 
 func parseModels(modelsStr string) []string {
-	// 简单实现
 	return strings.Split(modelsStr, ",")
 }
