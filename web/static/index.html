@@ -820,18 +820,41 @@
       loadChannels();
     }
 
+    function formatQuota(tk) {
+      // 有 rate_limit_group 的显示对应次数
+      const group = tk.rate_limit_group || '';
+      const groupMap = {
+        'basic': '500次/5小时',
+        'standard': '1000次/5小时',
+        'premium': '1500次/5小时',
+        'pro': '2000次/5小时',
+        'weekly': '40000次/周'
+      };
+      if (groupMap[group]) return groupMap[group];
+      // 没有 rate_limit_group 的无限卡显示"无限"
+      if (tk.unlimited_quota) return '无限';
+      return tk.remain_quota;
+    }
+
     async function loadTokens() {
       const res = await fetch('/api/v1/tokens', { headers: authHeaders() });
       if (res.status === 401) return setText('tokensTableWrap', '请先登录');
       const data = await safeJson(res);
       const rows = (data.data || []).map(tk => {
         const created = tk.created_time ? new Date(tk.created_time * 1000).toLocaleString() : '-';
-        const expired = tk.expired_time > 0 ? new Date(tk.expired_time * 1000).toLocaleString() : '永不过期';
+        const expired = (() => {
+          // 有 rate_limit_group 的卡（月卡类）需要激活
+          if (tk.rate_limit_group) {
+            return tk.activated_at === 0 ? '未激活' : (tk.expired_time > 0 ? new Date(tk.expired_time * 1000).toLocaleString() : '永不过期');
+          }
+          // 没有 rate_limit_group 的卡（团队卡等）不需要激活
+          return tk.expired_time > 0 ? new Date(tk.expired_time * 1000).toLocaleString() : '永不过期';
+        })();
         return '<tr>' +
           '<td>' + tk.id + '</td>' +
           '<td>' + tk.name + '</td>' +
           '<td><code>' + tk.key + '</code></td>' +
-          '<td>' + (tk.unlimited_quota ? '无限' : tk.remain_quota) + '</td>' +
+          '<td>' + formatQuota(tk) + '</td>' +
           '<td>' + expired + '</td>' +
           '<td>' + created + '</td>' +
           '<td>' +
