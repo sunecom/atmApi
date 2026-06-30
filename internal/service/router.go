@@ -8,10 +8,41 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"atmapi/internal/model"
 )
+
+// 渠道并发控制（通用）
+var (
+	channelConcurrency = make(map[uint]int) // channelID -> 当前并发数
+	concurrencyMutex   sync.Mutex
+)
+
+// acquireConcurrency 尝试获取并发槽位
+func acquireConcurrency(channelID uint, maxConcurrent int) bool {
+	concurrencyMutex.Lock()
+	defer concurrencyMutex.Unlock()
+	
+	current := channelConcurrency[channelID]
+	if current >= maxConcurrent {
+		return false
+	}
+	channelConcurrency[channelID] = current + 1
+	return true
+}
+
+// releaseConcurrency 释放并发槽位
+func releaseConcurrency(channelID uint) {
+	concurrencyMutex.Lock()
+	defer concurrencyMutex.Unlock()
+	
+	if current, ok := channelConcurrency[channelID]; ok && current > 0 {
+		channelConcurrency[channelID] = current - 1
+	}
+}
 
 // RouteRequestResult 路由请求结果
 type RouteRequestResult struct {
@@ -19,7 +50,30 @@ type RouteRequestResult struct {
 	ChannelName string
 }
 
-// RouteRequest 路由请求到合适的渠道
+// ModelRoute 模型路由表
+// 对外模型名 → 实际要试的渠道列表（按优先级从高到低）
+// 每个条目：[channel_id, model_override, priority]
+// 数字越大越优先，失败就 fallback 到下一个
+type ModelRouteEntry struct {
+	ChannelID uint
+	ChannelName string
+	ModelOverride string // 空字符串表示用原模型名
+	Priority int
+}
+
+type ModelRouteConfig struct {
+	VisibleModel string // 对外暴露的模型名
+	Routes []ModelRouteEntry
+}
+
+// modelRouter 路由策略配置（已移除 glm-5.2，改走聚合组 model_group）
+// key: 对外模型名, value: 要试的渠道列表（按优先级降序）
+var modelRouter = map[string][]ModelRouteEntry{
+	// glm-5.2 已迁移到聚合组（channels 表 model_group='glm-5.2'）
+	// 聚合组全挂时直接报错，不 fallback 到其他模型
+}
+
+// RouteRequest 路由请求到合适渠道
 func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*RouteRequestResult, error) {
 	// 1. 验证 token
 	token, err := validateToken(tokenKey)
@@ -27,13 +81,31 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 		return nil, fmt.Errorf("token 验证失败：%w", err)
 	}
 
-	// 2. 检查配额
+	// 2. 检查配额（总量）
 	if token.RemainQuota == 0 && !token.UnlimitedQuota {
 		return nil, fmt.Errorf("token 配额已用完")
 	}
 
-	// 3. 获取支持该模型的渠道列表（按优先级排序）
-	log.Printf("[路由] 查找模型: %s", targetModel)
+	// 3. 检查滑动窗口限流
+	allowed, reason := CheckRateLimit(token)
+	if !allowed {
+		return nil, fmt.Errorf("限流：%s", reason)
+	}
+
+	// 4a. 先查聚合组（model_group）
+	if groupChannels, err := getModelGroupChannels(targetModel); err == nil && len(groupChannels) > 0 {
+		log.Printf("[路由] 模型 %s 命中聚合组，共 %d 个渠道", targetModel, len(groupChannels))
+		return routeToModelGroup(groupChannels, requestBody, token, targetModel)
+	}
+
+	// 4b. 查路由表（modelRouter）
+	if routes, ok := modelRouter[targetModel]; ok {
+		log.Printf("[路由] 模型 %s 命中路由表，共 %d 个备选渠道", targetModel, len(routes))
+		return routeToBestChannel(targetModel, requestBody, token, routes)
+	}
+
+	// 4c. 原逻辑：查 models LIKE 匹配
+	log.Printf("[路由] 查找模型: %s（不在路由表，走原逻辑）", targetModel)
 	channels, err := getChannelsForModel(targetModel)
 	if err != nil {
 		return nil, fmt.Errorf("获取渠道失败：%w", err)
@@ -44,39 +116,146 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 		return nil, fmt.Errorf("没有可用渠道")
 	}
 
-	// 4. 尝试每个渠道（自动 fallback）
+	// 5. 尝试每个渠道（自动 fallback）
 	var lastErr error
 	for _, channel := range channels {
-		log.Printf("[路由] 尝试渠道: %s (status=%d)", channel.Name, channel.Status)
-		if channel.Status != 1 {
-			log.Printf("[路由] 渠道 %s 未启用，跳过", channel.Name)
-			continue
-		}
-
-		mappedModel := applyModelMapping(channel.ModelMapping, targetModel)
-		modifiedBody := replaceModelInRequest(requestBody, mappedModel)
-
-		resp, err := sendToChannel(channel, modifiedBody)
+		resp, err := trySingleChannel(channel, targetModel, requestBody)
 		if err != nil {
 			lastErr = err
-			log.Printf("渠道 %s 失败：%v", channel.Name, err)
-			continue
-		}
-
-		if resp.StatusCode >= 400 {
-			lastErr = fmt.Errorf("渠道 %s 返回 HTTP %d", channel.Name, resp.StatusCode)
-			log.Printf("渠道 %s 返回 HTTP %d，触发 fallback", channel.Name, resp.StatusCode)
-			resp.Body.Close()
 			continue
 		}
 
 		// 更新配额
 		updateQuota(token, 1)
+		RecordRequest(token.ID) // 记录滑动窗口
 
 		return &RouteRequestResult{Response: resp, ChannelName: channel.Name}, nil
 	}
 
 	return nil, fmt.Errorf("所有渠道均失败：%w", lastErr)
+}
+
+// getModelGroupChannels 查询聚合组渠道
+func getModelGroupChannels(modelName string) ([]model.Channel, error) {
+	var channels []model.Channel
+	err := model.DB.Where(
+		"model_group = ? AND status = ?",
+		modelName, 1,
+	).Order("priority DESC").Find(&channels).Error
+	return channels, err
+}
+
+// routeToModelGroup 聚合组路由（纯模型一致性，全挂报错）
+func routeToModelGroup(channels []model.Channel, requestBody []byte, token *model.Token, targetModel string) (*RouteRequestResult, error) {
+	var lastErr error
+
+	for _, channel := range channels {
+		// 并发控制
+		acquired := false
+		if channel.MaxConcurrent > 0 {
+			if !acquireConcurrency(channel.ID, channel.MaxConcurrent) {
+				log.Printf("[路由] 渠道 %s 并发已满(%d)，跳过", channel.Name, channel.MaxConcurrent)
+				continue
+			}
+			acquired = true
+		}
+
+		log.Printf("[路由] 聚合组尝试: %s (Priority=%d)", channel.Name, channel.Priority)
+		// BUG-002 修复：传 targetModel 而不是 channel.Models
+		resp, err := trySingleChannel(channel, targetModel, requestBody)
+		if err != nil {
+			// BUG-005 修复：失败时立即释放并发槽位
+			if acquired {
+				releaseConcurrency(channel.ID)
+			}
+			lastErr = err
+			continue
+		}
+
+		// 成功：先释放槽位，再返回
+		if acquired {
+			releaseConcurrency(channel.ID)
+		}
+		updateQuota(token, 1)
+		RecordRequest(token.ID) // 记录滑动窗口
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name}, nil
+	}
+
+	// 聚合组全挂 → 直接报错（不偷偷换模型）
+	return nil, fmt.Errorf("聚合组 [%s] 所有渠道均失败：%w", channels[0].ModelGroup, lastErr)
+}
+
+// routeToBestChannel 按路由策略逐个尝试渠道
+func routeToBestChannel(originalModel string, requestBody []byte, token *model.Token, routes []ModelRouteEntry) (*RouteRequestResult, error) {
+	var lastErr error
+
+	for _, entry := range routes {
+		// 从数据库查渠道
+		var channel model.Channel
+		result := model.DB.First(&channel, entry.ChannelID)
+		if result.Error != nil || channel.Status != 1 {
+			log.Printf("[路由] 渠道 %s (ID=%d) 不可用，跳过", entry.ChannelName, entry.ChannelID)
+			continue
+		}
+
+		// 通用并发控制
+		acquired := false
+		if channel.MaxConcurrent > 0 {
+			if !acquireConcurrency(channel.ID, channel.MaxConcurrent) {
+				log.Printf("[路由] 渠道 %s 并发已满(%d)，跳过", channel.Name, channel.MaxConcurrent)
+				continue
+			}
+			acquired = true
+		}
+
+		log.Printf("[路由] 尝试: %s → %s", entry.ChannelName, entry.ModelOverride)
+		resp, err := trySingleChannel(channel, entry.ModelOverride, requestBody)
+		
+		if err != nil {
+			// BUG-005 修复：失败时立即释放并发槽位
+			if acquired {
+				releaseConcurrency(channel.ID)
+			}
+			lastErr = err
+			continue
+		}
+
+		// 成功：先释放槽位，再返回
+		if acquired {
+			releaseConcurrency(channel.ID)
+		}
+		updateQuota(token, 1)
+		RecordRequest(token.ID) // 记录滑动窗口
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name}, nil
+	}
+
+	return nil, fmt.Errorf("路由策略无可用渠道：%w", lastErr)
+}
+
+// trySingleChannel 尝试单个渠道，返回响应或错误
+func trySingleChannel(channel model.Channel, targetModel string, originalBody []byte) (*http.Response, error) {
+	if channel.Status != 1 {
+		return nil, fmt.Errorf("渠道 %s 未启用", channel.Name)
+	}
+
+	// 模型名替换：如果有 model_mapping 先用他，否则用目标模型名
+	mappedModel := applyModelMapping(channel.ModelMapping, targetModel)
+	modifiedBody := replaceModelInRequest(originalBody, mappedModel)
+
+	resp, err := sendToChannel(channel, modifiedBody)
+	if err != nil {
+		log.Printf("渠道 %s 失败：%v", channel.Name, err)
+		return nil, fmt.Errorf("渠道 %s 请求失败：%w", channel.Name, err)
+	}
+
+	if resp.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		log.Printf("渠道 %s 返回 HTTP %d: %s", channel.Name, resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("渠道 %s 返回 HTTP %d", channel.Name, resp.StatusCode)
+	}
+
+	return resp, nil
 }
 
 // TestChannel 测试单个渠道连通性
@@ -106,6 +285,21 @@ func validateToken(key string) (*model.Token, error) {
 	result := model.DB.Where("key = ? AND status = ?", key, 1).First(&token)
 	if result.Error != nil {
 		return nil, fmt.Errorf("token 不存在或已禁用")
+	}
+
+	// 首次使用激活逻辑
+	if token.ActivatedAt == 0 && token.ExpiredTime == 0 {
+		// 首次使用，设置激活时间和过期时间
+		now := time.Now()
+		token.ActivatedAt = now.Unix()
+		// 过期时间 = 激活时刻 + 1个自然月（精确到秒）
+		// 例：7月1日 03:42:56 激活 → 8月1日 03:42:56 过期
+		token.ExpiredTime = now.AddDate(0, 1, 0).Unix()
+		model.DB.Save(&token)
+		log.Printf("[激活] token %s 首次使用，激活时间=%s，过期时间=%s", 
+			token.Name, 
+			now.Format("2006-01-02 15:04:05"),
+			now.AddDate(0, 1, 0).Format("2006-01-02 15:04:05"))
 	}
 
 	if token.ExpiredTime > 0 && time.Now().Unix() > token.ExpiredTime {
@@ -160,7 +354,11 @@ func replaceModelInRequest(body []byte, newModel string) []byte {
 
 // sendToChannel 发送请求到指定渠道
 func sendToChannel(channel model.Channel, body []byte) (*http.Response, error) {
-	url := channel.BaseURL + "/v1/chat/completions"
+	url := channel.BaseURL
+	// 如果 base_url 不以 /chat/completions 结尾，才追加 /v1/chat/completions
+	if !strings.HasSuffix(url, "/chat/completions") {
+		url += "/v1/chat/completions"
+	}
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err

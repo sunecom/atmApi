@@ -36,8 +36,10 @@ func RegisterRoutes(r *gin.Engine) {
 	v1 := r.Group("/api/v1")
 	{
 		v1.POST("/login", login)
+		v1.POST("/chat/completions", chatCompletions)
 		v1.POST("/register", register)
 		v1.GET("/models", listModels)
+		v1.GET("/token-info", tokenInfo) // 客户查询 token 信息
 
 		managed := v1.Group("")
 		managed.Use(middleware.AuthRequired())
@@ -57,7 +59,6 @@ func RegisterRoutes(r *gin.Engine) {
 			managed.GET("/usage", getUsageStats)
 			managed.GET("/settings", getSystemSettings)
 			managed.GET("/logs/export", exportLogs)
-			managed.POST("/chat/completions", chatCompletions)
 		}
 
 		admin := v1.Group("")
@@ -145,20 +146,36 @@ func getTokens(c *gin.Context) {
 
 func createToken(c *gin.Context) {
 	var req struct {
-		UserID         uint   `json:"user_id" binding:"required"`
-		Name           string `json:"name" binding:"required"`
-		RemainQuota    int64  `json:"remain_quota"`
-		UnlimitedQuota bool   `json:"unlimited_quota"`
-		ExpiredTime    int64  `json:"expired_time"`
+		UserID           uint   `json:"user_id" binding:"required"`
+		Name             string `json:"name" binding:"required"`
+		RemainQuota      int64  `json:"remain_quota"`
+		UnlimitedQuota   bool   `json:"unlimited_quota"`
+		ExpiredTime      int64  `json:"expired_time"`
+		RateLimitGroup   string `json:"rate_limit_group"`   // BUG-003 修复：支持设置限流组
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	
+	// 月卡套餐自动设置无限配额（靠滑动窗口限速率）
+	if req.RateLimitGroup != "" {
+		// 从 plans 表验证套餐是否存在
+		var plan model.Plan
+		if err := model.DB.Where("name = ?", req.RateLimitGroup).First(&plan).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("套餐 %s 不存在", req.RateLimitGroup)})
+			return
+		}
+		// 自动设置无限配额
+		req.UnlimitedQuota = true
+		req.RemainQuota = -1
+	}
+	
 	token := model.Token{
 		UserID: req.UserID, Name: req.Name, Key: generateTokenKey(),
 		Status: 1, RemainQuota: req.RemainQuota,
 		UnlimitedQuota: req.UnlimitedQuota, ExpiredTime: req.ExpiredTime,
+		RateLimitGroup: req.RateLimitGroup, // BUG-003 修复
 		CreatedTime: time.Now().Unix(),
 	}
 	if err := model.DB.Create(&token).Error; err != nil {
@@ -371,6 +388,81 @@ func getUsageStats(c *gin.Context) {
 		"avg_duration_ms": avgDuration, "daily": dailyStats,
 		"by_token": tokenStats, "by_channel": channelStats,
 	}})
+}
+
+// ===== Token 查询（客户用）=====
+
+func tokenInfo(c *gin.Context) {
+	tokenKey := c.Query("token")
+	if tokenKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供 token"})
+		return
+	}
+
+	var token model.Token
+	if err := model.DB.Where("key = ?", tokenKey).First(&token).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "token 不存在"})
+		return
+	}
+
+	// 计算使用情况
+	now := time.Now().Unix()
+	fiveHoursAgo := now - 5*3600
+	sevenDaysAgo := now - 7*24*3600
+
+	var count5h, count7d int64
+	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, fiveHoursAgo).Count(&count5h)
+	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, sevenDaysAgo).Count(&count7d)
+
+	// 套餐限额
+	limits := map[string]int64{
+		"basic":    500,
+		"standard": 1000,
+		"premium":  1500,
+		"pro":      2000,
+		"weekly":   0, // BUG-004 修复：大胃王月卡不限5小时
+	}
+	limit5h := limits[token.RateLimitGroup]
+
+	// 状态判断
+	status := "正常"
+	if token.Status == 2 {
+		status = "已禁用"
+	} else if token.ExpiredTime > 0 && now > token.ExpiredTime {
+		status = "已过期"
+	} else if token.ActivatedAt == 0 {
+		status = "待激活"
+	}
+
+	// 计算剩余时间（向上取整）
+	var remainingDays int
+	var expireDate string
+	if token.ExpiredTime > 0 {
+		remainingSeconds := token.ExpiredTime - now
+		remainingDays = int((remainingSeconds + 86399) / 86400) // 向上取整
+		expireDate = time.Unix(token.ExpiredTime, 0).Format("2006-01-02 15:04:05")
+	} else {
+		remainingDays = -1
+		expireDate = "永不过期"
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":      status,
+		"token_name":  token.Name,
+		"plan":        token.RateLimitGroup,
+		"limit_5h":    limit5h,
+		"used_5h":     count5h,
+		"remaining_5h": limit5h - count5h,
+		"used_7d":     count7d,
+		"activated_at": func() string {
+			if token.ActivatedAt == 0 {
+				return "未激活"
+			}
+			return time.Unix(token.ActivatedAt, 0).Format("2006-01-02 15:04:05")
+		}(),
+		"expired_at":    expireDate,
+		"remaining_days": remainingDays,
+	})
 }
 
 // ===== 辅助函数 =====

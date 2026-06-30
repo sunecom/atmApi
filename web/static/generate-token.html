@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>快速生成 GLM-5.2 Token - atmApi</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .card { background: white; border-radius: 16px; padding: 40px; max-width: 500px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+        h1 { color: #667eea; margin-bottom: 10px; font-size: 24px; text-align: center; }
+        .subtitle { color: #666; text-align: center; margin-bottom: 30px; font-size: 14px; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; color: #333; font-weight: 600; }
+        select { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px; transition: border-color 0.3s; }
+        select:focus { outline: none; border-color: #667eea; }
+        button { width: 100%; padding: 14px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: transform 0.2s; }
+        button:hover { transform: translateY(-2px); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .result { margin-top: 20px; padding: 20px; background: #f5f7fa; border-radius: 8px; display: none; }
+        .result.show { display: block; }
+        .token-display { background: #2d3748; color: #e2e8f0; padding: 15px; border-radius: 6px; font-family: 'Courier New', monospace; word-break: break-all; margin: 10px 0; position: relative; }
+        .copy-btn { position: absolute; top: 10px; right: 10px; background: #667eea; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .copy-btn:hover { background: #5568d3; }
+        .info { margin-top: 10px; font-size: 14px; color: #666; }
+        .success-icon { color: #4caf50; font-size: 48px; text-align: center; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🚀 快速生成 GLM-5.2 Token</h1>
+        <p class="subtitle">淘宝卖家专用 · 一键生成 · 即时发货</p>
+        
+        <div class="form-group">
+            <label>选择品类</label>
+            <select id="tier">
+                <option value="starter">入门版 - 500次/5小时</option>
+                <option value="pro">专业版 - 1000次/5小时</option>
+                <option value="max">旗舰版 - 1500次/5小时</option>
+            </select>
+        </div>
+        
+        <button id="generateBtn" onclick="generateToken()">✨ 立即生成 Token</button>
+        
+        <div id="result" class="result">
+            <div class="success-icon">✅</div>
+            <h3 style="color: #4caf50; margin-bottom: 10px;">Token 生成成功！</h3>
+            
+            <label>Token:</label>
+            <div class="token-display">
+                <span id="tokenValue"></span>
+                <button class="copy-btn" onclick="copyToken()">复制</button>
+            </div>
+            
+            <div class="info">
+                <p><strong>额度：</strong><span id="quotaInfo"></span></p>
+                <p><strong>有效期：</strong><span id="expiresInfo"></span></p>
+            </div>
+            
+            <button onclick="generateToken()" style="margin-top: 15px; background: #4caf50;">🔄 再生成一个</button>
+        </div>
+    </div>
+
+    <script>
+        async function generateToken() {
+            const btn = document.getElementById('generateBtn');
+            const tier = document.getElementById('tier').value;
+            
+            btn.disabled = true;
+            btn.textContent = '生成中...';
+            
+            try {
+                const response = await fetch('/api/generate-token', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({tier: tier})
+                });
+                
+                if (!response.ok) throw new Error('生成失败');
+                
+                const data = await response.json();
+                
+                // 显示结果
+                document.getElementById('tokenValue').textContent = data.token;
+                document.getElementById('quotaInfo').textContent = `${data.quota}次/5小时`;
+                document.getElementById('expiresInfo').textContent = data.expires_at;
+                document.getElementById('result').classList.add('show');
+                
+            } catch (error) {
+                alert('生成失败: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '✨ 立即生成 Token';
+            }
+        }
+        
+        function copyToken() {
+            const token = document.getElementById('tokenValue').textContent;
+            navigator.clipboard.writeText(token).then(() => {
+                alert('已复制到剪贴板！');
+            });
+        }
+    </script>
+</body>
+</html>

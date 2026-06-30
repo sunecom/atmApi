@@ -17,8 +17,10 @@ type Channel struct {
 	Status      int            `gorm:"default:1" json:"status"` // 1=启用，2=禁用
 	Priority    int            `gorm:"default:0" json:"priority"` // 优先级，越高越优先
 	Weight      int            `gorm:"default:0" json:"weight"` // 权重，同优先级内负载均衡
-	TestTime    int64          `json:"test_time"` // 最后测试时间
-	ResponseTime int           `json:"response_time"` // 响应时间 (ms)
+	ModelGroup   string         `gorm:"size:100;index" json:"model_group"` // 聚合组名称，如 "glm-5.2"
+	MaxConcurrent int           `gorm:"default:0" json:"max_concurrent"` // 最大并发数，0=不限
+	TestTime     int64          `json:"test_time"` // 最后测试时间
+	ResponseTime int            `json:"response_time"` // 响应时间 (ms)
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`

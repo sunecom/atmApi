@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GLM-5.2 API Key 使用说明 - atmApi</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; }
+        .container { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; border-radius: 12px; margin-bottom: 30px; text-align: center; }
+        .header h1 { font-size: 28px; margin-bottom: 10px; }
+        .header p { opacity: 0.9; font-size: 16px; }
+        .card { background: white; border-radius: 8px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .card h2 { color: #667eea; margin-bottom: 15px; font-size: 20px; border-left: 4px solid #667eea; padding-left: 12px; }
+        .step { display: flex; align-items: flex-start; margin-bottom: 15px; }
+        .step-num { background: #667eea; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 12px; flex-shrink: 0; }
+        .code-block { background: #2d3748; color: #e2e8f0; padding: 15px; border-radius: 6px; font-family: 'Courier New', monospace; overflow-x: auto; margin: 10px 0; font-size: 14px; }
+        .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 4px; margin: 15px 0; }
+        .tip { background: #d1ecf1; border-left: 4px solid #17a2b8; padding: 15px; border-radius: 4px; margin: 15px 0; }
+        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .badge-starter { background: #e3f2fd; color: #1976d2; }
+        .badge-pro { background: #e8f5e9; color: #388e3c; }
+        .badge-max { background: #fce4ec; color: #c2185b; }
+        a { color: #667eea; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .footer { text-align: center; padding: 30px; color: #999; font-size: 14px; }
+        @media (max-width: 768px) { .container { padding: 20px 15px; } .header { padding: 30px 20px; } .header h1 { font-size: 22px; } .card { padding: 20px; } }
+    </style>
+</head>
+<body>
+<div class="container">
+<div class="header"><h1>🎉 恭喜！您的 GLM-5.2 API Key 已就绪</h1><p>3 分钟快速上手 · 零基础也能用</p></div>
+<div class="card">
+<h2>🎁 您获得了什么？</h2>
+<p>购买成功后，您将获得一个专属的 <strong>GLM-5.2 API Key</strong>（也叫 Token），长这样：</p>
+<div class="code-block">sk-glm-xxxxxxxxxxxxxxxx</div>
+<p><strong>这个 Key 就是您的"钥匙"</strong>，用它就能调用 GLM-5.2 人工智能模型。</p>
+<table style="margin-top: 20px;">
+<tr><th>套餐名称</th><th>价格</th><th>配额</th><th>重置周期</th><th>适用场景</th></tr>
+<tr><td><strong>GLM5.2【黄金月卡】</strong></td><td>¥188/月</td><td>2000次</td><td>每5小时</td><td>高频调用用户</td></tr>
+<tr><td><strong>GLM5.2【大胃王月卡】</strong></td><td>¥218/月</td><td>40000次</td><td>每周</td><td>重度使用者</td></tr>
+<tr><td><strong>9.9元体验版</strong></td><td>¥9.9</td><td>100次</td><td>一次性</td><td>新用户试用</td></tr>
+<tr><td>GLM-5.2 性价比月卡</td><td>¥63.80/月</td><td>500次</td><td>每5小时</td><td>个人体验</td></tr>
+<tr><td>GLM-5.2 基础版月卡</td><td>¥88.80/月</td><td>1000次</td><td>每5小时</td><td>日常开发</td></tr>
+<tr><td>GLM-5.2 升级版月卡</td><td>¥138.80/月</td><td>1500次</td><td>每5小时</td><td>高频使用</td></tr>
+</table>
+<div class="tip" style="margin-top: 15px;">💡 <strong>重要提示：</strong>额度每 5 小时自动重置一次，不用手动刷新！比如您早上 8 点用完 500 次，下午 1 点就会自动恢复 500 次。</div>
+</div>
+<div class="card">
+<h2>🚀 3 步快速开始</h2><div class="step"><div class="step-num">1</div><div><strong>复制您的 Token</strong><p>从淘宝订单详情或旺旺消息中获取您的 API Key（以 sk-glm- 开头）。</p></div></div>
+<div class="step"><div class="step-num">2</div><div><strong>配置到您的项目中</strong><p>在代码中添加 Authorization 请求头：</p><div class="code-block">Authorization: Bearer sk-glm-xxxxxxxxxxxxxxxx</div></div></div>
+<div class="step"><div class="step-num">3</div><div><strong>发送第一个请求</strong><p>调用 GLM-5.2 API：</p><div class="code-block">POST https://atmapi.aitomoney.online/v1/chat/completions
+Content-Type: application/json
+Authorization: Bearer sk-glm-xxxxxxxxxxxxxxxx
+
+{
+  "model": "glm-5.2",
+  "messages": [{"role": "user", "content": "你好！"}]
+}</div></div></div>
+</div>
+<div class="card">
+<h2>🔌 三种协议配置示例</h2>
+
+<h3 style="margin: 15px 0 10px; color: #555;">1️⃣ OpenAI Completions（最常用）</h3>
+<p><strong>适用客户端：</strong>NextChat、ChatBox、OpenClaw、Cursor 等</p>
+<table>
+<tr><th>配置项</th><th>填写内容</th></tr>
+<tr><td><strong>API Base URL</strong></td><td><code>https://atmapi.aitomoney.online/v1</code></td></tr>
+<tr><td><strong>API Key</strong></td><td><code>sk-gold-…xxxx</code>（你购买的 Token）</td></tr>
+<tr><td><strong>Model</strong></td><td><code>glm-5.2</code></td></tr>
+</table>
+
+<h3 style="margin: 15px 0 10px; color: #555;">2️⃣ OpenAI Responses（流式输出）</h3>
+<p><strong>适用场景：</strong>需要实时看到 AI 回复的客户端</p>
+<table>
+<tr><th>配置项</th><th>填写内容</th></tr>
+<tr><td><strong>API Base URL</strong></td><td><code>https://atmapi.aitomoney.online/v1</code></td></tr>
+<tr><td><strong>API Key</strong></td><td><code>sk-gold-…xxxx</code></td></tr>
+<tr><td><strong>Model</strong></td><td><code>glm-5.2</code></td></tr>
+<tr><td><strong>Stream</strong></td><td>✅ 开启</td></tr>
+</table>
+
+<h3 style="margin: 15px 0 10px; color: #555;">3️⃣ Anthropic 协议</h3>
+<p><strong>适用客户端：</strong>Claude Desktop 等支持 Anthropic 格式的客户端</p>
+<div class="tip">💡 <strong>注意：</strong>atmApi 目前主要兼容 OpenAI 格式。如果你的客户端只支持 Anthropic 格式，建议使用支持多协议的客户端（如 NextChat）。</div>
+
+<h2 style="margin-top: 25px;">💻 代码调用示例</h2>
+<h3 style="margin: 15px 0 10px; color: #555;">Python</h3>
+<div class="code-block">import requests
+url = "https://atmapi.aitomoney.online/v1/chat/completions"
+headers = {"Content-Type": "application/json", "Authorization": "Bearer sk-glm-xxxxxxxxxxxxxxxx"}
+data = {"model": "glm-5.2", "messages": [{"role": "user", "content": "你好！"}]}
+response = requests.post(url, headers=headers, json=data)
+print(response.json())</div>
+<h3 style="margin: 15px 0 10px; color: #555;">JavaScript (Node.js)</h3>
+<div class="code-block">const axios = require('axios');
+const response = await axios.post('https://atmapi.aitomoney.online/v1/chat/completions', {model: 'glm-5.2', messages: [{role: 'user', content: '你好！'}]}, {headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer sk-glm-xxxxxxxxxxxxxxxx'}});
+console.log(response.data);</div>
+<h3 style="margin: 15px 0 10px; color: #555;">OpenClaw 配置文件</h3>
+<div class="code-block"># 编辑 ~/.openclaw/gateway.yaml
+llm:
+  provider: openai
+  baseURL: https://atmapi.aitomoney.online/v1
+  apiKey: "sk-glm-xxxxxxxxxxxxxxxx"
+  model: glm-5.2
+# 保存后重启 Gateway：openclaw gateway restart</div>
+<div class="tip">💡 <strong>提示：</strong>OpenClaw 用户只需修改 gateway.yaml 中的 llm 配置即可，无需编写代码。</div>
+<h3 style="margin: 15px 0 10px; color: #555;">cURL 测试</h3>
+<div class="code-block">curl -X POST https://atmapi.aitomoney.online/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-glm-xxxxxxxxxxxxxxxx" \
+  -d '{"model": "glm-5.2", "messages": [{"role": "user", "content": "你好！"}]}'</div>
+</div>
+<div class="card">
+<h2>⚠️ 注意事项</h2>
+<div class="warning">
+<strong>重要提醒：</strong>
+<ul style="margin-top: 10px; padding-left: 20px;">
+<li><strong>Token 是您的专属密钥</strong>，请勿泄露给他人（包括截图分享时打码）</li>
+<li>额度按 5 小时周期自动重置，未用完的额度<strong>不会累积</strong></li>
+<li>并发限制：每个 Token 最多同时 1 个请求（如需更高并发请联系客服）</li>
+<li>禁止用于违法、违规内容生成</li>
+</ul>
+</div>
+</div>
+<div class="card">
+<h2>❓ 常见问题</h2>
+<p><strong>Q: 额度用完了怎么办？</strong></p>
+<p>A: 等待 5 小时后额度会自动重置。如需立即恢复，可在淘宝店铺购买更多额度。</p>
+<p style="margin-top: 15px;"><strong>Q: 如何查看剩余额度？</strong></p>
+<p>A: 访问 <a href="https://atmapi.aitomoney.online/monitor" target="_blank">监控面板</a>，输入您的 Token 即可查询实时用量。</p>
+<p style="margin-top: 15px;"><strong>Q: 支持哪些模型？</strong></p>
+<p>A: 当前仅支持 GLM-5.2 模型。未来将陆续接入更多模型。</p>
+<p style="margin-top: 15px;"><strong>Q: 遇到技术问题怎么办？</strong></p>
+<p>A: 通过淘宝旺旺联系客服，或在 QQ 群中提问。</p>
+<p style="margin-top: 15px;"><strong>Q: Token 会过期吗？</strong></p>
+<p>A: 不会。只要您持续使用，Token 永久有效。额度每 5 小时自动重置。</p>
+</div>
+<div class="footer"><p>Powered by atmApi · AI API Gateway</p><p>© 2026 AiToMoney. All rights reserved.</p></div>
+</div>
+</body>
+</html>

@@ -15,6 +15,8 @@ type Token struct {
 	RemainQuota    int64          `gorm:"default:0" json:"remain_quota"` // 剩余配额，-1=无限
 	InitQuota      int64          `gorm:"default:0" json:"init_quota"` // 初始配额
 	UnlimitedQuota bool           `gorm:"default:false" json:"unlimited_quota"` // 是否无限配额
+	RateLimitGroup string         `gorm:"size:50;default:''" json:"rate_limit_group"` // 限流组：basic/standard/premium/pro/空=不限
+	ActivatedAt    int64          `gorm:"default:0" json:"activated_at"` // 激活时间（首次使用时间），0=未激活
 	ExpiredTime    int64          `gorm:"default:0" json:"expired_time"` // 过期时间，-1=永不过期
 	CreatedTime    int64          `json:"created_time"`
 	AccessedTime   int64          `json:"accessed_time"`

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>atmApi 成本监控中心</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 30px; color: #1a1a1a; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: transform 0.2s; }
+        .card:hover { transform: translateY(-2px); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .channel-name { font-size: 18px; font-weight: 600; color: #333; }
+        .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+        .status-active { background: #e6f7ee; color: #0d9c53; }
+        .status-disabled { background: #fee; color: #d93025; }
+        .metric { margin: 12px 0; }
+        .metric-label { font-size: 13px; color: #666; margin-bottom: 4px; }
+        .metric-value { font-size: 24px; font-weight: 700; color: #1a1a1a; }
+        .progress-bar { height: 8px; background: #eee; border-radius: 4px; overflow: hidden; margin-top: 8px; }
+        .progress-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+        .fill-green { background: linear-gradient(90deg, #0d9c53, #34c759); }
+        .fill-yellow { background: linear-gradient(90deg, #f5a623, #ff9500); }
+        .fill-red { background: linear-gradient(90deg, #ff3b30, #d93025); }
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; }
+        .btn-pause { background: #ff3b30; color: white; }
+        .btn-pause:hover { background: #d93025; }
+        .btn-reset { background: #007aff; color: white; }
+        .btn-reset:hover { background: #0056cc; }
+        .alert-box { background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 16px; margin-bottom: 20px; display: none; }
+        .alert-box.show { display: block; }
+        .last-update { text-align: center; color: #999; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ atmApi 成本监控中心</h1>
+            <p>实时追踪各渠道用量，防止超额消费</p>
+        </div>
+
+        <div id="alertBox" class="alert-box">
+            ⚠️ <strong>DeepSeek 消费告警：</strong><span id="alertMessage"></span>
+        </div>
+
+        <div class="grid" id="channelsGrid">
+            <!-- 渠道卡片将通过 JS 动态生成 -->
+        </div>
+
+        <div class="last-update">最后更新: <span id="updateTime">--</span></div>
+    </div>
+
+    <script>
+        async function loadChannels() {
+            try {
+                const response = await fetch('/api/stats');
+                const result = await response.json();
+                const stats = result.data || {};
+                const channels = stats.channels || [];
+                const channelRequests = stats.channel_requests || [];
+                
+                const grid = document.getElementById('channelsGrid');
+                grid.innerHTML = '';
+
+                let hasAlert = stats.deepseek_alert || false;
+
+                if (hasAlert) {
+                    document.getElementById('alertMessage').textContent = 
+                        `当前 DeepSeek 消费已达限额的 ${stats.deepseek_pct.toFixed(1)}%，请及时处理！`;
+                    document.getElementById('alertBox').classList.add('show');
+                }
+
+                channels.forEach(ch => {
+                    const isDeepSeek = ch.name.includes('DeepSeek');
+                    const dailyLimit = parseFloat(ch.daily_limit) || 0;
+                    const dailyCost = parseFloat(ch.daily_cost) || 0;
+                    const percentage = dailyLimit > 0 ? (dailyCost / dailyLimit * 100) : 0;
+
+                    let fillClass = 'fill-green';
+                    if (percentage > 90) fillClass = 'fill-red';
+                    else if (percentage > 70) fillClass = 'fill-yellow';
+
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    card.innerHTML = `
+                        <div class="card-header">
+                            <span class="channel-name">${ch.name}</span>
+                            <span class="status-badge ${ch.status === 1 ? 'status-active' : 'status-disabled'}">
+                                ${ch.status === 1 ? '运行中' : '已暂停'}
+                            </span>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">今日消费</div>
+                            <div class="metric-value">¥${dailyCost.toFixed(2)}</div>
+                        </div>
+                        ${dailyLimit > 0 ? `
+                        <div class="metric">
+                            <div class="metric-label">每日限额: ¥${dailyLimit.toFixed(2)}</div>
+                            <div class="progress-bar">
+                                <div class="progress-fill ${fillClass}" style="width: ${Math.min(percentage, 100)}%"></div>
+                            </div>
+                            <div style="text-align: right; font-size: 12px; color: #666; margin-top: 4px;">${percentage.toFixed(1)}%</div>
+                        </div>
+                        ` : ''}
+                        <div style="margin-top: 16px; display: flex; gap: 8px;">
+                            ${ch.status === 1 ? 
+                                `<button class="btn btn-pause" onclick="toggleChannel(${ch.id}, 2)">暂停渠道</button>` :
+                                `<button class="btn btn-reset" onclick="toggleChannel(${ch.id}, 1)">恢复渠道</button>`
+                            }
+                            <button class="btn btn-reset" onclick="resetCost(${ch.id})">重置今日用量</button>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                });
+
+                document.getElementById('updateTime').textContent = stats.updated_at || new Date().toLocaleString('zh-CN');
+            } catch (error) {
+                console.error('加载失败:', error);
+                document.getElementById('channelsGrid').innerHTML = '<div class="card" style="text-align:center;color:#999">⚠️ 无法加载数据，请确认 atmApi 是否正常运行</div>';
+            }
+        }
+
+        async function toggleChannel(id, status) {
+            if (!confirm(`确定要${status === 1 ? '恢复' : '暂停'}该渠道吗？`)) return;
+            try {
+                await fetch(`/v1/channels/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status })
+                });
+                loadChannels();
+            } catch (error) {
+                alert('操作失败: ' + error.message);
+            }
+        }
+
+        async function resetCost(id) {
+            if (!confirm('确定要重置该渠道的今日用量为 0 吗？')) return;
+            try {
+                await fetch(`/api/reset-cost/${id}`, {
+                    method: 'POST'
+                });
+                loadChannels();
+            } catch (error) {
+                alert('重置失败: ' + error.message);
+            }
+        }
+
+        // 初始加载并每 10 秒自动刷新
+        loadChannels();
+        setInterval(loadChannels, 10000);
+    </script>
+</body>
+</html>
