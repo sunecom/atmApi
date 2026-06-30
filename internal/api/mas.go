@@ -222,11 +222,21 @@ func masBan(c *gin.Context) {
 // masUnban 解封 Token
 func masUnban(c *gin.Context) {
 	tokenStr := c.Param("token")
-	if err := model.DB.Model(&model.MASToken{}).Where("token = ?", tokenStr).Updates(map[string]interface{}{"status": 1, "remaining": 0}).Error; err != nil {
+	var maToken model.MASToken
+	if err := model.DB.Where("token = ?", tokenStr).First(&maToken).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "error": "Token 不存在"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "已解封，请手动设置剩余配额"})
+	// 恢复配额为初始值
+	if err := model.DB.Model(&maToken).Updates(map[string]interface{}{
+		"status":    1,
+		"remaining": maToken.Quota,
+		"used":      0,
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "error": "解封失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "已解封"})
 }
 
 // MaaS 响应头中间件 — 在 chatCompletions 中注入

@@ -76,7 +76,7 @@ func RegisterRoutes(r *gin.Engine) {
 func indexPage(c *gin.Context)     { c.File("./web/static/index.html") }
 
 func healthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "version": "2.0.0", "time": time.Now().Format("2006-01-02 15:04:05")})
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "version": "2.0.1", "time": time.Now().Format("2006-01-02 15:04:05")})
 }
 
 // ===== 登录认证 =====
@@ -196,6 +196,15 @@ func updateToken(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	// 手动处理零值字段，避免 GORM 忽略
+	if v, ok := req["remain_quota"]; ok {
+		token.RemainQuota = int64(v.(float64))
+		delete(req, "remain_quota")
+	}
+	if v, ok := req["status"]; ok {
+		token.Status = int(v.(float64))
+		delete(req, "status")
 	}
 	if err := model.DB.Model(&token).Updates(req).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
@@ -414,15 +423,14 @@ func tokenInfo(c *gin.Context) {
 	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, fiveHoursAgo).Count(&count5h)
 	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, sevenDaysAgo).Count(&count7d)
 
-	// 套餐限额
-	limits := map[string]int64{
-		"basic":    500,
-		"standard": 1000,
-		"premium":  1500,
-		"pro":      2000,
-		"weekly":   0, // BUG-004 修复：大胃王月卡不限5小时
+	// 套餐限额（从数据库读取）
+	var limit5h int64
+	if token.RateLimitGroup != "" {
+		var plan model.Plan
+		if err := model.DB.Where("name = ?", token.RateLimitGroup).First(&plan).Error; err == nil {
+			limit5h = plan.Hourly5Max
+		}
 	}
-	limit5h := limits[token.RateLimitGroup]
 
 	// 状态判断
 	status := "正常"

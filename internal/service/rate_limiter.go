@@ -8,21 +8,6 @@ import (
 	"atmapi/internal/model"
 )
 
-// 套餐配额配置
-// key: token 的 rate_limit_group 字段值
-// value: {5小时峰值, 每周总量}
-var rateLimitPlans = map[string]struct {
-	Hourly5Max  int64
-	WeeklyMax   int64
-	SkipHourly  bool // true 表示跳过5小时限流
-}{
-	"basic":    {Hourly5Max: 500, WeeklyMax: 40000},
-	"standard": {Hourly5Max: 1000, WeeklyMax: 40000},
-	"premium":  {Hourly5Max: 1500, WeeklyMax: 40000},
-	"pro":      {Hourly5Max: 2000, WeeklyMax: 40000},
-	"weekly":   {WeeklyMax: 40000, SkipHourly: true}, // 仅周限，不限5小时
-}
-
 // GetPlan 获取套餐配置
 func GetPlan(planName string) (*model.Plan, error) {
 	var plan model.Plan

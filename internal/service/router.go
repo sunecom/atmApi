@@ -287,13 +287,11 @@ func validateToken(key string) (*model.Token, error) {
 		return nil, fmt.Errorf("token 不存在或已禁用")
 	}
 
-	// 首次使用激活逻辑
-	if token.ActivatedAt == 0 && token.ExpiredTime == 0 {
-		// 首次使用，设置激活时间和过期时间
+	// 首次使用激活逻辑：所有 token 首次使用都设置过期时间
+	if token.ActivatedAt == 0 {
 		now := time.Now()
 		token.ActivatedAt = now.Unix()
-		// 过期时间 = 激活时刻 + 1个自然月（精确到秒）
-		// 例：7月1日 03:42:56 激活 → 8月1日 03:42:56 过期
+		// 过期时间 = 激活时刻 + 1个自然月
 		token.ExpiredTime = now.AddDate(0, 1, 0).Unix()
 		model.DB.Save(&token)
 		log.Printf("[激活] token %s 首次使用，激活时间=%s，过期时间=%s", 
