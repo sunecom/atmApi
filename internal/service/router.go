@@ -240,7 +240,8 @@ func trySingleChannel(channel model.Channel, targetModel string, originalBody []
 
 	// 模型名替换：如果有 model_mapping 先用他，否则用目标模型名
 	mappedModel := applyModelMapping(channel.ModelMapping, targetModel)
-	modifiedBody := replaceModelInRequest(originalBody, mappedModel)
+	limitedBody := limitTokenUsage(originalBody)
+	modifiedBody := replaceModelInRequest(limitedBody, mappedModel)
 
 	resp, err := sendToChannel(channel, modifiedBody)
 	if err != nil {
@@ -337,6 +338,45 @@ func applyModelMapping(mappingJSON string, originalModel string) string {
 		return mapped
 	}
 	return originalModel
+}
+
+// limitTokenUsage 限制每次调用的 token 消耗（控制成本核心手段）
+func limitTokenUsage(body []byte) []byte {
+	var req map[string]interface{}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body
+	}
+
+	// 1. 强制限制 max_tokens = 500（输出成本占 70%）
+	if val, ok := req["max_tokens"]; ok {
+		if v, ok := val.(float64); ok && v > 500 {
+			req["max_tokens"] = float64(500)
+		}
+	} else {
+		req["max_tokens"] = float64(500)
+	}
+
+	// 2. 裁剪历史消息：只保留 system + 最近 3 轮（最多 7 条）
+	if msgs, ok := req["messages"].([]interface{}); ok && len(msgs) > 7 {
+		systemMsgs := []interface{}{}
+		nonSystemMsgs := []interface{}{}
+		for _, m := range msgs {
+			if msg, ok := m.(map[string]interface{}); ok {
+				if role, _ := msg["role"].(string); role == "system" {
+					systemMsgs = append(systemMsgs, m)
+				} else {
+					nonSystemMsgs = append(nonSystemMsgs, m)
+				}
+			}
+		}
+		if len(nonSystemMsgs) > 6 {
+			nonSystemMsgs = nonSystemMsgs[len(nonSystemMsgs)-6:]
+		}
+		req["messages"] = append(systemMsgs, nonSystemMsgs...)
+	}
+
+	newBody, _ := json.Marshal(req)
+	return newBody
 }
 
 // replaceModelInRequest 替换请求体中的模型名

@@ -1,0 +1,17 @@
+sk-glm-v1-7E96C517374EF0777C7EBAF500D002A3,,性价比月卡-2
+sk-glm-v1-C2A34F3854035A6A9B148B71BD147499,,性价比月卡-3
+sk-glm-v1-86026FBCE281686F45F51421147DCDF3,,性价比月卡-4
+sk-glm-v1-7CDE04FF00B9756ECAA76EE5DA7E620A,,性价比月卡-5
+sk-tb-starter-1782517211538908378,,性价比月卡-6
+sk-glm52-test-01-ABCD,,性价比月卡-7
+sk-glm52-test-02-EFGH,,性价比月卡-8
+sk-glm-5e53793bc769e2d4edd0a191e1cb86be,,性价比月卡-9
+sk-glm-63bfced5f35c24da0625a275de938ade,,性价比月卡-10
+sk-glm-5a2bf2c60362c9c3455921dd3996253d,,性价比月卡-11
+sk-glm-37b7e4a8f29d1c6e5b8a4f0d9c2e7d80,,性价比月卡-12
+sk-glm-7d80f4a1b3c6e2d8a9f5c7b0e1d3a4f6,,性价比月卡-13
+sk-glm-dc82a5f7e9b1c3d4e6f8a0b2c4d6e8f0,,性价比月卡-14
+sk-glm-8bf8c2d4e6f0a1b3c5d7e9f1a2b4c6d8,,性价比月卡-15
+sk-glm-6a25b3d4f7e8a1c2d4e6f0a1b3c5d7e9,,性价比月卡-16
+sk-glm-f142a5c7e9d0b2f4a6c8e0f1a3b5d7f9,,性价比月卡-17
+sk-glm-9821c4e6a8b0d2f4a6c8e0f2a4b6d8e0,,性价比月卡-18

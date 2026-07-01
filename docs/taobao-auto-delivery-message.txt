@@ -1,0 +1,54 @@
+🚀 您的 GLM-5.2 API Key 已激活
+
+━━━━━━━━━━━━━━━━
+🔑 Token（请复制保存）
+
+{$卡号}
+
+━━━━━━━━━━━━━━━━
+🔍 查询额度 & 使用状态
+
+https://atmapi.aitomoney.online/token-info
+
+输入上方 Token 即可查看剩余额度、激活时间、过期时间。
+
+━━━━━━━━━━━━━━━━
+🌐 接入地址
+
+https://atmapi.aitomoney.online/api/v1
+
+━━━━━━━━━━━━━━━━
+⚙️ 快速使用（Python）
+
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=***
+    base_url="https://atmapi.aitomoney.online/api/v1"
+)
+
+response = client.chat.completions.create(
+    model="glm-5.2",
+    messages=[{"role": "user", "content": "你好"}]
+)
+print(response.choices[0].message.content)
+
+━━━━━━━━━━━━━━━━
+📊 您的套餐：{$备注}
+
+• 5小时限额：自动重置，无需手动操作
+• 每周上限：40000 次
+• 有效期：首次使用后 30 天
+• 超额提示：返回 429 错误，等待重置即可
+
+━━━━━━━━━━━━━━━━
+💡 温馨提示
+
+1. 请妥善保管 Token，勿泄露
+2. 仅限 glm-5.2 模型使用
+3. 额度每 5 小时自动恢复
+
+📖 完整文档：https://atmapi.aitomoney.online/help
+🔧 技术支持：淘宝旺旺联系客服
+
+感谢购买，欢迎回购！✨

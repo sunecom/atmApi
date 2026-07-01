@@ -347,6 +347,14 @@
         <button onclick="showTab('settings', this)">系统设置</button>
         <button onclick="showTab('api-docs', this)">API 文档</button>
         <button onclick="showTab('tester', this)">模型测试</button>
+        <a href="/static/monitor.html" style="display:block;padding:10px 16px;color:var(--text-main);text-decoration:none;border-radius:8px;transition:background 0.2s;font-size:14px;">
+          <span>📡 监控中心</span>
+          <span style="font-size:11px;color:var(--text-dim);display:block;">渠道 &amp; 成本分析</span>
+        </a>
+        <a href="/static/token-info.html" style="display:block;padding:10px 16px;color:var(--text-main);text-decoration:none;border-radius:8px;transition:background 0.2s;font-size:14px;">
+          <span>🔑 Token 查询</span>
+          <span style="font-size:11px;color:var(--text-dim);display:block;">查询用量和套餐信息</span>
+        </a>
       </div>
       <div class="sidebar-footer">
         <div>🦐 <a href="https://www.aitomoney.online" target="_blank" style="color:var(--text-main);text-decoration:none;">AiToMoney</a> 出品</div>
@@ -828,7 +836,8 @@
         'standard': '1000次/5小时',
         'premium': '1500次/5小时',
         'pro': '2000次/5小时',
-        'weekly': '40000次/周'
+        'weekly': '40000次/周',
+        'trial': '100次/月'
       };
       if (groupMap[group]) return groupMap[group];
       // 没有 rate_limit_group 的无限卡显示"无限"

@@ -32,6 +32,7 @@ func RegisterRoutes(r *gin.Engine) {
 	r.Static("/static", "./web/static")
 	r.GET("/", indexPage)
 	r.GET("/health", healthCheck)
+	r.GET("/token-info", func(c *gin.Context) { c.Redirect(301, "/static/token-info.html") })
 
 	v1 := r.Group("/api/v1")
 	{
@@ -59,6 +60,11 @@ func RegisterRoutes(r *gin.Engine) {
 			managed.GET("/usage", getUsageStats)
 			managed.GET("/settings", getSystemSettings)
 			managed.GET("/logs/export", exportLogs)
+
+			// 成本分析 API
+			managed.GET("/cost-summary", getCostSummary)
+			managed.GET("/cost-by-plan", getCostByPlan)
+			managed.GET("/cost-trend", getCostTrend)
 		}
 
 		admin := v1.Group("")
@@ -333,6 +339,56 @@ func chatCompletions(c *gin.Context) {
 		TokenName: apiToken.Name, ChannelName: result.ChannelName,
 		Model: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
 	})
+
+	// 解析 usage 字段并记录用量日志
+	if result.Response.StatusCode == 200 {
+		var upstreamResp struct {
+			Usage struct {
+				PromptTokens     int64 `json:"prompt_tokens"`
+				CompletionTokens int64 `json:"completion_tokens"`
+				TotalTokens      int64 `json:"total_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal(respBody, &upstreamResp); err == nil && upstreamResp.Usage.TotalTokens > 0 {
+			// 查渠道获取实际模型名
+			var channel model.Channel
+			actualModel := req.Model
+			if result.ChannelName != "" {
+				model.DB.Where("name = ?", result.ChannelName).First(&channel)
+				// 如果有 model_mapping，记录实际映射后的模型
+				if channel.ModelMapping != "" {
+					var mapping map[string]string
+					if err := json.Unmarshal([]byte(channel.ModelMapping), &mapping); err == nil {
+						if mapped, ok := mapping[req.Model]; ok {
+							actualModel = mapped
+						}
+					}
+				}
+			}
+
+			// 获取套餐名
+			planName := ""
+			if apiToken.RateLimitGroup != "" {
+				planName = apiToken.RateLimitGroup
+			}
+
+			usageLog := model.UsageLog{
+				TokenID:      apiToken.ID,
+				TokenName:      apiToken.Name,
+				PlanName:       planName,
+				ChannelID:      channel.ID,
+				ChannelName:    result.ChannelName,
+				Model:          actualModel,
+				InputTokens:    upstreamResp.Usage.PromptTokens,
+				OutputTokens:   upstreamResp.Usage.CompletionTokens,
+				TotalTokens:    upstreamResp.Usage.TotalTokens,
+				StatusCode:     result.Response.StatusCode,
+				DurationMs:     duration,
+			}
+			model.DB.Create(&usageLog)
+		}
+	}
+
 	c.Data(result.Response.StatusCode, result.Response.Header.Get("Content-Type"), respBody)
 }
 
@@ -342,6 +398,175 @@ func getLogs(c *gin.Context) {
 	var logs []model.RequestLog
 	model.DB.Order("id DESC").Limit(100).Find(&logs)
 	c.JSON(http.StatusOK, gin.H{"data": logs})
+}
+
+// ===== 成本分析（基于 UsageLog） =====
+
+// getCostSummary 成本总览
+func getCostSummary(c *gin.Context) {
+	type CostRow struct {
+		InputTokens  int64   `json:"input_tokens"`
+		OutputTokens int64   `json:"output_tokens"`
+		Model        string  `json:"model"`
+		Count        int64   `json:"count"`
+	}
+
+	var rows []CostRow
+	model.DB.Raw(`SELECT model, sum(input_tokens) as input_tokens,
+		sum(output_tokens) as output_tokens, count(*) as count
+		FROM usage_logs GROUP BY model ORDER BY count DESC`).Scan(&rows)
+
+	type SummaryItem struct {
+		Model        string  `json:"model"`
+		InputTokens  int64   `json:"input_tokens"`
+		OutputTokens int64   `json:"output_tokens"`
+		TotalTokens  int64   `json:"total_tokens"`
+		Count        int64   `json:"count"`
+		CostYuan     float64 `json:"cost_yuan"`
+	}
+
+	var summary []SummaryItem
+	var totalCost float64
+	var totalTokens int64
+
+	for _, r := range rows {
+		cost := model.CalculateCost(r.InputTokens, r.OutputTokens, r.Model)
+		totalCost += cost
+		totalTokens += r.InputTokens + r.OutputTokens
+		summary = append(summary, SummaryItem{
+			Model:        r.Model,
+			InputTokens:  r.InputTokens,
+			OutputTokens: r.OutputTokens,
+			TotalTokens:  r.InputTokens + r.OutputTokens,
+			Count:        r.Count,
+			CostYuan:     cost,
+		})
+	}
+
+	// 今日、本周、本月统计
+	var todayCost, weekCost, monthCost float64
+	var todayTokens, weekTokens, monthTokens int64
+
+	model.DB.Raw(`SELECT coalesce(sum(input_tokens+output_tokens),0) FROM usage_logs
+		WHERE date(created_at)=date('now','localtime')`).Scan(&todayTokens)
+	model.DB.Raw(`SELECT coalesce(sum(input_tokens+output_tokens),0) FROM usage_logs
+		WHERE created_at >= datetime('now', '-7 days', 'localtime')`).Scan(&weekTokens)
+	model.DB.Raw(`SELECT coalesce(sum(input_tokens+output_tokens),0) FROM usage_logs
+		WHERE created_at >= datetime('now', '-30 days', 'localtime')`).Scan(&monthTokens)
+
+	// 用默认模型估算成本（可以用 qwen3.7-plus 作为参考成本）
+	// 更准确：重新计算
+	type AllRow struct {
+		Input  int64
+		Output int64
+		Model  string
+	}
+	var todayRows []AllRow
+	model.DB.Raw(`SELECT input_tokens as input, output_tokens as output, model FROM usage_logs
+		WHERE date(created_at)=date('now','localtime')`).Scan(&todayRows)
+	for _, r := range todayRows {
+		todayCost += model.CalculateCost(r.Input, r.Output, r.Model)
+	}
+	var weekRows []AllRow
+	model.DB.Raw(`SELECT input_tokens as input, output_tokens as output, model FROM usage_logs
+		WHERE created_at >= datetime('now', '-7 days', 'localtime')`).Scan(&weekRows)
+	for _, r := range weekRows {
+		weekCost += model.CalculateCost(r.Input, r.Output, r.Model)
+	}
+	var monthRows []AllRow
+	model.DB.Raw(`SELECT input_tokens as input, output_tokens as output, model FROM usage_logs
+		WHERE created_at >= datetime('now', '-30 days', 'localtime')`).Scan(&monthRows)
+	for _, r := range monthRows {
+		monthCost += model.CalculateCost(r.Input, r.Output, r.Model)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"total_cost":    totalCost,
+		"total_tokens":  totalTokens,
+		"today_cost":    todayCost,
+		"today_tokens":  todayTokens,
+		"week_cost":     weekCost,
+		"week_tokens":   weekTokens,
+		"month_cost":    monthCost,
+		"month_tokens":  monthTokens,
+		"by_model":      summary,
+	}})
+}
+
+// getCostByPlan 按套餐维度统计
+func getCostByPlan(c *gin.Context) {
+	type PlanRow struct {
+		PlanName     string  `json:"plan_name"`
+		InputTokens  int64   `json:"input_tokens"`
+		OutputTokens int64   `json:"output_tokens"`
+		Count        int64   `json:"count"`
+		CostYuan     float64 `json:"cost_yuan"`
+	}
+
+	var rows []struct {
+		PlanName     string `gorm:"column:plan_name"`
+		InputTokens  int64
+		OutputTokens int64
+		Count        int64
+	}
+	model.DB.Raw(`SELECT plan_name, sum(input_tokens) as input_tokens,
+		sum(output_tokens) as output_tokens, count(*) as count
+		FROM usage_logs GROUP BY plan_name ORDER BY count DESC`).Scan(&rows)
+
+	var result []PlanRow
+	for _, r := range rows {
+		// 用默认模型价格估算
+		cost := model.CalculateCost(r.InputTokens, r.OutputTokens, "default")
+		result = append(result, PlanRow{
+			PlanName:     r.PlanName,
+			InputTokens:  r.InputTokens,
+			OutputTokens: r.OutputTokens,
+			Count:        r.Count,
+			CostYuan:     cost,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// getCostTrend 近 7 天成本趋势
+func getCostTrend(c *gin.Context) {
+	type DayRow struct {
+		Date         string  `json:"date"`
+		InputTokens  int64   `json:"input_tokens"`
+		OutputTokens int64   `json:"output_tokens"`
+		Count        int64   `json:"count"`
+	}
+
+	var rows []DayRow
+	model.DB.Raw(`SELECT date(created_at) as date,
+		sum(input_tokens) as input_tokens,
+		sum(output_tokens) as output_tokens,
+		count(*) as count
+		FROM usage_logs
+		WHERE created_at >= datetime('now', '-7 days', 'localtime')
+		GROUP BY date(created_at)
+		ORDER BY date ASC`).Scan(&rows)
+
+	type TrendItem struct {
+		Date        string  `json:"date"`
+		TotalTokens int64   `json:"total_tokens"`
+		Count       int64   `json:"count"`
+		CostYuan    float64 `json:"cost_yuan"`
+	}
+
+	var trend []TrendItem
+	for _, r := range rows {
+		cost := model.CalculateCost(r.InputTokens, r.OutputTokens, "default")
+		trend = append(trend, TrendItem{
+			Date:        r.Date,
+			TotalTokens: r.InputTokens + r.OutputTokens,
+			Count:       r.Count,
+			CostYuan:    cost,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": trend})
 }
 
 // ===== 模型列表 =====
@@ -423,12 +648,30 @@ func tokenInfo(c *gin.Context) {
 	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, fiveHoursAgo).Count(&count5h)
 	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, sevenDaysAgo).Count(&count7d)
 
-	// 套餐限额（从数据库读取）
-	var limit5h int64
+	// 从 usage_logs 查累计调用次数 + 累计 tokens
+	type TokenUsage struct {
+		Calls int64 `gorm:"column:calls"`
+		Toks  int64 `gorm:"column:toks"`
+	}
+	var total TokenUsage
+	model.DB.Raw(`SELECT count(*) as calls, coalesce(sum(total_tokens),0) as toks FROM usage_logs WHERE token_id = ?`, token.ID).Scan(&total)
+
+	// 本周累计
+	var week TokenUsage
+	model.DB.Raw(`SELECT count(*) as calls, coalesce(sum(total_tokens),0) as toks FROM usage_logs WHERE token_id = ? AND created_at >= datetime('now', '-7 days', 'localtime')`, token.ID).Scan(&week)
+
+	// 套餐信息
+	var planDisplayName, planDesc string
+	var limit5h, weeklyMax int64
+	var skipHourly bool
 	if token.RateLimitGroup != "" {
 		var plan model.Plan
 		if err := model.DB.Where("name = ?", token.RateLimitGroup).First(&plan).Error; err == nil {
 			limit5h = plan.Hourly5Max
+			weeklyMax = plan.WeeklyMax
+			skipHourly = plan.SkipHourly
+			planDisplayName = plan.DisplayName
+			planDesc = plan.Description
 		}
 	}
 
@@ -455,13 +698,21 @@ func tokenInfo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":      status,
-		"token_name":  token.Name,
-		"plan":        token.RateLimitGroup,
-		"limit_5h":    limit5h,
-		"used_5h":     count5h,
-		"remaining_5h": limit5h - count5h,
-		"used_7d":     count7d,
+		"status":           status,
+		"token_name":       token.Name,
+		"plan":             token.RateLimitGroup,
+		"plan_name":        planDisplayName,
+		"plan_desc":        planDesc,
+		"skip_hourly":      skipHourly,
+		"limit_5h":         limit5h,
+		"used_5h":          count5h,
+		"remaining_5h":     limit5h - count5h,
+		"weekly_max":       weeklyMax,
+		"used_7d":          count7d,
+		"total_calls":      total.Calls,
+		"total_tokens":     total.Toks,
+		"week_calls":       week.Calls,
+		"week_tokens":      week.Toks,
 		"activated_at": func() string {
 			if token.ActivatedAt == 0 {
 				return "未激活"

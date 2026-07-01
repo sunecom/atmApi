@@ -8,7 +8,7 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; }
+        .container { max-width: 680px; margin: 0 auto; }
         h1 { text-align: center; color: #333; margin-bottom: 30px; font-size: 24px; }
         .search-box { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .input-group { display: flex; gap: 10px; }
@@ -39,9 +39,15 @@
         .plan-info { margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #2196F3; }
         .plan-title { font-size: 14px; color: #1976D2; font-weight: bold; margin-bottom: 8px; }
         .plan-detail { font-size: 13px; color: #555; line-height: 1.6; }
+
+        .stats-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+        .stat-box { background: #f8f9fa; border-radius: 8px; padding: 14px; text-align: center; }
+        .stat-box .num { font-size: 22px; font-weight: 700; color: #1a1a1a; }
+        .stat-box .lbl { font-size: 12px; color: #888; margin-top: 2px; }
+
         .error { color: #c62828; text-align: center; padding: 20px; display: none; }
         .error.show { display: block; }
-        @media (max-width: 480px) { .info-grid { grid-template-columns: 1fr; } .input-group { flex-direction: column; } }
+        @media (max-width: 480px) { .info-grid { grid-template-columns: 1fr; } .stats-summary { grid-template-columns: 1fr 1fr; } .input-group { flex-direction: column; } }
     </style>
 </head>
 <body>
@@ -55,6 +61,7 @@
         </div>
         <div class="error" id="errorMsg"></div>
         <div class="result" id="result">
+            <!-- 头部 -->
             <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
                     <span style="font-size:14px;color:#666;">Token 名称：</span>
@@ -62,6 +69,28 @@
                 </div>
                 <span id="statusBadge" class="status-badge"></span>
             </div>
+
+            <!-- 累计调用 & Tokens 概览 -->
+            <div class="stats-summary">
+                <div class="stat-box">
+                    <div class="num" id="totalCalls">0</div>
+                    <div class="lbl">累计调用次数</div>
+                </div>
+                <div class="stat-box">
+                    <div class="num" id="totalTokens">0</div>
+                    <div class="lbl">累计 Tokens</div>
+                </div>
+                <div class="stat-box">
+                    <div class="num" id="weekCalls">0</div>
+                    <div class="lbl">本周调用</div>
+                </div>
+                <div class="stat-box">
+                    <div class="num" id="weekTokens">0</div>
+                    <div class="lbl">本周 Tokens</div>
+                </div>
+            </div>
+
+            <!-- 基本信息 -->
             <div class="info-grid">
                 <div class="info-item">
                     <div class="info-label">套餐类型</div>
@@ -80,7 +109,9 @@
                     <div class="info-value" id="expiredAt">-</div>
                 </div>
             </div>
-            <div class="usage-bar">
+
+            <!-- 5 小时使用量进度条 -->
+            <div class="usage-bar" id="usageBar5h">
                 <div class="usage-header">
                     <span class="usage-title">5小时使用量</span>
                     <span class="usage-count" id="usageCount">0 / 0</span>
@@ -89,6 +120,8 @@
                     <div class="progress-fill" id="progressFill" style="width: 0%"></div>
                 </div>
             </div>
+
+            <!-- 套餐说明 -->
             <div class="plan-info">
                 <div class="plan-title" id="planTitle">套餐说明</div>
                 <div class="plan-detail" id="planDetail"></div>
@@ -99,7 +132,6 @@
         <div>🦐 <a href="https://www.aitomoney.online" target="_blank" style="color:#333;text-decoration:none;">AiToMoney</a> 出品</div>
         <div style="margin-top:6px;">一个人可以走得很快<br/>一群虾可以折腾得更远</div>
     </footer>
-    </div>
     <script>
         const statusMap = {
             '正常': 'status-normal',
@@ -111,6 +143,8 @@
         document.getElementById('tokenInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') queryToken();
         });
+
+        function fmtNum(n) { return n.toLocaleString('zh-CN'); }
 
         async function queryToken() {
             const token = document.getElementById('tokenInput').value.trim();
@@ -136,49 +170,55 @@
         }
 
         function renderResult(data) {
+            // 名称 & 状态
             document.getElementById('tokenName').textContent = data.token_name;
             const badge = document.getElementById('statusBadge');
             badge.textContent = data.status;
             badge.className = 'status-badge ' + (statusMap[data.status] || 'status-normal');
 
-            const plan = data.plan || '';
-            const limit = data.limit_5h || 0;
-            const used = data.used_5h || 0;
-            
-            // weekly 组（大胃王月卡）特殊显示：不限5小时
-            if (plan === 'weekly') {
-                document.getElementById('usageCount').textContent = '不限量（周限40000次）';
-            } else {
-                document.getElementById('usageCount').textContent = `${used} / ${limit}`;
-            }
-            const pct = limit > 0 ? Math.min((used / limit) * 100, 100) : 0;
-            const fill = document.getElementById('progressFill');
-            if (plan === 'weekly') {
-                fill.style.width = '100%';
-                fill.className = 'progress-fill';
-            } else {
-                fill.style.width = pct + '%';
-                fill.className = 'progress-fill' + (pct > 80 ? ' danger' : pct > 50 ? ' warning' : '');
-            }
+            // 累计统计
+            document.getElementById('totalCalls').textContent = fmtNum(data.total_calls || 0);
+            document.getElementById('totalTokens').textContent = fmtNum(data.total_tokens || 0);
+            document.getElementById('weekCalls').textContent = fmtNum(data.week_calls || 0);
+            document.getElementById('weekTokens').textContent = fmtNum(data.week_tokens || 0);
 
-            // 套餐名和说明：从 API 返回的 plan_name 和 plan_desc 读取（数据库动态获取）
+            // 套餐名
             const planDisplayName = data.plan_name || '';
-            const planDescription = data.plan_desc || '';
-            document.getElementById('planType').textContent = planDisplayName || '未设置';
-            
-            document.getElementById('planTitle').textContent = planDisplayName ? planDisplayName + '套餐说明' : '套餐说明';
-            document.getElementById('planDetail').textContent = planDescription || '该 Token 未设置限流套餐，无使用量限制。';
-            
-            // 待激活状态特殊处理
+            document.getElementById('planType').textContent = planDisplayName || (data.plan || '未设置');
+            document.getElementById('planTitle').textContent = planDisplayName ? planDisplayName + ' 套餐说明' : '套餐说明';
+            document.getElementById('planDetail').textContent = data.plan_desc || '该 Token 未设置限流套餐，无使用量限制。';
+
+            // 状态特殊的显示
             if (data.status === '待激活') {
                 document.getElementById('remainingDays').textContent = '待激活';
                 document.getElementById('expiredAt').textContent = '激活后30天';
             } else {
-                document.getElementById('remainingDays').textContent = data.remaining_days >= 0 ? `${data.remaining_days} 天` : '无限';
+                document.getElementById('remainingDays').textContent = data.remaining_days >= 0 ? data.remaining_days + ' 天' : '无限';
                 document.getElementById('expiredAt').textContent = data.expired_at;
             }
-            
             document.getElementById('activatedAt').textContent = data.activated_at;
+
+            // 5 小时使用量进度条
+            const limit = data.limit_5h || 0;
+            const used = data.used_5h || 0;
+            const skipHourly = data.skip_hourly || false;
+
+            const barSection = document.getElementById('usageBar5h');
+            const countEl = document.getElementById('usageCount');
+            const fill = document.getElementById('progressFill');
+
+            if (skipHourly) {
+                countEl.textContent = '不限量（周限 ' + fmtNum(data.weekly_max || 0) + ' 次）';
+                fill.style.width = '100%';
+                fill.className = 'progress-fill';
+            } else if (limit > 0) {
+                countEl.textContent = fmtNum(used) + ' / ' + fmtNum(limit);
+                const pct = Math.min((used / limit) * 100, 100);
+                fill.style.width = pct + '%';
+                fill.className = 'progress-fill' + (pct > 80 ? ' danger' : pct > 50 ? ' warning' : '');
+            } else {
+                barSection.style.display = 'none';
+            }
 
             document.getElementById('result').classList.add('show');
         }

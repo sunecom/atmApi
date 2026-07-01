@@ -43,7 +43,7 @@ func InitDB(cfg *config.Config) {
 	}
 
 	// 自动迁移（容错模式：失败只警告不退出）
-	err = DB.AutoMigrate(&User{}, &Token{}, &Channel{}, &RequestLog{}, &RateLimit{}, &Plan{})
+	err = DB.AutoMigrate(&User{}, &Token{}, &Channel{}, &RequestLog{}, &RateLimit{}, &Plan{}, &UsageLog{})
 	if err != nil {
 		log.Printf("[警告] 数据库迁移部分失败：%v（继续启动）", err)
 		// 尝试手动添加缺失字段

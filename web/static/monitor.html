@@ -3,81 +3,154 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>atmApi 成本监控中心</title>
+    <title>atmApi 监控中心</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; margin: 0; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .header { text-align: center; margin-bottom: 30px; color: #1a1a1a; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        .card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: transform 0.2s; }
-        .card:hover { transform: translateY(-2px); }
-        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-        .channel-name { font-size: 18px; font-weight: 600; color: #333; }
-        .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; margin: 0; padding: 16px; }
+        .container { max-width: 1300px; margin: 0 auto; }
+        .header { text-align: center; padding: 20px 0 10px; color: #1a1a1a; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .header p { margin: 6px 0 0; color: #666; font-size: 14px; }
+
+        /* 标签页导航 */
+        .tabs { display: flex; gap: 4px; margin: 20px 0; background: #e4e6ea; border-radius: 10px; padding: 4px; }
+        .tab-btn { flex: 1; padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; background: transparent; color: #555; transition: all 0.2s; }
+        .tab-btn.active { background: white; color: #1a1a1a; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .tab-btn:hover:not(.active) { background: rgba(255,255,255,0.5); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* 渠道卡片 */
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+        .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .channel-name { font-size: 16px; font-weight: 600; color: #333; }
+        .status-badge { padding: 3px 10px; border-radius: 16px; font-size: 12px; font-weight: 500; }
         .status-active { background: #e6f7ee; color: #0d9c53; }
         .status-disabled { background: #fee; color: #d93025; }
-        .metric { margin: 12px 0; }
-        .metric-label { font-size: 13px; color: #666; margin-bottom: 4px; }
-        .metric-value { font-size: 24px; font-weight: 700; color: #1a1a1a; }
-        .progress-bar { height: 8px; background: #eee; border-radius: 4px; overflow: hidden; margin-top: 8px; }
-        .progress-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+        .metric { margin: 10px 0; }
+        .metric-label { font-size: 12px; color: #888; margin-bottom: 2px; }
+        .metric-value { font-size: 22px; font-weight: 700; color: #1a1a1a; }
+        .progress-bar { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+        .progress-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
         .fill-green { background: linear-gradient(90deg, #0d9c53, #34c759); }
         .fill-yellow { background: linear-gradient(90deg, #f5a623, #ff9500); }
         .fill-red { background: linear-gradient(90deg, #ff3b30, #d93025); }
-        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; }
+        .btn { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
         .btn-pause { background: #ff3b30; color: white; }
         .btn-pause:hover { background: #d93025; }
         .btn-reset { background: #007aff; color: white; }
         .btn-reset:hover { background: #0056cc; }
-        .alert-box { background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 16px; margin-bottom: 20px; display: none; }
+        .alert-box { background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 14px; margin-bottom: 16px; display: none; }
         .alert-box.show { display: block; }
-        .last-update { text-align: center; color: #999; font-size: 12px; margin-top: 20px; }
+        .last-update { text-align: center; color: #999; font-size: 12px; margin-top: 16px; }
+
+        /* 成本分析通用 */
+        .summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+        .stat-card { background: white; border-radius: 10px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); text-align: center; }
+        .stat-card .label { font-size: 12px; color: #888; }
+        .stat-card .value { font-size: 24px; font-weight: 700; color: #1a1a1a; margin: 4px 0; }
+        .stat-card .sub { font-size: 12px; color: #999; }
+        .stat-card.highlight { border-left: 3px solid #007aff; }
+
+        .section-title { font-size: 15px; font-weight: 600; color: #333; margin: 20px 0 10px; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        th { background: #f7f8fa; text-align: left; padding: 10px 14px; font-size: 13px; font-weight: 600; color: #555; border-bottom: 1px solid #eee; }
+        td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #f5f5f5; }
+        tr:hover td { background: #fafbfc; }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+
+        /* 趋势图 */
+        .trend-chart { display: flex; align-items: flex-end; gap: 8px; height: 160px; padding: 12px 0; }
+        .trend-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+        .trend-bar { width: 70%; max-width: 50px; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, #007aff, #66b3ff); transition: height 0.3s; min-height: 4px; }
+        .trend-label { font-size: 11px; color: #888; margin-top: 4px; }
+        .trend-value { font-size: 11px; color: #555; margin-bottom: 2px; }
+
+        .empty-state { text-align: center; color: #bbb; padding: 40px; font-size: 14px; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🛡️ atmApi 成本监控中心</h1>
-            <p>实时追踪各渠道用量，防止超额消费</p>
+            <h1>🛡️ atmApi 监控中心</h1>
+            <p>渠道监控 &amp; 成本分析</p>
         </div>
 
-        <div id="alertBox" class="alert-box">
-            ⚠️ <strong>DeepSeek 消费告警：</strong><span id="alertMessage"></span>
+        <!-- 标签页 -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('channels')">📡 渠道监控</button>
+            <button class="tab-btn" onclick="switchTab('cost')">💰 成本分析</button>
         </div>
 
-        <div class="grid" id="channelsGrid">
-            <!-- 渠道卡片将通过 JS 动态生成 -->
+        <!-- ===== 渠道监控 ===== -->
+        <div id="tab-channels" class="tab-content active">
+            <div id="alertBox" class="alert-box">
+                ⚠️ <strong>DeepSeek 消费告警：</strong><span id="alertMessage"></span>
+            </div>
+            <div class="grid" id="channelsGrid"></div>
+        </div>
+
+        <!-- ===== 成本分析 ===== -->
+        <div id="tab-cost" class="tab-content">
+            <div id="costLoading" class="empty-state">⏳ 加载中…</div>
+            <div id="costContent" style="display:none;">
+                <!-- 总览卡片 -->
+                <div class="summary-row" id="costOverview"></div>
+                <!-- 7天趋势 -->
+                <div class="section-title">📈 近 7 天成本趋势</div>
+                <div class="card" id="trendChart"></div>
+                <!-- 按模型汇总 -->
+                <div class="section-title">📊 按模型汇总</div>
+                <div id="byModelTable"></div>
+                <!-- 按套餐汇总 -->
+                <div class="section-title">📦 按套餐汇总</div>
+                <div id="byPlanTable"></div>
+            </div>
         </div>
 
         <div class="last-update">最后更新: <span id="updateTime">--</span></div>
     </div>
 
     <script>
-        async function loadChannels() {
+        let activeTab = 'channels';
+
+        function switchTab(tab) {
+            activeTab = tab;
+            document.querySelectorAll('.tab-btn').forEach((b, i) => {
+                b.classList.toggle('active', (i === 0 && tab === 'channels') || (i === 1 && tab === 'cost'));
+            });
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+
+            if (tab === 'cost') loadCostData();
+            if (tab === 'channels') loadChannelData();
+        }
+
+        // ===== 渠道监控 =====
+        async function loadChannelData() {
             try {
-                const response = await fetch('/api/stats');
-                const result = await response.json();
+                const res = await fetch('/api/stats');
+                const result = await res.json();
                 const stats = result.data || {};
                 const channels = stats.channels || [];
-                const channelRequests = stats.channel_requests || [];
-                
                 const grid = document.getElementById('channelsGrid');
                 grid.innerHTML = '';
 
-                let hasAlert = stats.deepseek_alert || false;
-
+                const hasAlert = stats.deepseek_alert || false;
                 if (hasAlert) {
-                    document.getElementById('alertMessage').textContent = 
+                    document.getElementById('alertMessage').textContent =
                         `当前 DeepSeek 消费已达限额的 ${stats.deepseek_pct.toFixed(1)}%，请及时处理！`;
                     document.getElementById('alertBox').classList.add('show');
+                } else {
+                    document.getElementById('alertBox').classList.remove('show');
                 }
 
                 channels.forEach(ch => {
-                    const isDeepSeek = ch.name.includes('DeepSeek');
                     const dailyLimit = parseFloat(ch.daily_limit) || 0;
                     const dailyCost = parseFloat(ch.daily_cost) || 0;
                     const percentage = dailyLimit > 0 ? (dailyCost / dailyLimit * 100) : 0;
-
                     let fillClass = 'fill-green';
                     if (percentage > 90) fillClass = 'fill-red';
                     else if (percentage > 70) fillClass = 'fill-yellow';
@@ -101,56 +174,153 @@
                             <div class="progress-bar">
                                 <div class="progress-fill ${fillClass}" style="width: ${Math.min(percentage, 100)}%"></div>
                             </div>
-                            <div style="text-align: right; font-size: 12px; color: #666; margin-top: 4px;">${percentage.toFixed(1)}%</div>
-                        </div>
-                        ` : ''}
-                        <div style="margin-top: 16px; display: flex; gap: 8px;">
-                            ${ch.status === 1 ? 
-                                `<button class="btn btn-pause" onclick="toggleChannel(${ch.id}, 2)">暂停渠道</button>` :
-                                `<button class="btn btn-reset" onclick="toggleChannel(${ch.id}, 1)">恢复渠道</button>`
-                            }
-                            <button class="btn btn-reset" onclick="resetCost(${ch.id})">重置今日用量</button>
+                            <div style="text-align:right;font-size:12px;color:#666;margin-top:4px;">${percentage.toFixed(1)}%</div>
+                        </div>` : ''}
+                        <div style="margin-top:12px;display:flex;gap:8px;">
+                            ${ch.status === 1 ?
+                                `<button class="btn btn-pause" onclick="toggleChannel(${ch.id}, 2)">暂停</button>` :
+                                `<button class="btn btn-reset" onclick="toggleChannel(${ch.id}, 1)">恢复</button>`}
+                            <button class="btn btn-reset" onclick="resetCost(${ch.id})">重置用量</button>
                         </div>
                     `;
                     grid.appendChild(card);
                 });
 
                 document.getElementById('updateTime').textContent = stats.updated_at || new Date().toLocaleString('zh-CN');
-            } catch (error) {
-                console.error('加载失败:', error);
-                document.getElementById('channelsGrid').innerHTML = '<div class="card" style="text-align:center;color:#999">⚠️ 无法加载数据，请确认 atmApi 是否正常运行</div>';
+            } catch (e) {
+                document.getElementById('channelsGrid').innerHTML = '<div class="card" style="text-align:center;color:#999">⚠️ 加载失败</div>';
             }
         }
 
         async function toggleChannel(id, status) {
-            if (!confirm(`确定要${status === 1 ? '恢复' : '暂停'}该渠道吗？`)) return;
+            if (!confirm(`确定${status === 1 ? '恢复' : '暂停'}该渠道？`)) return;
             try {
-                await fetch(`/v1/channels/${id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ status })
-                });
-                loadChannels();
-            } catch (error) {
-                alert('操作失败: ' + error.message);
-            }
+                await fetch(`/v1/channels/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+                loadChannelData();
+            } catch (e) { alert('操作失败'); }
         }
 
         async function resetCost(id) {
-            if (!confirm('确定要重置该渠道的今日用量为 0 吗？')) return;
+            if (!confirm('确定重置今日用量？')) return;
+            try { await fetch(`/api/reset-cost/${id}`, { method: 'POST' }); loadChannelData(); }
+            catch (e) { alert('重置失败'); }
+        }
+
+        // ===== 成本分析 =====
+        async function loadCostData() {
+            document.getElementById('costLoading').style.display = 'block';
+            document.getElementById('costContent').style.display = 'none';
             try {
-                await fetch(`/api/reset-cost/${id}`, {
-                    method: 'POST'
-                });
-                loadChannels();
-            } catch (error) {
-                alert('重置失败: ' + error.message);
+                const [summaryRes, planRes, trendRes] = await Promise.all([
+                    fetch('/api/v1/cost-summary'),
+                    fetch('/api/v1/cost-by-plan'),
+                    fetch('/api/v1/cost-trend')
+                ]);
+                const summary = (await summaryRes.json()).data || {};
+                const planData = (await planRes.json()).data || [];
+                const trendData = (await trendRes.json()).data || [];
+
+                // 总览
+                renderOverview(summary);
+                // 趋势图
+                renderTrend(trendData);
+                // 按模型
+                renderByModel(summary.by_model || []);
+                // 按套餐
+                renderByPlan(planData);
+
+                document.getElementById('costLoading').style.display = 'none';
+                document.getElementById('costContent').style.display = 'block';
+            } catch (e) {
+                document.getElementById('costLoading').innerHTML = '⚠️ 加载失败，可能还没有用量数据';
             }
         }
 
-        // 初始加载并每 10 秒自动刷新
-        loadChannels();
-        setInterval(loadChannels, 10000);
+        function fmt(n) { return n.toLocaleString('zh-CN'); }
+        function fmtYuan(y) { return '¥' + y.toFixed(2); }
+
+        function renderOverview(summary) {
+            document.getElementById('costOverview').innerHTML = `
+                <div class="stat-card highlight">
+                    <div class="label">今日成本</div>
+                    <div class="value">${fmtYuan(summary.today_cost || 0)}</div>
+                    <div class="sub">${fmt(summary.today_tokens || 0)} tokens</div>
+                </div>
+                <div class="stat-card highlight">
+                    <div class="label">本周成本</div>
+                    <div class="value">${fmtYuan(summary.week_cost || 0)}</div>
+                    <div class="sub">${fmt(summary.week_tokens || 0)} tokens</div>
+                </div>
+                <div class="stat-card highlight">
+                    <div class="label">本月成本</div>
+                    <div class="value">${fmtYuan(summary.month_cost || 0)}</div>
+                    <div class="sub">${fmt(summary.month_tokens || 0)} tokens</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">总成本（全部记录）</div>
+                    <div class="value">${fmtYuan(summary.total_cost || 0)}</div>
+                    <div class="sub">${fmt(summary.total_tokens || 0)} tokens</div>
+                </div>
+            `;
+        }
+
+        function renderTrend(trend) {
+            const el = document.getElementById('trendChart');
+            if (!trend || trend.length === 0) {
+                el.innerHTML = '<div class="empty-state">暂无趋势数据</div>';
+                return;
+            }
+            const maxCost = Math.max(...trend.map(d => d.cost_yuan), 0.01);
+            el.innerHTML = '<div class="trend-chart">' +
+                trend.map(d => {
+                    const pct = (d.cost_yuan / maxCost * 100);
+                    return `<div class="trend-bar-wrap">
+                        <div class="trend-value">${fmtYuan(d.cost_yuan)}</div>
+                        <div class="trend-bar" style="height:${Math.max(pct, 4)}%"></div>
+                        <div class="trend-label">${d.date.slice(5)}</div>
+                        <div style="font-size:10px;color:#bbb">${fmt(d.count)}次</div>
+                    </div>`;
+                }).join('') + '</div>';
+        }
+
+        function renderByModel(models) {
+            const el = document.getElementById('byModelTable');
+            if (!models || models.length === 0) {
+                el.innerHTML = '<div class="empty-state">暂无数据</div>';
+                return;
+            }
+            el.innerHTML = `<table>
+                <tr><th>模型</th><th class="text-right">调用次数</th><th class="text-right">输入 tokens</th><th class="text-right">输出 tokens</th><th class="text-right">总计 tokens</th><th class="text-right">成本</th></tr>
+                ${models.map(m => `<tr>
+                    <td>${m.model}</td>
+                    <td class="text-right">${fmt(m.count)}</td>
+                    <td class="text-right">${fmt(m.input_tokens)}</td>
+                    <td class="text-right">${fmt(m.output_tokens)}</td>
+                    <td class="text-right">${fmt(m.total_tokens)}</td>
+                    <td class="text-right">${fmtYuan(m.cost_yuan)}</td>
+                </tr>`).join('')}
+            </table>`;
+        }
+
+        function renderByPlan(plans) {
+            const el = document.getElementById('byPlanTable');
+            if (!plans || plans.length === 0) {
+                el.innerHTML = '<div class="empty-state">暂无数据</div>';
+                return;
+            }
+            el.innerHTML = `<table><tr>
+                <th>套餐</th><th class="text-right">调用次数</th><th class="text-right">输入 tokens</th><th class="text-right">输出 tokens</th><th class="text-right">成本</th>
+            </tr>${plans.map(p => `<tr>
+                <td>${p.plan_name || '(无套餐)'}</td>
+                <td class="text-right">${fmt(p.count)}</td>
+                <td class="text-right">${fmt(p.input_tokens)}</td>
+                <td class="text-right">${fmt(p.output_tokens)}</td>
+                <td class="text-right">${fmtYuan(p.cost_yuan)}</td>
+            </tr>`).join('')}</table>`;
+        }
+
+        // 初始加载
+        loadChannelData();
     </script>
 </body>
 </html>
