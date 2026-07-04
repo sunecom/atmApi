@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>atmApi 管理后台</title>
   <link rel="icon" href="logo.png"/>
+  <meta http-equiv="pragma" content="no-cache">
+  <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="expires" content="0">
   <style>
     :root {
       --bg-dark: #121212;
@@ -322,7 +325,7 @@
       <input id="loginPass" type="password" placeholder="密码" />
       <button class="btn btn-primary" onclick="doLogin()" style="margin-top:8px;">登录</button>
       <div id="loginErr" class="muted" style="margin-top:12px;color:var(--danger);font-size:12px;"></div>
-      <div class="login-hint" style="margin-top:20px;">默认账号：admin / admin123</div>
+      <div class="login-hint" style="margin-top:20px;">请使用管理员账号登录</div>
       <div style="text-align:center;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);">🦐 <a href="https://www.aitomoney.online" target="_blank" style="color:var(--text-main);text-decoration:none;">AiToMoney</a> 出品</div>
     </div>
   </div>
@@ -347,14 +350,8 @@
         <button onclick="showTab('settings', this)">系统设置</button>
         <button onclick="showTab('api-docs', this)">API 文档</button>
         <button onclick="showTab('tester', this)">模型测试</button>
-        <a href="/static/monitor.html" style="display:block;padding:10px 16px;color:var(--text-main);text-decoration:none;border-radius:8px;transition:background 0.2s;font-size:14px;">
-          <span>📡 监控中心</span>
-          <span style="font-size:11px;color:var(--text-dim);display:block;">渠道 &amp; 成本分析</span>
-        </a>
-        <a href="/static/token-info.html" style="display:block;padding:10px 16px;color:var(--text-main);text-decoration:none;border-radius:8px;transition:background 0.2s;font-size:14px;">
-          <span>🔑 Token 查询</span>
-          <span style="font-size:11px;color:var(--text-dim);display:block;">查询用量和套餐信息</span>
-        </a>
+        <button onclick="openExternalTab('monitor', this)">监控中心</button>
+        <button onclick="openExternalTab('token-info', this)">Token 查询</button>
       </div>
       <div class="sidebar-footer">
         <div>🦐 <a href="https://www.aitomoney.online" target="_blank" style="color:var(--text-main);text-decoration:none;">AiToMoney</a> 出品</div>
@@ -510,6 +507,12 @@
         </div>
       </section>
 
+      <section id="tab-monitor" class="tab hidden">
+        <iframe src="/static/monitor.html" style="width:100%;height:calc(100vh - 100px);border:none;border-radius:8px;"></iframe>
+      </section>
+      <section id="tab-token-info" class="tab hidden">
+        <iframe src="/static/token-info.html" style="width:100%;height:calc(100vh - 100px);border:none;border-radius:8px;"></iframe>
+      </section>
       <section id="tab-tester" class="tab hidden">
         <div class="grid">
           <div class="card span-6">
@@ -664,6 +667,13 @@
     })();
 
     function showTab(name, btn) {
+      document.querySelectorAll('.tab').forEach(el => el.classList.add('hidden'));
+      document.getElementById('tab-' + name).classList.remove('hidden');
+      document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+
+    function openExternalTab(name, btn) {
       document.querySelectorAll('.tab').forEach(el => el.classList.add('hidden'));
       document.getElementById('tab-' + name).classList.remove('hidden');
       document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));

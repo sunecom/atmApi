@@ -71,6 +71,24 @@ type ModelRouteConfig struct {
 var modelRouter = map[string][]ModelRouteEntry{
 	// glm-5.2 已迁移到聚合组（channels 表 model_group='glm-5.2'）
 	// 聚合组全挂时直接报错，不 fallback 到其他模型
+
+	// deepseek-a4：atm卡 统一模型名
+	// 注：smart_router.go 的 SmartRoute() 会先拦截 deepseek-a4
+	// 根据消息内容（图片/复杂度）转成具体模型名：qwen3.7-plus / deepseek-v4-flash / deepseek-v4-pro
+	// 这里的路由表是兜底，万一 SmartRoute 没有命中（不太可能）
+	"deepseek-a4": {
+		{ChannelID: 1, ModelOverride: "qwen3.7-plus", Priority: 100},    // 多模态
+		{ChannelID: 17, ModelOverride: "deepseek-v4-pro", Priority: 90}, // 深度推理
+		{ChannelID: 2, ModelOverride: "deepseek-v4-flash", Priority: 80}, // 默认
+	},
+}
+
+// isFastFailError 判断一个错误是否来自快速失败
+func isFastFailError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "快速失败")
 }
 
 // RouteRequest 路由请求到合适渠道
@@ -95,22 +113,41 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 	// 4a. 先查聚合组（model_group）
 	if groupChannels, err := getModelGroupChannels(targetModel); err == nil && len(groupChannels) > 0 {
 		log.Printf("[路由] 模型 %s 命中聚合组，共 %d 个渠道", targetModel, len(groupChannels))
-		return routeToModelGroup(groupChannels, requestBody, token, targetModel)
+		result, groupErr := routeToModelGroup(groupChannels, requestBody, token, targetModel)
+		if groupErr == nil {
+			return result, nil
+		}
+		// 快速失败错误直接返回，不走后续路径
+		if isFastFailError(groupErr) {
+			log.Printf("[路由] 聚合组快速失败，终止路由: %v", groupErr)
+			return nil, groupErr
+		}
+		// 普通错误继续 fallback
+		log.Printf("[路由] 聚合组全挂，fallback 到路由表: %v", groupErr)
 	}
 
 	// 4b. 查路由表（modelRouter）
 	if routes, ok := modelRouter[targetModel]; ok {
 		log.Printf("[路由] 模型 %s 命中路由表，共 %d 个备选渠道", targetModel, len(routes))
-		return routeToBestChannel(targetModel, requestBody, token, routes)
+		result, routeErr := routeToBestChannel(targetModel, requestBody, token, routes)
+		if routeErr == nil {
+			return result, nil
+		}
+		// 快速失败错误直接返回
+		if isFastFailError(routeErr) {
+			log.Printf("[路由] 路由表快速失败，终止路由: %v", routeErr)
+			return nil, routeErr
+		}
+		log.Printf("[路由] 路由表失败，fallback 到 LIKE 查询: %v", routeErr)
 	}
 
 	// 4c. 原逻辑：查 models LIKE 匹配
-	log.Printf("[路由] 查找模型: %s（不在路由表，走原逻辑）", targetModel)
+	log.Printf("[路由] 查找模型: %s（LIKE 查询）", targetModel)
 	channels, err := getChannelsForModel(targetModel)
 	if err != nil {
 		return nil, fmt.Errorf("获取渠道失败：%w", err)
 	}
-	log.Printf("[路由] 找到 %d 个渠道", len(channels))
+	log.Printf("[路由] LIKE 查询找到 %d 个渠道", len(channels))
 
 	if len(channels) == 0 {
 		return nil, fmt.Errorf("没有可用渠道")
@@ -121,6 +158,10 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 	for _, channel := range channels {
 		resp, err := trySingleChannel(channel, targetModel, requestBody)
 		if err != nil {
+			// 快速失败直接返回
+			if isFastFailError(err) {
+				return nil, err
+			}
 			lastErr = err
 			continue
 		}
@@ -233,6 +274,22 @@ func routeToBestChannel(originalModel string, requestBody []byte, token *model.T
 }
 
 // trySingleChannel 尝试单个渠道，返回响应或错误
+// shouldFastFail 判断上游返回的状态码是否应该快速失败（不继续 fallback）
+// 4xx 客户端错误通常是消息格式问题或模型不存在，fallback 到其他渠道也一样
+// 5xx 服务端错误可以继续尝试其他渠道
+func shouldFastFail(statusCode int) bool {
+	// 400 + 401 + 403 = 客户端问题，无需重试
+	// 404 = 渠道端点不存在，不用重试
+	if statusCode >= 400 && statusCode < 500 {
+		// 429 限流可以重试其他渠道
+		if statusCode == 429 {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 func trySingleChannel(channel model.Channel, targetModel string, originalBody []byte) (*http.Response, error) {
 	if channel.Status != 1 {
 		return nil, fmt.Errorf("渠道 %s 未启用", channel.Name)
@@ -253,6 +310,13 @@ func trySingleChannel(channel model.Channel, targetModel string, originalBody []
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		log.Printf("渠道 %s 返回 HTTP %d: %s", channel.Name, resp.StatusCode, string(bodyBytes))
+		
+		if shouldFastFail(resp.StatusCode) {
+			// 4xx 客户端错误 → 快速失败，不继续 fallback
+			// 消息格式问题（如 tool_calls 不匹配）换个渠道也一样，不要浪费时间
+			return nil, fmt.Errorf("渠道 %s 返回 HTTP %d（快速失败）: %s",
+				channel.Name, resp.StatusCode, string(bodyBytes))
+		}
 		return nil, fmt.Errorf("渠道 %s 返回 HTTP %d", channel.Name, resp.StatusCode)
 	}
 
@@ -312,9 +376,12 @@ func validateToken(key string) (*model.Token, error) {
 
 // getChannelsForModel 获取支持指定模型的渠道列表
 func getChannelsForModel(modelName string) ([]model.Channel, error) {
+	// 统一转小写，兼容不同大小写写法的模型名
+	modelName = strings.ToLower(modelName)
+	
 	var channels []model.Channel
 	result := model.DB.Where(
-		"models LIKE ? AND status = ?",
+		"LOWER(models) LIKE ? AND status = ?",
 		"%"+modelName+"%",
 		1,
 	).Order("priority DESC, weight DESC").Find(&channels)
@@ -347,16 +414,7 @@ func limitTokenUsage(body []byte) []byte {
 		return body
 	}
 
-	// 1. 强制限制 max_tokens = 500（输出成本占 70%）
-	if val, ok := req["max_tokens"]; ok {
-		if v, ok := val.(float64); ok && v > 500 {
-			req["max_tokens"] = float64(500)
-		}
-	} else {
-		req["max_tokens"] = float64(500)
-	}
-
-	// 2. 裁剪历史消息：只保留 system + 最近 3 轮（最多 7 条）
+	// 1. 裁剪历史消息：只保留 system + 最近 3 轮（最多 7 条）
 	if msgs, ok := req["messages"].([]interface{}); ok && len(msgs) > 7 {
 		systemMsgs := []interface{}{}
 		nonSystemMsgs := []interface{}{}

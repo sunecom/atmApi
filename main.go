@@ -20,6 +20,12 @@ func main() {
 	// 初始化数据库
 	model.InitDB(cfg)
 
+	// 初始化响应缓存（TTL 10分钟，最大 1000 条）
+	service.InitCache(10*time.Minute, 1000)
+
+	// 初始化图片缓存（TTL 5分钟）
+	service.InitImageCache(5)
+
 	// 启动定时清理 rate_limits 过期记录（每天凌晨 3 点清理 7 天前的数据）
 	go func() {
 		for {

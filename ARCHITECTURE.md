@@ -16,7 +16,7 @@
 cd /home/admin/.openclaw/workspace/atmApi && go build -o atmapi .
 
 # 2. 重启服务（编译后必做）
-pkill -9 -f "atmApi/atmapi" || true && sleep 2 && PORT=3002 nohup ./atmapi > /tmp/atmapi.log 2>&1 &
+pkill -9 -f "atmApi/atmapi" || true && sleep 2 && PORT=3300 nohup ./atmapi > /tmp/atmapi.log 2>&1 &
 
 # 3. 查看日志/排错
 tail -f /tmp/atmapi.log
@@ -39,7 +39,7 @@ sqlite3 /home/admin/.openclaw/workspace/atmApi/data/atmapi.db
           └─────────────────┼──────────────────┘
                             │
                     ┌───────┴───────┐
-                    │  atmApi :3002  │  ← 部署在艾隆服务器 (8.220.139.36)
+                    │  atmApi :3300  │  ← 部署在艾隆服务器 (8.220.139.36)
                     └───────┬───────┘
                             │
           ┌─────────────────┼──────────────────┐
@@ -111,7 +111,7 @@ P5  → DeepSeek v4-flash (5元/天硬限额) ← 最终防线（限额告警 + 
 | 参数 | 值 | 对项目的影响 |
 |------|----|-------------|
 | 服务器 | 8.220.139.36 (艾隆本机) | atmApi 部署在此 |
-| 端口 | **3002** | Gateway 通过 localhost:3002 调用 atmApi |
+| 端口 | **3300** | Gateway 通过 localhost:3300 调用 atmApi |
 | 数据库 | SQLite (`data/atmapi.db`) | 单机部署，不支持多节点 |
 | Go 版本 | 项目要求 1.20+ | `go build` 即可编译 |
 

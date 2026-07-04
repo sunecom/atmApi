@@ -39,16 +39,16 @@ wget https://github.com/sunecom/atmApi/releases/latest/download/atmapi
 chmod +x atmapi
 
 # 2. 启动（默认端口 3000）
-PORT=3002 ./atmapi
+PORT=3300 ./atmapi
 
 # 3. 访问
-open http://localhost:3002
+open http://localhost:3300
 ```
 
 ### 方式二：Docker 部署
 
 ```bash
-docker run -d --name atmapi -p 3002:3002 \
+docker run -d --name atmapi -p 3300:3300 \
   -v ./data:/app/data \
   sunecom/atmapi:latest
 ```
@@ -118,7 +118,7 @@ go build -o atmapi .
 ```
 ┌──────────────────────┐
 │     HTTP 请求入口     │
-│  localhost:3002       │
+│  localhost:3300       │
 └──────────┬───────────┘
            ▼
 ┌──────────────────────┐
