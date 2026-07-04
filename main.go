@@ -17,6 +17,14 @@ func main() {
 	// 加载配置
 	cfg := config.Load()
 
+	// 加载支付宝配置（从 .env.alipay 文件）
+	if err := api.LoadEnvFile(".env.alipay"); err != nil {
+		log.Printf("[警告] 加载 .env.alipay 失败: %v（支付宝支付不可用）", err)
+	} else {
+		// 初始化支付宝支付模块（仅在配置加载成功时）
+		api.InitAlipay()
+	}
+
 	// 初始化数据库
 	model.InitDB(cfg)
 
