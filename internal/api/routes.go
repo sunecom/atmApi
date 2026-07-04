@@ -61,7 +61,12 @@ func respondError(c *gin.Context, httpStatus int, code ErrorCode, message string
 
 // RegisterRoutes 注册所有路由
 func RegisterRoutes(r *gin.Engine) {
+	// 安全 Headers 中间件
 	r.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
+		c.Writer.Header().Set("X-Frame-Options", "DENY")
+		c.Writer.Header().Set("X-XSS-Protection", "1; mode=block")
+		c.Writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -161,12 +166,19 @@ func cacheStats(c *gin.Context) {
 // ===== 登录认证 =====
 
 func login(c *gin.Context) {
+	// 防暴力登录：检查 IP 限流
+	ip := c.ClientIP()
+	if !checkLoginRateLimit(ip) {
+		respondError(c, http.StatusTooManyRequests, ErrRateLimitExceeded, "登录尝试过于频繁，请稍后再试")
+		return
+	}
+
 	var req struct {
 		Username string `json:"username" binding:"required"`
 		Password string `json:"password" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, ErrInvalidRequest, err.Error())
 		return
 	}
 	var user model.User
@@ -187,6 +199,13 @@ func login(c *gin.Context) {
 }
 
 func register(c *gin.Context) {
+	// 防暴力注册：检查 IP 限流
+	ip := c.ClientIP()
+	if !checkRegisterRateLimit(ip) {
+		respondError(c, http.StatusTooManyRequests, ErrRateLimitExceeded, "注册过于频繁，请稍后再试")
+		return
+	}
+
 	var req struct {
 		Username    string `json:"username" binding:"required"`
 		Password    string `json:"password" binding:"required,min=6"`
@@ -194,7 +213,7 @@ func register(c *gin.Context) {
 		Email       string `json:"email"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, ErrInvalidRequest, err.Error())
 		return
 	}
 	var count int64
@@ -977,6 +996,74 @@ func tokenInfo(c *gin.Context) {
 }
 
 // ===== 辅助函数 =====
+
+// 注册限流：每 IP 每分钟最多 3 次注册
+var registerRateLimit = struct {
+	sync.RWMutex
+	records map[string][]time.Time
+}{records: make(map[string][]time.Time)}
+
+func checkRegisterRateLimit(ip string) bool {
+	registerRateLimit.Lock()
+	defer registerRateLimit.Unlock()
+
+	now := time.Now()
+	oneMinuteAgo := now.Add(-time.Minute)
+
+	// 清理过期记录
+	if records, exists := registerRateLimit.records[ip]; exists {
+		valid := make([]time.Time, 0)
+		for _, t := range records {
+			if t.After(oneMinuteAgo) {
+				valid = append(valid, t)
+			}
+		}
+		registerRateLimit.records[ip] = valid
+	}
+
+	// 检查是否超限
+	if len(registerRateLimit.records[ip]) >= 3 {
+		return false
+	}
+
+	// 记录本次
+	registerRateLimit.records[ip] = append(registerRateLimit.records[ip], now)
+	return true
+}
+
+// 登录限流：每 IP 每分钟最多 10 次登录
+var loginRateLimit = struct {
+	sync.RWMutex
+	records map[string][]time.Time
+}{records: make(map[string][]time.Time)}
+
+func checkLoginRateLimit(ip string) bool {
+	loginRateLimit.Lock()
+	defer loginRateLimit.Unlock()
+
+	now := time.Now()
+	oneMinuteAgo := now.Add(-time.Minute)
+
+	// 清理过期记录
+	if records, exists := loginRateLimit.records[ip]; exists {
+		valid := make([]time.Time, 0)
+		for _, t := range records {
+			if t.After(oneMinuteAgo) {
+				valid = append(valid, t)
+			}
+		}
+		loginRateLimit.records[ip] = valid
+	}
+
+	// 检查是否超限
+	if len(loginRateLimit.records[ip]) >= 10 {
+		return false
+	}
+
+	// 记录本次
+	loginRateLimit.records[ip] = append(loginRateLimit.records[ip], now)
+	return true
+}
 
 func generateTokenKey() string {
 	return fmt.Sprintf("atm-%d", time.Now().UnixNano())
