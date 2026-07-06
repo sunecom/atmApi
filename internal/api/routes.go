@@ -1169,13 +1169,15 @@ func getTokenUsage(c *gin.Context) {
 func tokenInfo(c *gin.Context) {
 	tokenKey := c.Query("token")
 	if tokenKey == "" {
-		respondError(c, http.StatusBadRequest, ErrInvalidRequest, "请提供 token")
+		// 返回 200 而非 400，避免 QQ 内置浏览器把 4xx 当网络错误
+		c.JSON(http.StatusOK, gin.H{"error": gin.H{"code": "INVALID_REQUEST", "message": "请提供 token"}})
 		return
 	}
 
 	var token model.Token
 	if err := model.DB.Where("key = ?", tokenKey).First(&token).Error; err != nil {
-		respondError(c, http.StatusNotFound, ErrTokenNotFound, "token 不存在")
+		// 返回 200 而非 404，避免 QQ/微信内置浏览器 fetch 抛异常
+		c.JSON(http.StatusOK, gin.H{"error": gin.H{"code": "TOKEN_NOT_FOUND", "message": "token 不存在"}})
 		return
 	}
 
