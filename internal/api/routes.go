@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,7 +62,7 @@ func RegisterRoutes(r *gin.Engine) {
 	// 安全 Headers 中间件
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-		c.Writer.Header().Set("X-Frame-Options", "DENY")
+		c.Writer.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		c.Writer.Header().Set("X-XSS-Protection", "1; mode=block")
 		c.Writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
@@ -74,17 +75,34 @@ func RegisterRoutes(r *gin.Engine) {
 		c.Next()
 	})
 
+	r.Use(func(c *gin.Context) {
+		// 静态文件不缓存（开发阶段）
+		if strings.HasPrefix(c.Request.URL.Path, "/static/") {
+			c.Writer.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Writer.Header().Set("Pragma", "no-cache")
+			c.Writer.Header().Set("Expires", "0")
+		}
+		c.Next()
+	})
 	r.Static("/static", "./web/static")
 	r.GET("/", indexPage)
+	r.GET("/pay", func(c *gin.Context) { c.Redirect(301, "/static/pay.html?"+c.Request.URL.RawQuery) })
+	r.GET("/account", func(c *gin.Context) { c.Redirect(301, "/static/pay.html?"+c.Request.URL.RawQuery) })
 	r.GET("/health", healthCheck)
 	r.GET("/cache/stats", cacheStats)
 	r.GET("/token-info", func(c *gin.Context) { c.Redirect(301, "/static/token-info.html") })
+	r.GET("/dashboard", func(c *gin.Context) { c.Redirect(301, "/static/dashboard.html") })
+	r.GET("/monitor", func(c *gin.Context) { c.Redirect(301, "/static/monitor.html") })
+	// MCP 端点（Model Context Protocol）
+	r.GET("/mcp", mcpHandle)
+	r.POST("/mcp", mcpHandle)
 
 	// OpenAI 兼容路由（/v1）— 给 OpenClaw Gateway 和标准客户端用
 	oai := r.Group("/v1")
 	{
 		oai.POST("/chat/completions", chatCompletions)
 		oai.GET("/models", listModels)
+		oai.GET("/usage", getTokenUsage)
 	}
 
 	v1 := r.Group("/api/v1")
@@ -94,6 +112,7 @@ func RegisterRoutes(r *gin.Engine) {
 		v1.POST("/register", register)
 		v1.GET("/models", listModels)
 		v1.GET("/token-info", tokenInfo) // 客户查询 token 信息
+		v1.GET("/stats", publicStats) // 公开统计（监控中心用）
 
 		managed := v1.Group("")
 		managed.Use(middleware.AuthRequired())
@@ -118,6 +137,15 @@ func RegisterRoutes(r *gin.Engine) {
 			managed.GET("/cost-summary", getCostSummary)
 			managed.GET("/cost-by-plan", getCostByPlan)
 			managed.GET("/cost-trend", getCostTrend)
+
+			// 套餐管理
+			managed.GET("/plans", getPlans)
+			managed.POST("/plans/sync", syncPlans)
+
+			// API Key 生成（绑定套餐）
+			managed.POST("/keys/generate", generateKey)
+			managed.POST("/keys/:id/bind-plan", bindPlanToKey)
+			managed.GET("/keys/:id/plan", getKeyPlanInfo)
 		}
 
 		admin := v1.Group("")
@@ -236,12 +264,7 @@ func register(c *gin.Context) {
 func getTokens(c *gin.Context) {
 	var tokens []model.Token
 	model.DB.Find(&tokens)
-	// 脱敏：只显示 key 前 8 位
-	for i := range tokens {
-		if len(tokens[i].Key) > 8 {
-			tokens[i].Key = tokens[i].Key[:8] + "..."
-		}
-	}
+	// 显示完整 key（便于复制）
 	c.JSON(http.StatusOK, gin.H{"data": tokens})
 }
 
@@ -416,10 +439,26 @@ func chatCompletions(c *gin.Context) {
 		return
 	}
 	
-	// 限流检查
-	if allowed, reason := service.CheckRateLimit(&apiToken); !allowed {
-		respondError(c, http.StatusTooManyRequests, ErrRateLimitExceeded, reason)
+	// 限流检查（5h/日/周/月/图片次数）
+	rlResult := service.CheckRateLimit(&apiToken)
+	if !rlResult.Allowed {
+		c.Header("Retry-After", fmt.Sprintf("%d", rlResult.RetryAfter))
+		respondError(c, http.StatusTooManyRequests, ErrRateLimitExceeded, rlResult.Reason)
 		return
+	}
+
+	// 并发限制（内存级QPS控制）
+	if apiToken.RateLimitGroup != "" {
+		plan, planErr := service.GetPlan(apiToken.RateLimitGroup)
+		if planErr == nil && plan.MaxQPS > 0 {
+			acquired, current, maxQPS := service.ConcurrencyLimiter.Acquire(apiToken.ID, plan.MaxQPS)
+			if !acquired {
+				respondError(c, http.StatusTooManyRequests, ErrRateLimitExceeded,
+					fmt.Sprintf("并发已达上限（%d/%d），请稍后再试", current, maxQPS))
+				return
+			}
+			defer service.ConcurrencyLimiter.Release(apiToken.ID)
+		}
 	}
 	
 	body, err := service.ReadBody(c.Request)
@@ -436,12 +475,23 @@ func chatCompletions(c *gin.Context) {
 		return
 	}
 
+	// ===== 输入Token限制检查 =====
+	estimatedTokens := service.EstimateInputTokens(req.Messages)
+	if allowed, limit, actual := service.CheckInputTokenLimit(&apiToken, estimatedTokens); !allowed {
+		respondError(c, http.StatusBadRequest, ErrInvalidRequest,
+			fmt.Sprintf("输入Token超过上限（估算=%d，上限=%d），请减少输入内容", actual, limit))
+		return
+	}
+
 	// ===== 图片缓存处理（deepseek-a4 专属）=====
 	// 核心逻辑：纯图片 → 缓存+返回模拟响应；后续请求 → 检查缓存+注入图片
 	if strings.ToLower(req.Model) == "deepseek-a4" && service.GlobalImageCache != nil {
 		hasImage := service.HasImageContent(req.Messages)
 		
 		if hasImage {
+			// 记录图片使用次数（用于每日图片次数限制）
+			service.RecordImageUsage(apiToken.ID)
+			
 			// 检查是否有实质性问题
 			userText := ""
 			for _, msg := range req.Messages {
@@ -500,8 +550,42 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 
-	// 智能路由：根据请求复杂度选择模型
+	// ===== 智能路由：根据请求复杂度选择模型 =====
 	actualModel := service.SmartRoute(req.Model, req.Messages)
+
+	// ===== 输出控制：根据套餐限制最大输出 =====
+	// 在路由前注入 max_tokens，防止用户未设置导致输出爆炸
+	if apiToken.RateLimitGroup != "" {
+		plan, _ := service.GetPlan(apiToken.RateLimitGroup)
+		if plan != nil {
+			// 根据套餐设置默认 max_tokens 上限
+			// 有显式设置且比套餐上限低就用用户的，否则用套餐上限
+			var userMaxTokens *int
+			var reqMapCheck map[string]interface{}
+			json.Unmarshal(body, &reqMapCheck)
+			if v, ok := reqMapCheck["max_tokens"]; ok {
+				if f, ok := v.(float64); ok {
+					mt := int(f)
+					userMaxTokens = &mt
+				}
+			}
+
+			planMaxTokens := plan.MaxOutputTokens
+			if planMaxTokens <= 0 {
+				planMaxTokens = 4096 // 默认安全值
+			}
+
+			if userMaxTokens == nil || *userMaxTokens > planMaxTokens {
+				// 覆盖/注入 max_tokens
+				var reqMapNew map[string]interface{}
+				json.Unmarshal(body, &reqMapNew)
+				reqMapNew["max_tokens"] = planMaxTokens
+				body, _ = json.Marshal(reqMapNew)
+				log.Printf("[输出控制] token=%s plan=%s 注入max_tokens=%d",
+					apiToken.Name, plan.Name, planMaxTokens)
+			}
+		}
+	}
 	if actualModel != req.Model {
 		// 替换请求体中的 model
 		var reqMap map[string]interface{}
@@ -523,10 +607,14 @@ func chatCompletions(c *gin.Context) {
 		cacheKey = service.GlobalCache.GenerateKey(tokenKey, actualModel, req.Messages)
 		if cached, found := service.GlobalCache.Get(cacheKey); found {
 			duration := time.Since(startTime).Milliseconds()
+			c.Header("X-Actual-Model", actualModel)
+			c.Header("X-Requested-Model", req.Model)
 			model.DB.Create(&model.RequestLog{
 				TokenName: apiToken.Name, ChannelName: "缓存命中",
 				Model: actualModel, StatusCode: 200, DurationMs: duration,
 			})
+			// 缓存命中也记录限流（防止通过重复请求绕过限流）
+			service.RecordRequest(apiToken.ID)
 			c.Data(200, "application/json", cached)
 			return
 		}
@@ -592,6 +680,48 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 	defer result.Response.Body.Close()
+
+	// ===== 流式响应分支：逐 chunk 转发 =====
+	if isStream {
+		duration := time.Since(startTime).Milliseconds()
+		model.DB.Create(&model.RequestLog{
+			TokenName: apiToken.Name, ChannelName: result.ChannelName,
+			Model: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
+		})
+		c.Header("X-Actual-Model", actualModel)
+		c.Header("X-Requested-Model", req.Model)
+		if result.Response.StatusCode < 500 {
+			service.RecordRequest(apiToken.ID)
+		}
+
+		// 透传 SSE
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Status(result.Response.StatusCode)
+
+		flusher, hasFlusher := c.Writer.(interface{ Flush() })
+		bufReader := bufio.NewReader(result.Response.Body)
+		for {
+			line, err := bufReader.ReadString('\n')
+			if line != "" {
+				c.Writer.WriteString(line)
+				if hasFlusher {
+					flusher.Flush()
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+		c.Writer.Flush()
+
+		log.Printf("[流式] token=%s model=%s channel=%s status=%d duration=%dms",
+			apiToken.Name, actualModel, result.ChannelName, result.Response.StatusCode, duration)
+		return
+	}
+
+	// ===== 非流式：原有逻辑 =====
 	respBody, _ := io.ReadAll(result.Response.Body)
 	duration := time.Since(startTime).Milliseconds()
 	model.DB.Create(&model.RequestLog{
@@ -602,6 +732,11 @@ func chatCompletions(c *gin.Context) {
 	// 设置响应头：返回实际路由的模型名
 	c.Header("X-Actual-Model", actualModel)
 	c.Header("X-Requested-Model", req.Model)
+
+	// 请求成功（或至少被上游处理），记录到限流表
+	if result.Response.StatusCode < 500 {
+		service.RecordRequest(apiToken.ID)
+	}
 
 	// 解析 usage 字段并记录用量日志
 	if result.Response.StatusCode == 200 {
@@ -894,27 +1029,168 @@ func getUsageStats(c *gin.Context) {
 
 // ===== Token 查询（客户用）=====
 
+// publicStats 公开统计接口（无需登录，给监控中心 iframe 用）
+func publicStats(c *gin.Context) {
+	type DailyStat struct {
+		Date   string `json:"date"`
+		Count  int64  `json:"count"`
+		Errors int64  `json:"errors"`
+	}
+	var dailyStats []DailyStat
+	model.DB.Raw(`SELECT date(created_at) as date, count(*) as count,
+		SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as errors
+		FROM request_logs WHERE created_at > datetime('now', '-7 days')
+		GROUP BY date(created_at) ORDER BY date DESC`).Scan(&dailyStats)
+
+	var totalCount, totalErrors int64
+	model.DB.Model(&model.RequestLog{}).Count(&totalCount)
+	model.DB.Model(&model.RequestLog{}).Where("status_code >= 400").Count(&totalErrors)
+
+	var avgDuration int64
+	model.DB.Raw("SELECT CAST(AVG(duration_ms) AS INTEGER) FROM request_logs").Scan(&avgDuration)
+
+	// 今日统计
+	var todayCount, todayErrors int64
+	model.DB.Model(&model.RequestLog{}).Where("date(created_at)=date('now','localtime')").Count(&todayCount)
+	model.DB.Model(&model.RequestLog{}).Where("date(created_at)=date('now','localtime') AND status_code >= 400").Count(&todayErrors)
+
+	// 活跃 token 数
+	var activeTokens, totalTokens int64
+	model.DB.Model(&model.Token{}).Where("status = 1").Count(&activeTokens)
+	model.DB.Model(&model.Token{}).Count(&totalTokens)
+
+	// 模型统计
+	type ModelStat struct {
+		Model       string `json:"model"`
+		Count       int64  `json:"count"`
+		TotalTokens int64  `json:"total_tokens"`
+	}
+	var modelStats []ModelStat
+	model.DB.Raw(`SELECT model, count(*) as count, coalesce(sum(total_tokens),0) as total_tokens
+		FROM usage_logs GROUP BY model ORDER BY count DESC LIMIT 10`).Scan(&modelStats)
+
+	// 最近请求
+	type RecentLog struct {
+		CreatedAt  string `json:"created_at"`
+		TokenName  string `json:"token_name"`
+		Model      string `json:"model"`
+		ChannelName string `json:"channel_name"`
+		StatusCode int    `json:"status_code"`
+		DurationMs int64  `json:"duration_ms"`
+	}
+	var recent []RecentLog
+	model.DB.Raw(`SELECT created_at, token_name, model, channel_name, status_code, duration_ms
+		FROM request_logs ORDER BY id DESC LIMIT 20`).Scan(&recent)
+
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"total_requests": totalCount,
+		"total_errors":  totalErrors,
+		"today_count":   todayCount,
+		"today_errors":  todayErrors,
+		"avg_duration":  avgDuration,
+		"active_tokens": activeTokens,
+		"total_tokens":  totalTokens,
+		"daily":         dailyStats,
+		"by_model":      modelStats,
+		"recent":        recent,
+	}})
+}
+
+// getTokenUsage OpenAI 兼容的用量查询 API
+// GET /v1/usage
+// Authorization: Bearer atm-xxx
+func getTokenUsage(c *gin.Context) {
+	tokenKey := extractToken(c)
+	if tokenKey == "" {
+		respondError(c, http.StatusUnauthorized, ErrUnauthorized, "缺少认证 token")
+		return
+	}
+
+	var apiToken model.Token
+	if err := model.DB.Where("key = ?", tokenKey).First(&apiToken).Error; err != nil {
+		respondError(c, http.StatusUnauthorized, ErrTokenNotFound, "token 不存在")
+		return
+	}
+
+	now := time.Now().Unix()
+	rlResult := service.CheckRateLimit(&apiToken)
+
+	// 状态判断
+	status := "active"
+	if apiToken.Status == 2 {
+		status = "disabled"
+	} else if apiToken.ExpiredTime > 0 && now > apiToken.ExpiredTime {
+		status = "expired"
+	}
+
+	// 过期时间
+	var expireDate string
+	var remainingDays int
+	if apiToken.ExpiredTime > 0 {
+		remainingDays = int((apiToken.ExpiredTime - now) / 86400)
+		if remainingDays < 0 {
+			remainingDays = 0
+		}
+		expireDate = time.Unix(apiToken.ExpiredTime, 0).Format("2006-01-02 15:04:05")
+	} else {
+		expireDate = "never"
+		remainingDays = -1
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"token_name":    apiToken.Name,
+		"plan":          apiToken.RateLimitGroup,
+		"status":        status,
+		"quota_5h": gin.H{
+			"used":  rlResult.Used5h,
+			"limit": rlResult.Limit5h,
+			"remaining": rlResult.Limit5h - rlResult.Used5h,
+		},
+		"quota_daily": gin.H{
+			"used":  rlResult.UsedDaily,
+			"limit": rlResult.LimitDaily,
+			"remaining": rlResult.LimitDaily - rlResult.UsedDaily,
+		},
+		"quota_weekly": gin.H{
+			"used":  rlResult.UsedWeekly,
+			"limit": rlResult.LimitWeekly,
+			"remaining": rlResult.LimitWeekly - rlResult.UsedWeekly,
+		},
+		"quota_monthly": gin.H{
+			"used":  rlResult.UsedMonthly,
+			"limit": rlResult.LimitMonthly,
+			"remaining": rlResult.LimitMonthly - rlResult.UsedMonthly,
+		},
+		"expired_at":     expireDate,
+		"remaining_days": remainingDays,
+	})
+}
+
 func tokenInfo(c *gin.Context) {
 	tokenKey := c.Query("token")
 	if tokenKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供 token"})
+		respondError(c, http.StatusBadRequest, ErrInvalidRequest, "请提供 token")
 		return
 	}
 
 	var token model.Token
 	if err := model.DB.Where("key = ?", tokenKey).First(&token).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "token 不存在"})
+		respondError(c, http.StatusNotFound, ErrTokenNotFound, "token 不存在")
 		return
 	}
 
 	// 计算使用情况
 	now := time.Now().Unix()
 	fiveHoursAgo := now - 5*3600
+	oneDayAgo := now - 24*3600
 	sevenDaysAgo := now - 7*24*3600
+	thirtyDaysAgo := now - 30*24*3600
 
-	var count5h, count7d int64
+	var count5h, countDaily, count7d, count30d int64
 	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, fiveHoursAgo).Count(&count5h)
+	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, oneDayAgo).Count(&countDaily)
 	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, sevenDaysAgo).Count(&count7d)
+	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, thirtyDaysAgo).Count(&count30d)
 
 	// 从 usage_logs 查累计调用次数 + 累计 tokens
 	type TokenUsage struct {
@@ -930,13 +1206,16 @@ func tokenInfo(c *gin.Context) {
 
 	// 套餐信息
 	var planDisplayName, planDesc string
-	var limit5h, weeklyMax int64
+	var limit5h, dailyMax, weeklyMax, monthlyMax, maxQPS int64
 	var skipHourly bool
 	if token.RateLimitGroup != "" {
 		var plan model.Plan
 		if err := model.DB.Where("name = ?", token.RateLimitGroup).First(&plan).Error; err == nil {
 			limit5h = plan.Hourly5Max
+			dailyMax = plan.DailyMax
 			weeklyMax = plan.WeeklyMax
+			monthlyMax = plan.MonthlyMax
+			maxQPS = plan.MaxQPS
 			skipHourly = plan.SkipHourly
 			planDisplayName = plan.DisplayName
 			planDesc = plan.Description
@@ -944,21 +1223,23 @@ func tokenInfo(c *gin.Context) {
 	}
 
 	// 状态判断
-	status := "正常"
+	status := "active"
 	if token.Status == 2 {
-		status = "已禁用"
+		status = "disabled"
 	} else if token.ExpiredTime > 0 && now > token.ExpiredTime {
-		status = "已过期"
+		status = "expired"
 	} else if token.ActivatedAt == 0 {
-		status = "待激活"
+		status = "waiting"
 	}
 
-	// 计算剩余时间（向上取整）
+	// 计算剩余时间
 	var remainingDays int
 	var expireDate string
 	if token.ExpiredTime > 0 {
-		remainingSeconds := token.ExpiredTime - now
-		remainingDays = int((remainingSeconds + 86399) / 86400) // 向上取整
+		remainingDays = int((token.ExpiredTime - now) / 86400)
+		if remainingDays < 0 {
+			remainingDays = 0
+		}
 		expireDate = time.Unix(token.ExpiredTime, 0).Format("2006-01-02 15:04:05")
 	} else {
 		remainingDays = -1
@@ -966,28 +1247,33 @@ func tokenInfo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":           status,
-		"token_name":       token.Name,
-		"plan":             token.RateLimitGroup,
-		"plan_name":        planDisplayName,
-		"plan_desc":        planDesc,
-		"skip_hourly":      skipHourly,
-		"limit_5h":         limit5h,
-		"used_5h":          count5h,
-		"remaining_5h":     limit5h - count5h,
-		"weekly_max":       weeklyMax,
-		"used_7d":          count7d,
-		"total_calls":      total.Calls,
-		"total_tokens":     total.Toks,
-		"week_calls":       week.Calls,
-		"week_tokens":      week.Toks,
+		"status":        status,
+		"token_name":    token.Name,
+		"plan":          token.RateLimitGroup,
+		"plan_name":     planDisplayName,
+		"plan_desc":     planDesc,
+		"skip_hourly":   skipHourly,
+		"limit_5h":      limit5h,
+		"used_5h":       count5h,
+		"remaining_5h":  limit5h - count5h,
+		"limit_daily":   dailyMax,
+		"used_daily":    countDaily,
+		"weekly_max":    weeklyMax,
+		"used_7d":       count7d,
+		"monthly_max":   monthlyMax,
+		"monthly_used":  count30d,
+		"max_qps":       maxQPS,
+		"total_calls":   total.Calls,
+		"total_tokens":  total.Toks,
+		"week_calls":    week.Calls,
+		"week_tokens":   week.Toks,
 		"activated_at": func() string {
 			if token.ActivatedAt == 0 {
 				return "未激活"
 			}
 			return time.Unix(token.ActivatedAt, 0).Format("2006-01-02 15:04:05")
 		}(),
-		"expired_at":    expireDate,
+		"expired_at":     expireDate,
 		"remaining_days": remainingDays,
 	})
 }
@@ -1063,7 +1349,7 @@ func checkLoginRateLimit(ip string) bool {
 }
 
 func generateTokenKey() string {
-	return fmt.Sprintf("atm-%d", time.Now().UnixNano())
+	return service.GenerateAPIKey()
 }
 
 func extractToken(c *gin.Context) string {
