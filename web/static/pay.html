@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>atmApi 支付</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      max-width: 420px;
+      width: 100%;
+      overflow: hidden;
+    }
+    .header {
+      background: linear-gradient(135deg, #4f46e5, #7c3aed);
+      color: #fff;
+      padding: 24px;
+      text-align: center;
+    }
+    .header h1 { font-size: 20px; margin-bottom: 4px; }
+    .header p { font-size: 13px; opacity: 0.85; }
+    .body { padding: 24px; }
+    .order-info {
+      background: #f8f9fa;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .order-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+    }
+    .order-row:not(:last-child) { border-bottom: 1px solid #e9ecef; }
+    .order-label { color: #6c757d; font-size: 13px; }
+    .order-value { font-weight: 600; color: #212529; font-size: 14px; }
+    .price { color: #e74c3c; font-size: 22px; font-weight: 700; }
+    .status-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .status-pending { background: #fff3cd; color: #856404; }
+    .status-paid { background: #d4edda; color: #155724; }
+    .status-cancelled, .status-expired { background: #f8d7da; color: #721c24; }
+    .qr-section { text-align: center; margin: 20px 0; }
+    .qr-section img { width: 200px; height: 200px; border: 2px solid #e9ecef; border-radius: 8px; padding: 8px; }
+    .qr-hint { color: #6c757d; font-size: 12px; margin-top: 10px; }
+    .btn {
+      display: block; width: 100%; padding: 14px; border: none; border-radius: 10px;
+      font-size: 16px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+    }
+    .btn-primary { background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79,70,229,0.4); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+    .loading { text-align: center; padding: 40px; color: #6c757d; }
+    .spinner {
+      width: 40px; height: 40px; border: 3px solid #e9ecef; border-top-color: #4f46e5;
+      border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error { text-align: center; padding: 30px; color: #e74c3c; }
+    .error-icon { font-size: 48px; margin-bottom: 12px; }
+    .success-icon { font-size: 48px; margin-bottom: 12px; }
+    .countdown { color: #6c757d; font-size: 12px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>🚀 atmApi 支付</h1>
+      <p>AI API 智能网关</p>
+    </div>
+    <div class="body" id="content">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>加载订单信息...</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+    let pollTimer = null;
+
+    async function init() {
+      const params = new URLSearchParams(window.location.search);
+      // 支持支付宝同步回调解读
+      // 支付宝回调带 out_trade_no（= 我们的 order_id）
+      let orderId = params.get('order_id');
+      const plan = params.get('plan');
+      const price = params.get('price');
+      
+      // 如果支付宝回调，用 out_trade_no 作为 order_id
+      if (!orderId) {
+        orderId = params.get('out_trade_no');
+      }
+
+      if (!orderId) {
+        showError('缺少订单号');
+        return;
+      }
+
+      try {
+        const resp = await fetch(`${API_BASE}/api/v1/payment/order-status?order_id=${orderId}`);
+        const data = await resp.json();
+
+        // API 返回扁平对象：{order_id, plan, price, status, ...}
+        // 如果 error.code 存在说明接口报错
+        if (data.error && data.error.code === 'ORDER_NOT_FOUND') {
+          // 订单不存在，尝试创建
+          if (plan && price) {
+            await createOrder(plan, price);
+          } else {
+            showError('订单不存在，请重新下单');
+          }
+          return;
+        }
+
+        // 成功拿到订单数据
+        renderOrder(data);
+      } catch (e) {
+        showError('网络错误，请刷新重试');
+      }
+    }
+
+    async function createOrder(plan, price) {
+      try {
+        const resp = await fetch(`${API_BASE}/api/v1/payment/create-order`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan, user_open_id: 'web_user' })
+        });
+        const data = await resp.json();
+        if (data.order_id) {
+          const newUrl = `${window.location.pathname}?order_id=${data.order_id}&plan=${plan}&price=${data.price}`;
+          window.history.replaceState({}, '', newUrl);
+          renderOrder(data);
+        } else {
+          showError((data.error && data.error.message) || '创建订单失败');
+        }
+      } catch (e) {
+        showError('创建订单失败');
+      }
+    }
+
+    function renderOrder(order) {
+      const content = document.getElementById('content');
+      const statusMap = {
+        pending: { text: '待支付', cls: 'status-pending' },
+        paid: { text: '已支付', cls: 'status-paid' },
+        cancelled: { text: '已取消', cls: 'status-cancelled' },
+        expired: { text: '已过期', cls: 'status-expired' }
+      };
+      const st = statusMap[order.status] || statusMap.pending;
+
+      if (order.status === 'paid') {
+        const apiKey = order.api_key || '';
+        const keySection = apiKey ? `
+          <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:16px; margin-top:16px;">
+            <div style="font-size:13px; color:#15803d; font-weight:600; margin-bottom:8px;">🔑 你的 API Key</div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <code style="flex:1; background:#dcfce7; padding:10px 12px; border-radius:6px; font-size:13px; word-break:break-all; color:#14532d;">${apiKey}</code>
+              <button onclick="navigator.clipboard.writeText('${apiKey}');this.textContent='✓已复制'" style="background:#10b981;color:#fff;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;">复制</button>
+            </div>
+          </div>` : '';
+
+        content.innerHTML = `
+          <div style="text-align:center; padding: 20px 0;">
+            <div class="success-icon">✅</div>
+            <h2 style="color:#10b981; margin-bottom:8px;">支付成功！</h2>
+            <p style="color:#6c757d; margin-bottom:20px;">订单号：${order.order_id}</p>
+            <div class="order-info">
+              <div class="order-row">
+                <span class="order-label">套餐</span>
+                <span class="order-value">${order.plan || '-'}</span>
+              </div>
+              <div class="order-row">
+                <span class="order-label">金额</span>
+                <span class="price">¥${order.price}</span>
+              </div>
+            </div>
+            ${keySection}
+            <div style="text-align:left; margin-top:20px; padding:16px; background:#f8f9fa; border-radius:10px;">
+              <div style="font-weight:600; font-size:13px; margin-bottom:8px;">📋 快速开始</div>
+              <div style="font-size:12px; color:#6c757d; line-height:1.8;">
+                1. 复制上面的 API Key<br>
+                2. 打开 <a href="https://atmapi.aitomoney.online/token-info" target="_blank" style="color:#4f46e5;">查询余额</a><br>
+                3. 配置到 Cherry Studio / ChatBox 等客户端<br>
+                4. API 地址：https://atmapi.aitomoney.online/v1
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      if (order.status !== 'pending') {
+        content.innerHTML = `
+          <div style="text-align:center; padding: 20px 0;">
+            <div class="error-icon">⚠️</div>
+            <h2 style="color:#6c757d;">订单${st.text}</h2>
+            <p style="color:#a1a1aa; margin-top:8px;">订单号：${order.order_id}</p>
+          </div>
+        `;
+        return;
+      }
+
+      // pending 状态 — 显示支付信息
+      content.innerHTML = `
+        <div class="order-info">
+          <div class="order-row">
+            <span class="order-label">订单号</span>
+            <span class="order-value" style="font-size:11px;">${order.order_id}</span>
+          </div>
+          <div class="order-row">
+            <span class="order-label">套餐</span>
+            <span class="order-value">${order.plan || '-'}</span>
+          </div>
+          <div class="order-row">
+            <span class="order-label">金额</span>
+            <span class="price">¥${order.price.toFixed(2)}</span>
+          </div>
+          <div class="order-row">
+            <span class="order-label">状态</span>
+            <span class="status-badge ${st.cls}">${st.text}</span>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" onclick="window.location.href='${order.pay_url}'">
+          📱 前往支付宝支付
+        </button>
+        <p class="countdown" style="text-align:center; margin-top:12px;">
+          支付完成后页面将自动刷新 · <span id="timer">30</span>s 后自动检查
+        </p>
+      `;
+
+      startPolling(order.order_id);
+    }
+
+    function startPolling(orderId) {
+      let seconds = 30;
+      const timerEl = document.getElementById('timer');
+
+      pollTimer = setInterval(async () => {
+        seconds--;
+        if (timerEl) timerEl.textContent = seconds;
+
+        if (seconds <= 0) {
+          seconds = 30;
+          try {
+            const resp = await fetch(`${API_BASE}/api/v1/payment/order-status?order_id=${orderId}`);
+            const data = await resp.json();
+            // API 返回扁平对象，没有 data.data 包装
+            if (data.status === 'paid') {
+              clearInterval(pollTimer);
+              renderOrder(data);
+            }
+          } catch (e) {}
+        }
+      }, 1000);
+    }
+
+    function showError(msg) {
+      document.getElementById('content').innerHTML = `
+        <div class="error">
+          <div class="error-icon">❌</div>
+          <p>${msg}</p>
+          <button class="btn btn-primary" style="margin-top:16px; max-width:200px; margin-left:auto; margin-right:auto;" onclick="location.reload()">重试</button>
+        </div>
+      `;
+    }
+
+    init();
+  </script>
+</body>
+</html>

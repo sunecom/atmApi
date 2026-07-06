@@ -39,6 +39,7 @@ func createOrder(c *gin.Context) {
 	var req struct {
 		PlanName   string `json:"plan" binding:"required"`
 		UserOpenID string `json:"user_open_id"`
+		RenewToken string `json:"renew_token"`  // 可选：续费时传旧 token
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondError(c, http.StatusBadRequest, ErrInvalidRequest, "请提供套餐名")
@@ -69,6 +70,12 @@ func createOrder(c *gin.Context) {
 		PlanName:   req.PlanName,
 		Price:      price,
 		Status:     "pending",
+	}
+
+	// 续费场景：把旧 token key 存到订单的 token_name 字段
+	// 支付成功后 activatePlanForOrder 据此延长旧 token 而不是创建新 token
+	if req.RenewToken != "" {
+		order.TokenName = req.RenewToken
 	}
 
 	if price > 0 {
@@ -108,11 +115,48 @@ func createOrder(c *gin.Context) {
 }
 
 // activatePlanForOrder 支付成功后激活套餐
+// 续费场景：order.TokenName 存了旧 token key → 延长 + 可能升级套餐
+// 新购场景：order.TokenName 为空 → 创建新 token
 func activatePlanForOrder(order *model.Order) {
 	if order.Status != "paid" {
 		return
 	}
 
+	// ===== 续费/升级场景 =====
+	if order.TokenName != "" {
+		renewTokenKey := order.TokenName
+		var oldToken model.Token
+		if err := model.DB.Where("key = ?", renewTokenKey).First(&oldToken).Error; err == nil {
+			// 延长 30 天
+			oldExpired := oldToken.ExpiredTime
+			extra := time.Now().AddDate(0, 1, 0).Unix()
+			if oldExpired > time.Now().Unix() {
+				extra = oldExpired + 30*24*3600
+			}
+
+			// 如果新套餐和旧套餐不同，升级套餐类型
+			updates := map[string]interface{}{
+				"status":       1,
+				"expired_time": extra,
+				"activated_at": time.Now().Unix(),
+			}
+			if order.PlanName != oldToken.RateLimitGroup {
+				// 升级套餐
+				newName := fmt.Sprintf("%s-%s", order.PlanName, order.OrderNo[len(order.OrderNo)-6:])
+				updates["rate_limit_group"] = order.PlanName
+				updates["name"] = newName
+				log.Printf("[支付] 升级套餐: token=%s old=%s new=%s", renewTokenKey[:12], oldToken.RateLimitGroup, order.PlanName)
+			} else {
+				log.Printf("[支付] 续费成功: token=%s plan=%s 到期=%d", renewTokenKey[:12], order.PlanName, extra)
+			}
+
+			model.DB.Model(&oldToken).Updates(updates)
+			return
+		}
+		log.Printf("[支付] 续费失败: 旧 token %s 不存在，改创建新 token", renewTokenKey[:12])
+	}
+
+	// ===== 新购场景 =====
 	// 查询套餐
 	_, err := service.GetPlan(order.PlanName)
 	if err != nil {
@@ -138,37 +182,19 @@ func activatePlanForOrder(order *model.Order) {
 	// 计算过期时间（默认1个月）
 	expiredTime := time.Now().AddDate(0, 1, 0).Unix()
 
-	// 创建 Token
+	// 创建 Token（使用标准 Key 生成器）
 	tokenName := fmt.Sprintf("%s-%s", order.PlanName, order.OrderNo[len(order.OrderNo)-6:])
 
-	// 根据套餐设置限流和配额
-	var unlimitedQuota bool
-	var rateLimitGroup string
-	switch order.PlanName {
-	case "trial":
-		rateLimitGroup = "trial"
-	case "basic":
-		rateLimitGroup = "basic"
-	case "standard":
-		rateLimitGroup = "standard"
-	case "premium":
-		rateLimitGroup = "premium"
-	case "pro":
-		rateLimitGroup = "pro"
-	case "weekly":
-		rateLimitGroup = "weekly"
-		unlimitedQuota = true
-	default:
-		rateLimitGroup = order.PlanName
-	}
+	// 根据套餐设置限流组
+	rateLimitGroup := order.PlanName
 
 	token := model.Token{
 		UserID:         user.ID,
 		Name:           tokenName,
-		Key:            fmt.Sprintf("atm-%s-%d", order.OrderNo[:8], time.Now().UnixNano()),
+		Key:            service.GenerateAPIKey(),
 		Status:         1,
 		RemainQuota:    -1,
-		UnlimitedQuota: unlimitedQuota,
+		UnlimitedQuota: true,
 		RateLimitGroup: rateLimitGroup,
 		CreatedTime:    time.Now().Unix(),
 		ActivatedAt:    time.Now().Unix(),
@@ -179,11 +205,13 @@ func activatePlanForOrder(order *model.Order) {
 		return
 	}
 
-	// 将 Token 名回写到订单
-	model.DB.Model(order).Update("token_name", tokenName)
+	// 将 API Key 回写到订单，供用户查询
+	model.DB.Model(order).Updates(map[string]interface{}{
+		"token_name": tokenName,
+	})
 
-	log.Printf("[支付] 订单 %s 激活成功: plan=%s token=%s user=%d",
-		order.OrderNo, order.PlanName, tokenName, user.ID)
+	log.Printf("[支付] 订单 %s 自动发卡成功: plan=%s key=%s... token_name=%s user=%d",
+		order.OrderNo, order.PlanName, token.Key[:12], tokenName, user.ID)
 }
 
 // ==================== 支付宝异步通知 ====================
@@ -305,13 +333,24 @@ func getOrderStatus(c *gin.Context) {
 		return
 	}
 
+	// 支付成功后返回 API Key（自动发卡）
+	var apiKey string
+	if order.Status == "paid" && order.TokenName != "" {
+		var token model.Token
+		if err := model.DB.Where("name = ?", order.TokenName).First(&token).Error; err == nil {
+			apiKey = token.Key
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"order_id":       order.OrderNo,
-		"plan":           order.PlanName,
-		"price":          order.Price,
-		"status":         order.Status,
-		"created_at":     order.CreatedAt,
-		"paid_at":        order.PaidAt,
+		"order_id":        order.OrderNo,
+		"plan":            order.PlanName,
+		"price":           order.Price,
+		"status":          order.Status,
+		"api_key":         apiKey,
+		"pay_url":         order.PayURL,
+		"created_at":      order.CreatedAt,
+		"paid_at":         order.PaidAt,
 		"alipay_trade_no": order.AlipayTradeNo,
 	})
 }
@@ -356,4 +395,45 @@ func refundPayment(c *gin.Context) {
 	model.DB.Model(&order).Update("status", "refunded")
 	log.Printf("[支付] 订单 %s 已退款: %s", req.OrderID, req.Reason)
 	c.JSON(http.StatusOK, gin.H{"message": "退款成功", "order_id": req.OrderID})
+}
+
+// ==================== 开发测试端点（上线前删除）====================
+
+// testActivateOrder 模拟支付成功，用于测试自动发卡流程
+// POST /api/v1/payment/test-activate?order_id=xxx
+func testActivateOrder(c *gin.Context) {
+	orderID := c.Query("order_id")
+	if orderID == "" {
+		respondError(c, http.StatusBadRequest, ErrInvalidRequest, "请提供 order_id")
+		return
+	}
+
+	var order model.Order
+	if err := model.DB.Where("order_no = ?", orderID).First(&order).Error; err != nil {
+		respondError(c, http.StatusNotFound, ErrOrderNotFound, "订单不存在")
+		return
+	}
+
+	if order.Status == "paid" {
+		respondError(c, http.StatusBadRequest, ErrInvalidRequest, "订单已支付")
+		return
+	}
+
+	// 模拟支付成功
+	now := time.Now()
+	model.DB.Model(&order).Updates(map[string]interface{}{
+		"status":          "paid",
+		"alipay_trade_no": "TEST_" + fmt.Sprintf("%d", now.Unix()),
+		"paid_at":         now,
+	})
+	order.Status = "paid"
+	order.AlipayTradeNo = "TEST_" + fmt.Sprintf("%d", now.Unix())
+
+	// 触发激活
+	activatePlanForOrder(&order)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "激活成功（测试模式）",
+		"order_id": orderID,
+	})
 }

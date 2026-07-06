@@ -171,6 +171,8 @@ func RegisterRoutes(r *gin.Engine) {
 			payment.POST("/alipay-notify", alipayNotify)
 			// 3. 微信异步回调（腾讯主动 POST 过来）
 			payment.POST("/wechat-notify", wechatNotify)
+			// 开发测试端点（上线前删除）
+			payment.POST("/test-activate", testActivateOrder)
 			// 4. 查询订单状态（用户查看支付是否成功）
 			payment.GET("/order-status", getOrderStatus)
 		}
