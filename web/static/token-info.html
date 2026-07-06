@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Token 信息查询</title>
+    <meta http-equiv="pragma" content="no-cache">
+    <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="expires" content="0">
+    <title>atmApi Token 查询</title>
     <link rel="icon" href="logo.png"/>
     <style>
         :root {
@@ -21,260 +24,385 @@
             --text-muted: #a1a1aa;
             --text-dim: #71717a;
         }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background: var(--bg-dark);
             color: var(--text-main);
-            padding: 20px;
+            font-size: 13px;
+            line-height: 1.5;
+            padding: 16px;
         }
-        .container { max-width: 680px; margin: 0 auto; }
-        h1 { text-align: center; margin-bottom: 30px; font-size: 24px; font-weight: 600; }
+        .container { max-width: 800px; margin: 0 auto; }
+
+        h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+
+        /* 搜索框 */
         .search-box {
+            display: flex; gap: 8px; margin-bottom: 20px;
+        }
+        .search-box input {
+            flex: 1; padding: 8px 12px; font-size: 13px;
+            background: var(--bg-input); border: 1px solid var(--border);
+            border-radius: 6px; color: var(--text-main); outline: none;
+        }
+        .search-box input:focus { border-color: var(--primary); }
+        .search-box button {
+            padding: 8px 20px; font-size: 13px; font-weight: 500;
+            background: var(--primary); color: #fff;
+            border: none; border-radius: 6px; cursor: pointer;
+        }
+        .search-box button:hover { background: var(--primary-hover); }
+
+        /* 卡片 */
+        .card {
             background: var(--bg-card);
             border: 1px solid var(--border);
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-        }
-        .input-group { display: flex; gap: 10px; }
-        input[type="text"] {
-            flex: 1;
-            padding: 12px 16px;
-            border: 1px solid var(--border);
             border-radius: 8px;
-            font-size: 14px;
-            background: var(--bg-input);
-            color: var(--text-main);
-            outline: none;
-            transition: border-color 0.3s;
-        }
-        input[type="text"]:focus { border-color: var(--primary); }
-        button {
-            padding: 12px 24px;
-            background: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
-        button:hover { background: var(--primary-hover); }
-        button:disabled { background: var(--text-dim); cursor: not-allowed; }
-        .result {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
             padding: 20px;
-            border-radius: 12px;
+            margin-bottom: 16px;
             display: none;
         }
-        .result.show { display: block; }
-        .status-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; }
-        .status-normal { background: rgba(16, 185, 129, 0.15); color: var(--success); }
-        .status-pending { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
-        .status-expired { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
-        .status-disabled { background: rgba(113, 113, 122, 0.15); color: var(--text-dim); }
-        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px; }
-        .info-item { padding: 12px; background: var(--bg-input); border-radius: 8px; }
-        .info-label { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
-        .info-value { font-size: 16px; font-weight: bold; color: var(--text-main); }
-        .usage-bar { margin-top: 20px; }
-        .usage-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
-        .usage-title { font-size: 14px; color: var(--text-muted); }
-        .usage-count { font-size: 14px; font-weight: bold; color: var(--text-main); }
-        .progress-bar { height: 8px; background: var(--bg-input); border-radius: 4px; overflow: hidden; }
-        .progress-fill { height: 100%; background: linear-gradient(90deg, #059669, var(--success)); border-radius: 4px; transition: width 0.5s; }
-        .progress-fill.warning { background: linear-gradient(90deg, #d97706, var(--warning)); }
-        .progress-fill.danger { background: linear-gradient(90deg, #dc2626, var(--danger)); }
-        .plan-info {
-            margin-top: 20px;
-            padding: 15px;
-            background: rgba(79, 70, 229, 0.1);
-            border-radius: 8px;
-            border-left: 4px solid var(--primary);
+        .card.show { display: block; }
+        .card-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
+
+        /* 统计行 */
+        .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+        .stat-box {
+            background: var(--bg-input); border-radius: 6px;
+            padding: 12px; text-align: center;
         }
-        .plan-title { font-size: 14px; color: var(--primary-hover); font-weight: bold; margin-bottom: 8px; }
-        .plan-detail { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+        .stat-box .num { font-size: 18px; font-weight: 700; }
+        .stat-box .lbl { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
 
-        .stats-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
-        .stat-box { background: var(--bg-input); border-radius: 8px; padding: 14px; text-align: center; }
-        .stat-box .num { font-size: 22px; font-weight: 700; color: var(--text-main); }
-        .stat-box .lbl { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+        /* 信息网格 */
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+        .info-item {
+            background: var(--bg-input); border-radius: 6px; padding: 10px 12px;
+        }
+        .info-label { font-size: 11px; color: var(--text-dim); margin-bottom: 3px; }
+        .info-value { font-size: 13px; font-weight: 600; }
 
-        .error { color: var(--danger); text-align: center; padding: 20px; display: none; }
-        .error.show { display: block; }
-        @media (max-width: 480px) { .info-grid { grid-template-columns: 1fr; } .stats-summary { grid-template-columns: 1fr 1fr; } .input-group { flex-direction: column; } }
+        /* 配额 */
+        .quota { margin-bottom: 12px; }
+        .quota-header { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .quota-label { font-size: 12px; color: var(--text-muted); }
+        .quota-count { font-size: 12px; font-weight: 600; }
+        .quota-count.safe { color: var(--success); }
+        .quota-count.warn { color: var(--warning); }
+        .quota-count.danger { color: var(--danger); }
+        .progress { height: 4px; background: var(--bg-input); border-radius: 2px; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+        .progress-fill.safe { background: var(--success); }
+        .progress-fill.warn { background: var(--warning); }
+        .progress-fill.danger { background: var(--danger); }
+
+        /* Badge */
+        .badge { display: inline-block; padding: 2px 8px; font-size: 11px; border-radius: 999px; }
+        .badge-success { background: rgba(16,185,129,0.15); color: var(--success); }
+        .badge-danger { background: rgba(239,68,68,0.15); color: var(--danger); }
+        .badge-warning { background: rgba(245,158,11,0.15); color: var(--warning); }
+
+        /* 续费/升级按钮 */
+        .renew-btn {
+            width: 100%; padding: 10px;
+            background: var(--primary); color: #fff;
+            border: none; border-radius: 6px;
+            font-size: 13px; font-weight: 600; cursor: pointer;
+            margin-top: 12px;
+        }
+        .renew-btn:hover { background: var(--primary-hover); }
+        .renew-btn.pro { background: linear-gradient(135deg, #7c3aed, #6366f1); }
+        .renew-btn.premium { background: linear-gradient(135deg, #f59e0b, #ef4444); }
+        .upgrade-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;
+        }
+        .upgrade-card {
+            background: var(--bg-input); border-radius: 6px; padding: 12px;
+            cursor: pointer; transition: all 0.2s; text-align: center;
+            border: 1px solid var(--border);
+        }
+        .upgrade-card:hover { border-color: var(--primary); background: var(--bg-hover); }
+        .upgrade-card .name { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+        .upgrade-card .price { font-size: 16px; font-weight: 700; color: var(--primary-hover); }
+        .upgrade-card .price.premium { color: #f59e0b; }
+        .upgrade-card .desc { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+        .error-msg {
+            background: var(--bg-card); border: 1px solid var(--danger);
+            border-radius: 6px; padding: 16px; text-align: center;
+            color: var(--danger); margin-bottom: 16px; display: none;
+        }
+        .error-msg.show { display: block; }
+
+        @media (max-width: 600px) {
+            .stats-row { grid-template-columns: 1fr 1fr; }
+            .info-grid { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1> Token 信息查询</h1>
-        <div class="search-box">
-            <div class="input-group">
-                <input type="text" id="tokenInput" placeholder="请输入您的 Token (sk-...)" />
-                <button onclick="queryToken()" id="queryBtn">查询</button>
+<div class="container">
+    <h2>🔍 Token 查询</h2>
+
+    <div class="search-box">
+        <input type="text" id="tokenInput" placeholder="输入 Token (atm-xxx 或 sk-xxx)"
+               onkeypress="if(event.key==='Enter')queryToken()"/>
+        <button onclick="queryToken()">查询</button>
+    </div>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <div class="card" id="resultCard">
+        <!-- 头部 -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <div>
+                <span class="dim" style="font-size:11px;color:var(--text-dim);">Token 名称</span><br/>
+                <strong id="tokenName" style="font-size:14px;"></strong>
+            </div>
+            <span id="statusBadge" class="badge"></span>
+        </div>
+
+        <!-- 统计 -->
+        <div class="stats-row">
+            <div class="stat-box">
+                <div class="num" id="totalCalls">0</div>
+                <div class="lbl">累计调用</div>
+            </div>
+            <div class="stat-box">
+                <div class="num" id="totalTokens">0</div>
+                <div class="lbl">累计 Tokens</div>
+            </div>
+            <div class="stat-box">
+                <div class="num" id="weekCalls">0</div>
+                <div class="lbl">本周调用</div>
+            </div>
+            <div class="stat-box">
+                <div class="num" id="remainingDays">-</div>
+                <div class="lbl">剩余天数</div>
             </div>
         </div>
-        <div class="error" id="errorMsg"></div>
-        <div class="result" id="result">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <div>
-                    <span style="font-size:14px;color:var(--text-muted);">Token 名称：</span>
-                    <span id="tokenName" style="font-size:16px;font-weight:bold;color:var(--text-main);"></span>
-                </div>
-                <span id="statusBadge" class="status-badge"></span>
-            </div>
 
-            <div class="stats-summary">
-                <div class="stat-box">
-                    <div class="num" id="totalCalls">0</div>
-                    <div class="lbl">累计调用次数</div>
-                </div>
-                <div class="stat-box">
-                    <div class="num" id="totalTokens">0</div>
-                    <div class="lbl">累计 Tokens</div>
-                </div>
-                <div class="stat-box">
-                    <div class="num" id="weekCalls">0</div>
-                    <div class="lbl">本周调用</div>
-                </div>
-                <div class="stat-box">
-                    <div class="num" id="weekTokens">0</div>
-                    <div class="lbl">本周 Tokens</div>
-                </div>
-            </div>
+        <!-- 配额进度条 -->
+        <div class="card-title" style="margin-bottom:10px;">配额使用</div>
+        <div id="quotaContainer"></div>
 
-            <div class="info-grid">
-                <div class="info-item">
-                    <div class="info-label">套餐类型</div>
-                    <div class="info-value" id="planType">-</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">剩余天数</div>
-                    <div class="info-value" id="remainingDays">-</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">激活时间</div>
-                    <div class="info-value" id="activatedAt">-</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">到期时间</div>
-                    <div class="info-value" id="expiredAt">-</div>
-                </div>
+        <!-- 详细信息 -->
+        <div class="info-grid" style="margin-top:16px;">
+            <div class="info-item">
+                <div class="info-label">套餐类型</div>
+                <div class="info-value" id="planType">-</div>
             </div>
-
-            <div class="usage-bar" id="usageBar5h">
-                <div class="usage-header">
-                    <span class="usage-title">5小时使用量</span>
-                    <span class="usage-count" id="usageCount">0 / 0</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progressFill" style="width: 0%"></div>
-                </div>
+            <div class="info-item">
+                <div class="info-label">到期时间</div>
+                <div class="info-value" id="expiredAt">-</div>
             </div>
+            <div class="info-item">
+                <div class="info-label">激活时间</div>
+                <div class="info-value" id="activatedAt">-</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">本周用量</div>
+                <div class="info-value" id="weekUsage">-</div>
+            </div>
+        </div>
 
-            <div class="plan-info">
-                <div class="plan-title" id="planTitle">套餐说明</div>
-                <div class="plan-detail" id="planDetail"></div>
+        <div id="renewSection" style="display:none;">
+            <button class="renew-btn" id="renewBtn" onclick="handleRenew()">续费/延长 30 天</button>
+            <div class="dim" style="text-align:center;margin-top:8px;font-size:11px;">续费后有效期在当前到期时间上叠加 30 天</div>
+
+            <div id="upgradeSection" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);display:none;">
+                <div class="card-title" style="font-size:13px;margin-bottom:8px;">📈 升级套餐</div>
+                <div class="upgrade-grid" id="upgradeGrid"></div>
             </div>
         </div>
     </div>
+</div>
 
-    <script>
-        const statusMap = {
-            '正常': 'status-normal',
-            '待激活': 'status-pending',
-            '已过期': 'status-expired',
-            '已禁用': 'status-disabled'
-        };
+<script>
+const statusMap = {
+    'active': {cls:'badge-success', text:'正常'},
+    'expired': {cls:'badge-danger', text:'已过期'},
+    'disabled': {cls:'badge-warning', text:'已禁用'},
+    'waiting': {cls:'badge-warning', text:'待激活'},
+    '正常': {cls:'badge-success', text:'正常'},
+    '待激活': {cls:'badge-warning', text:'待激活'},
+    '已过期': {cls:'badge-danger', text:'已过期'},
+    '已禁用': {cls:'badge-warning', text:'已禁用'}
+};
 
-        document.getElementById('tokenInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') queryToken();
+function fmt(n) { return (n||0).toLocaleString('zh-CN'); }
+
+async function queryToken() {
+    const token = document.getElementById('tokenInput').value.trim();
+    if (!token) { showError('请输入 Token'); return; }
+
+    const btn = document.querySelector('.search-box button');
+    const oldText = btn.textContent;
+    btn.textContent = '查询中...';
+    btn.disabled = true;
+
+    document.getElementById('resultCard').classList.remove('show');
+    document.getElementById('errorMsg').classList.remove('show');
+
+    try {
+        const resp = await fetch(`/api/v1/token-info?token=${encodeURIComponent(token)}`);
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            showError(data.error?.message || data.error || '查询失败');
+            return;
+        }
+        renderResult(data, token);
+    } catch(e) {
+        showError('网络错误');
+    } finally {
+        btn.textContent = oldText;
+        btn.disabled = false;
+    }
+}
+
+function renderQuota(label, used, limit) {
+    if (limit <= 0) return '';
+    const pct = Math.min((used/limit)*100, 100);
+    const cls = pct > 80 ? 'danger' : pct > 50 ? 'warn' : 'safe';
+    return `<div class="quota">
+        <div class="quota-header">
+            <span class="quota-label">${label}</span>
+            <span class="quota-count ${cls}">${fmt(used)} / ${fmt(limit)}(剩余 ${fmt(limit-used)})</span>
+        </div>
+        <div class="progress"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div>
+    </div>`;
+}
+
+function renderResult(data, inputToken) {
+    document.getElementById('tokenName').textContent = data.token_name || '-';
+
+    const badge = document.getElementById('statusBadge');
+    const st = statusMap[data.status] || statusMap['active'];
+    badge.textContent = st.text;
+    badge.className = 'badge ' + st.cls;
+
+    document.getElementById('totalCalls').textContent = fmt(data.total_calls);
+    document.getElementById('totalTokens').textContent = fmt(data.total_tokens);
+    document.getElementById('weekCalls').textContent = fmt(data.week_calls);
+    document.getElementById('remainingDays').textContent = data.remaining_days >= 0 ? data.remaining_days + '天' : '∞';
+
+    // 配额
+    let html = '';
+    if (data.skip_hourly) {
+        html += `<div class="quota"><div class="quota-header"><span class="quota-label">5小时</span><span class="quota-count safe">不限量</span></div></div>`;
+    } else {
+        html += renderQuota('5小时', data.used_5h||0, data.limit_5h||0);
+    }
+    html += renderQuota('今日', data.used_daily||0, data.limit_daily||0);
+    html += renderQuota('本周', data.used_7d||0, data.weekly_max||0);
+    html += renderQuota('本月', data.monthly_used||0, data.monthly_max||0);
+    document.getElementById('quotaContainer').innerHTML = html;
+
+    document.getElementById('planType').textContent = data.plan_name || data.plan || '-';
+    document.getElementById('expiredAt').textContent = data.expired_at || '-';
+    document.getElementById('activatedAt').textContent = data.activated_at || '-';
+    document.getElementById('weekUsage').textContent = `${fmt(data.used_7d||0)} / ${fmt(data.weekly_max||0)}`;
+
+    // 续费按钮：始终显示（用户随时可以续费）
+    const renew = document.getElementById('renewSection');
+    renew.style.display = 'block';
+    if (data.status === 'expired' || data.status === '已过期') {
+        document.getElementById('renewBtn').textContent = '续费此套餐（已过期）';
+    } else if (data.remaining_days >= 0 && data.remaining_days <= 7) {
+        document.getElementById('renewBtn').textContent = `续费（剩余 ${data.remaining_days} 天）`;
+    } else {
+        document.getElementById('renewBtn').textContent = '续费/延长 30 天';
+    }
+
+    window._renewKey = inputToken;
+    window._renewPlan = data.plan || '';
+
+    // 升级套餐：只看到更高档的
+    const planOrder = ['basic', 'pro', 'premium'];
+    const planInfo = {
+        'basic': {name: '专业版', price: '¥49.9', cls: 'pro', desc: '5h 300次 · 日1200次 · 月24000次'},
+        'pro': {name: '旗舰版', price: '¥89', cls: 'premium', desc: '5h 500次 · 日2000次 · 月40000次'},
+        'premium': null
+    };
+    const upgradeDiv = document.getElementById('upgradeSection');
+    const upgradeGrid = document.getElementById('upgradeGrid');
+    const curPlan = data.plan || '';
+    const curIdx = planOrder.indexOf(curPlan);
+    const higherPlans = planOrder.filter((p, i) => i > curIdx);
+    if (higherPlans.length > 0) {
+        upgradeGrid.innerHTML = higherPlans.filter(p => planInfo[p]).map(p => {
+            const info = planInfo[p];
+            return `<div class="upgrade-card" onclick="handleUpgrade('${p}')">` +
+                `<div class="name">${info.name}</div>` +
+                `<div class="price ${info.cls}">${info.price}</div>` +
+                `<div class="desc">${info.desc}</div></div>`;
+        }).join('');
+        upgradeDiv.style.display = 'block';
+    } else {
+        upgradeDiv.style.display = 'none';
+    }
+
+    document.getElementById('resultCard').classList.add('show');
+}
+
+async function handleUpgrade(newPlan) {
+    const tokenKey = window._renewKey;
+    if (!tokenKey || !newPlan) { showError('信息缺失'); return; }
+    try {
+        const resp = await fetch('/api/v1/payment/create-order', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({plan: newPlan, user_open_id: tokenKey, renew_token: tokenKey})
         });
-
-        function fmtNum(n) { return (n || 0).toLocaleString('zh-CN'); }
-
-        async function queryToken() {
-            const token = document.getElementById('tokenInput').value.trim();
-            if (!token) { showError('请输入 Token'); return; }
-
-            const btn = document.getElementById('queryBtn');
-            btn.disabled = true;
-            btn.textContent = '查询中...';
-            hideError();
-            document.getElementById('result').classList.remove('show');
-
-            try {
-                const resp = await fetch(`/api/v1/token-info?token=${encodeURIComponent(token)}`);
-                const data = await resp.json();
-                if (!resp.ok) { showError(data.error || '查询失败'); return; }
-                renderResult(data);
-            } catch (e) {
-                showError('网络错误，请稍后重试');
-            } finally {
-                btn.disabled = false;
-                btn.textContent = '查询';
-            }
+        const data = await resp.json();
+        if (data.pay_url) {
+            window.location.href = data.pay_url;
+        } else {
+            showError(data.error?.message || '创建订单失败');
         }
+    } catch(e) { showError('网络错误'); }
+}
 
-        function renderResult(data) {
-            document.getElementById('tokenName').textContent = data.token_name;
-            const badge = document.getElementById('statusBadge');
-            badge.textContent = data.status;
-            badge.className = 'status-badge ' + (statusMap[data.status] || 'status-normal');
+async function handleRenew() {
+    const tokenKey = window._renewKey;
+    const plan = window._renewPlan;
+    if (!tokenKey || !plan) { showError('信息缺失'); return; }
 
-            document.getElementById('totalCalls').textContent = fmtNum(data.total_calls || 0);
-            document.getElementById('totalTokens').textContent = fmtNum(data.total_tokens || 0);
-            document.getElementById('weekCalls').textContent = fmtNum(data.week_calls || 0);
-            document.getElementById('weekTokens').textContent = fmtNum(data.week_tokens || 0);
-
-            const planDisplayName = data.plan_name || '';
-            document.getElementById('planType').textContent = planDisplayName || (data.plan || '未设置');
-            document.getElementById('planTitle').textContent = planDisplayName ? planDisplayName + ' 套餐说明' : '套餐说明';
-            document.getElementById('planDetail').textContent = data.plan_desc || '该 Token 未设置限流套餐，无使用量限制。';
-
-            if (data.status === '待激活') {
-                document.getElementById('remainingDays').textContent = '待激活';
-                document.getElementById('expiredAt').textContent = '激活后30天';
-            } else {
-                document.getElementById('remainingDays').textContent = data.remaining_days >= 0 ? data.remaining_days + ' 天' : '无限';
-                document.getElementById('expiredAt').textContent = data.expired_at;
-            }
-            document.getElementById('activatedAt').textContent = data.activated_at;
-
-            const limit = data.limit_5h || 0;
-            const used = data.used_5h || 0;
-            const skipHourly = data.skip_hourly || false;
-
-            const barSection = document.getElementById('usageBar5h');
-            const countEl = document.getElementById('usageCount');
-            const fill = document.getElementById('progressFill');
-
-            if (skipHourly) {
-                countEl.textContent = '不限量（周限 ' + fmtNum(data.weekly_max || 0) + ' 次）';
-                fill.style.width = '100%';
-                fill.className = 'progress-fill';
-            } else if (limit > 0) {
-                countEl.textContent = fmtNum(used) + ' / ' + fmtNum(limit);
-                const pct = Math.min((used / limit) * 100, 100);
-                fill.style.width = pct + '%';
-                fill.className = 'progress-fill' + (pct > 80 ? ' danger' : pct > 50 ? ' warning' : '');
-            } else {
-                barSection.style.display = 'none';
-            }
-
-            document.getElementById('result').classList.add('show');
+    try {
+        const resp = await fetch('/api/v1/payment/create-order', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({plan, user_open_id: tokenKey, renew_token: tokenKey})
+        });
+        const data = await resp.json();
+        if (data.pay_url) {
+            window.location.href = data.pay_url;
+        } else {
+            showError(data.error?.message || '创建订单失败');
         }
+    } catch(e) { showError('网络错误'); }
+}
 
-        function showError(msg) {
-            const el = document.getElementById('errorMsg');
-            el.textContent = msg;
-            el.classList.add('show');
-        }
-        function hideError() {
-            document.getElementById('errorMsg').classList.remove('show');
-        }
-    </script>
+function showError(msg) {
+    const el = document.getElementById('errorMsg');
+    el.textContent = msg;
+    el.classList.add('show');
+}
+
+// 自动从 URL 参数读取 token 并查询
+(function() {
+    const params = new URLSearchParams(window.location.search);
+    const tokenFromUrl = params.get('token');
+    if (tokenFromUrl) {
+        document.getElementById('tokenInput').value = tokenFromUrl;
+        queryToken();
+    }
+})();
+</script>
+
+<div style="text-align:center;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);">
+    🦐 <a href="https://www.aitomoney.online" target="_blank" style="color:var(--text-main);text-decoration:none;">AiToMoney</a> 出品 · 一个人可以走得很快，一群虾可以折腾得更远
+</div>
 </body>
 </html>

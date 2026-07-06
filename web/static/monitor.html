@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="pragma" content="no-cache">
+    <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="expires" content="0">
     <title>atmApi 监控中心</title>
+    <link rel="icon" href="logo.png"/>
     <style>
         :root {
             --bg-dark: #121212;
@@ -22,338 +26,163 @@
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background: var(--bg-dark);
             color: var(--text-main);
-            margin: 0; padding: 16px;
+            font-size: 13px;
+            line-height: 1.5;
+            padding: 16px;
         }
         .container { max-width: 1300px; margin: 0 auto; }
-        .header { text-align: center; padding: 20px 0 10px; }
-        .header h1 { margin: 0; font-size: 24px; font-weight: 600; }
-        .header p { margin: 6px 0 0; color: var(--text-dim); font-size: 13px; }
-
-        .tabs { display: flex; gap: 4px; margin: 20px 0; background: var(--bg-card); border-radius: 10px; padding: 4px; border: 1px solid var(--border); }
-        .tab-btn { flex: 1; padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; background: transparent; color: var(--text-muted); transition: all 0.2s; }
-        .tab-btn.active { background: var(--primary); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
-        .tab-btn:hover:not(.active) { background: var(--bg-hover); color: var(--text-main); }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
-        .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px;
-        }
-        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-        .channel-name { font-size: 16px; font-weight: 600; color: var(--text-main); }
-        .status-badge { padding: 3px 10px; border-radius: 16px; font-size: 12px; font-weight: 500; }
-        .status-active { background: rgba(16, 185, 129, 0.15); color: var(--success); }
-        .status-disabled { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
-        .metric { margin: 10px 0; }
-        .metric-label { font-size: 12px; color: var(--text-dim); margin-bottom: 2px; }
-        .metric-value { font-size: 22px; font-weight: 700; color: var(--text-main); }
-        .progress-bar { height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden; margin-top: 6px; }
-        .progress-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
-        .fill-green { background: linear-gradient(90deg, #059669, var(--success)); }
-        .fill-yellow { background: linear-gradient(90deg, #d97706, var(--warning)); }
-        .fill-red { background: linear-gradient(90deg, #dc2626, var(--danger)); }
-        .btn {
-            padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
-            font-size: 13px; font-weight: 500; transition: all 0.2s;
-        }
-        .btn-pause { background: var(--danger); color: #fff; }
-        .btn-pause:hover { opacity: 0.85; }
-        .btn-reset { background: var(--primary); color: #fff; }
-        .btn-reset:hover { opacity: 0.85; }
-        .alert-box {
-            background: rgba(245, 158, 11, 0.1);
-            border: 1px solid var(--warning);
-            border-radius: 8px; padding: 14px; margin-bottom: 16px;
-            color: var(--warning); display: none;
-        }
-        .alert-box.show { display: block; }
-        .last-update { text-align: center; color: var(--text-dim); font-size: 12px; margin-top: 16px; }
-
-        .summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+        h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+        
+        .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
         .stat-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 10px; padding: 16px; text-align: center;
-        }
-        .stat-card .label { font-size: 12px; color: var(--text-dim); }
-        .stat-card .value { font-size: 24px; font-weight: 700; color: var(--text-main); margin: 4px 0; }
-        .stat-card .sub { font-size: 12px; color: var(--text-muted); }
-        .stat-card.highlight { border-left: 3px solid var(--primary); }
-
-        .section-title { font-size: 15px; font-weight: 600; margin: 20px 0 10px; }
-        table {
-            width: 100%; border-collapse: collapse;
             background: var(--bg-card); border: 1px solid var(--border);
-            border-radius: 10px; overflow: hidden;
+            border-radius: 8px; padding: 16px;
         }
-        th { background: var(--bg-hover); text-align: left; padding: 10px 14px; font-size: 13px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border); }
-        td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); color: var(--text-main); }
-        tr:hover td { background: var(--bg-hover); }
-        .text-right { text-align: right; }
-        .text-center { text-align: center; }
-
-        .trend-chart { display: flex; align-items: flex-end; gap: 8px; height: 160px; padding: 12px 0; }
-        .trend-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
-        .trend-bar { width: 70%; max-width: 50px; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, var(--primary), #66b3ff); transition: height 0.3s; min-height: 4px; }
-        .trend-label { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-        .trend-value { font-size: 11px; color: var(--text-main); margin-bottom: 2px; }
-
-        .empty-state { text-align: center; color: var(--text-dim); padding: 40px; font-size: 14px; }
+        .stat-card .label { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; }
+        .stat-card .value { font-size: 20px; font-weight: 700; }
+        .stat-card .sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+        .stat-card.green .value { color: var(--success); }
+        .stat-card.blue .value { color: var(--primary-hover); }
+        .stat-card.orange .value { color: var(--warning); }
+        .stat-card.red .value { color: var(--danger); }
+        
+        .card {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 8px; padding: 20px; margin-bottom: 20px;
+        }
+        .card-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
+        
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { color: var(--text-muted); font-weight: 500; background: var(--bg-hover); }
+        tr:hover { background: var(--bg-hover); }
+        
+        .badge { display: inline-block; padding: 2px 8px; font-size: 11px; border-radius: 999px; }
+        .badge-success { background: rgba(16,185,129,0.15); color: var(--success); }
+        .badge-danger { background: rgba(239,68,68,0.15); color: var(--danger); }
+        
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        
+        .refresh-btn {
+            display: inline-block; padding: 6px 14px;
+            font-size: 12px; font-weight: 500;
+            background: var(--primary); color: #fff;
+            border: none; border-radius: 6px; cursor: pointer;
+            margin-bottom: 16px;
+        }
+        .refresh-btn:hover { background: var(--primary-hover); }
+        .dim { color: var(--text-dim); font-size: 11px; }
+        
+        @media (max-width: 768px) { .stats-row { grid-template-columns: 1fr 1fr; } .two-col { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🛡️ atmApi 监控中心</h1>
-            <p>渠道监控 &amp; 成本分析</p>
+<div class="container">
+    <h2>监控中心</h2>
+    <button class="refresh-btn" onclick="loadAll()">刷新数据</button>
+    
+    <div class="stats-row">
+        <div class="stat-card green">
+            <div class="label">今日请求</div>
+            <div class="value" id="todayCount">-</div>
+            <div class="sub" id="todayErrors">-</div>
         </div>
-
-        <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('channels')">📡 渠道监控</button>
-            <button class="tab-btn" onclick="switchTab('cost')">💰 成本分析</button>
+        <div class="stat-card blue">
+            <div class="label">累计请求</div>
+            <div class="value" id="totalCount">-</div>
+            <div class="sub" id="weekInfo">-</div>
         </div>
-
-        <div id="tab-channels" class="tab-content active">
-            <div id="alertBox" class="alert-box">⚠️ <strong>告警：</strong><span id="alertMessage"></span></div>
-            <div class="grid" id="channelsGrid"></div>
+        <div class="stat-card orange">
+            <div class="label">活跃 Token</div>
+            <div class="value" id="activeTokens">-</div>
+            <div class="sub" id="totalTokenCount">-</div>
         </div>
-
-        <div id="tab-cost" class="tab-content">
-            <div id="costLoading" class="empty-state">⏳ 加载中…</div>
-            <div id="costContent" style="display:none;">
-                <div class="summary-row" id="costOverview"></div>
-                <div class="section-title">📈 近 7 天成本趋势</div>
-                <div class="card" id="trendChart"></div>
-                <div class="section-title">📊 按模型汇总</div>
-                <div id="byModelTable"></div>
-                <div class="section-title">📦 按套餐汇总</div>
-                <div id="byPlanTable"></div>
-            </div>
+        <div class="stat-card red">
+            <div class="label">错误率</div>
+            <div class="value" id="errorRate">-</div>
+            <div class="sub" id="avgLatency">-</div>
         </div>
-
-        <div class="last-update">最后更新: <span id="updateTime">--</span></div>
     </div>
+    
+    <div class="two-col">
+        <div class="card">
+            <div class="card-title">模型调用统计</div>
+            <table>
+                <thead><tr><th>模型</th><th>调用次数</th><th>Tokens</th></tr></thead>
+                <tbody id="modelTable"><tr><td colspan="3" class="dim" style="text-align:center;">加载中...</td></tr></tbody>
+            </table>
+        </div>
+        <div class="card">
+            <div class="card-title">近7天趋势</div>
+            <table>
+                <thead><tr><th>日期</th><th>请求数</th><th>错误</th></tr></thead>
+                <tbody id="dailyTable"><tr><td colspan="3" class="dim" style="text-align:center;">加载中...</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-title">最近请求（最新 20 条）</div>
+        <table>
+            <thead><tr><th>时间</th><th>Token</th><th>模型</th><th>渠道</th><th>状态</th><th>耗时</th></tr></thead>
+            <tbody id="recentTable"><tr><td colspan="6" class="dim" style="text-align:center;">加载中...</td></tr></tbody>
+        </table>
+    </div>
+</div>
 
-    <script>
-        // 从父页面获取 JWT token（iframe 嵌入时）
-        function getToken() {
-            try {
-                if (window.parent && window.parent.localStorage) {
-                    return window.parent.localStorage.getItem('atmapi_token') || '';
-                }
-            } catch(e) {}
-            return localStorage.getItem('atmapi_token') || '';
-        }
-        function authHeaders() {
-            const t = getToken();
-            return t ? { 'Authorization': 'Bearer ' + t } : {};
-        }
+<script>
+async function loadAll() {
+    try {
+        const r = await fetch('/api/v1/stats');
+        const json = await r.json();
+        if (!json || !json.data) return;
+        const d = json.data;
+        
+        document.getElementById('todayCount').textContent = (d.today_count||0).toLocaleString();
+        document.getElementById('todayErrors').textContent = (d.today_errors||0) + ' 错误';
+        document.getElementById('totalCount').textContent = (d.total_requests||0).toLocaleString();
+        document.getElementById('weekInfo').textContent = '累计 ' + (d.total_requests||0).toLocaleString();
+        document.getElementById('activeTokens').textContent = (d.active_tokens||0);
+        document.getElementById('totalTokenCount').textContent = '共 ' + (d.total_tokens||0) + ' 个';
+        
+        const errRate = d.total_requests > 0 ? ((d.total_errors/d.total_requests)*100).toFixed(1) : '0';
+        document.getElementById('errorRate').textContent = errRate + '%';
+        document.getElementById('avgLatency').textContent = (d.avg_duration||0) + 'ms 平均';
+        
+        // 模型统计
+        const models = d.by_model || [];
+        document.getElementById('modelTable').innerHTML = models.length ? models.map(m => 
+            `<tr><td>${m.model||'-'}</td><td>${(m.count||0).toLocaleString()}</td><td>${(m.total_tokens||0).toLocaleString()}</td></tr>`
+        ).join('') : '<tr><td colspan="3" class="dim" style="text-align:center;">暂无数据</td></tr>';
+        
+        // 每日趋势
+        const daily = d.daily || [];
+        document.getElementById('dailyTable').innerHTML = daily.length ? daily.map(d => 
+            `<tr><td>${d.date||'-'}</td><td>${(d.count||0).toLocaleString()}</td><td><span class="${d.errors>0?'badge badge-danger':''}">${d.errors||0}</span></td></tr>`
+        ).join('') : '<tr><td colspan="3" class="dim" style="text-align:center;">暂无数据</td></tr>';
+        
+        // 最近请求
+        const recent = d.recent || [];
+        document.getElementById('recentTable').innerHTML = recent.length ? recent.map(r => {
+            const time = (r.created_at||'').substring(5,19);
+            const cls = r.status_code >= 400 ? 'badge badge-danger' : 'badge badge-success';
+            return `<tr><td>${time}</td><td>${r.token_name||'-'}</td><td>${r.model||'-'}</td><td>${r.channel_name||'-'}</td><td><span class="${cls}">${r.status_code}</span></td><td>${r.duration_ms||0}ms</td></tr>`;
+        }).join('') : '<tr><td colspan="6" class="dim" style="text-align:center;">暂无数据</td></tr>';
+        
+    } catch(e) {
+        console.error('load error:', e);
+    }
+}
 
-        let activeTab = 'channels';
-        function switchTab(tab) {
-            activeTab = tab;
-            document.querySelectorAll('.tab-btn').forEach((b, i) => {
-                b.classList.toggle('active', (i === 0 && tab === 'channels') || (i === 1 && tab === 'cost'));
-            });
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.getElementById('tab-' + tab).classList.add('active');
-            if (tab === 'cost') loadCostData();
-            if (tab === 'channels') loadChannelData();
-        }
+loadAll();
+setInterval(loadAll, 30000);
+</script>
 
-        // ===== 渠道监控 =====
-        async function loadChannelData() {
-            try {
-                const res = await fetch('/api/v1/channels', { headers: authHeaders() });
-                if (res.status === 401) {
-                    document.getElementById('channelsGrid').innerHTML = '<div class="card" style="text-align:center;color:var(--text-dim)">🔒 请先登录</div>';
-                    return;
-                }
-                const result = await res.json();
-                const channels = result.data || [];
-                const grid = document.getElementById('channelsGrid');
-                grid.innerHTML = '';
-                document.getElementById('alertBox').classList.remove('show');
-
-                channels.forEach(ch => {
-                    const card = document.createElement('div');
-                    card.className = 'card';
-                    card.innerHTML = `
-                        <div class="card-header">
-                            <span class="channel-name">${ch.name}</span>
-                            <span class="status-badge ${ch.status === 1 ? 'status-active' : 'status-disabled'}">
-                                ${ch.status === 1 ? '运行中' : '已暂停'}
-                            </span>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-label">类型</div>
-                            <div class="metric-value" style="font-size:14px;">${ch.type || '-'}</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-label">优先级 / 权重</div>
-                            <div class="metric-value" style="font-size:14px;">${ch.priority || 0} / ${ch.weight || 0}</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-label">模型</div>
-                            <div style="font-size:12px;color:var(--text-muted);word-break:break-all;">${ch.models || '-'}</div>
-                        </div>
-                        <div style="margin-top:12px;display:flex;gap:8px;">
-                            ${ch.status === 1 ?
-                                `<button class="btn btn-pause" onclick="toggleChannel(${ch.id}, 2)">⏸ 暂停</button>` :
-                                `<button class="btn btn-reset" onclick="toggleChannel(${ch.id}, 1)">▶ 恢复</button>`}
-                            <button class="btn btn-reset" onclick="testChannel(${ch.id})">🔍 测试</button>
-                        </div>
-                    `;
-                    grid.appendChild(card);
-                });
-
-                if (channels.length === 0) {
-                    grid.innerHTML = '<div class="card" style="text-align:center;color:var(--text-dim)">暂无渠道数据</div>';
-                }
-
-                document.getElementById('updateTime').textContent = new Date().toLocaleString('zh-CN');
-            } catch (e) {
-                document.getElementById('channelsGrid').innerHTML = '<div class="card" style="text-align:center;color:var(--danger)">⚠️ 加载失败: ' + e.message + '</div>';
-            }
-        }
-
-        async function toggleChannel(id, status) {
-            try {
-                const res = await fetch('/api/v1/channels/' + id, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                    body: JSON.stringify({ status })
-                });
-                if (res.ok) loadChannelData();
-                else alert('操作失败');
-            } catch (e) { alert('操作失败: ' + e.message); }
-        }
-
-        async function testChannel(id) {
-            try {
-                const res = await fetch('/api/v1/channels/' + id + '/test', {
-                    method: 'POST',
-                    headers: authHeaders()
-                });
-                const data = await res.json();
-                if (data.success) {
-                    alert('✅ ' + data.channel + ' 测试成功\n响应码: ' + data.status_code + '\n耗时: ' + data.duration_ms + 'ms');
-                } else {
-                    alert('❌ ' + data.channel + ' 测试失败\n' + (data.error || '未知错误'));
-                }
-            } catch (e) { alert('测试失败: ' + e.message); }
-        }
-
-        // ===== 成本分析 =====
-        async function loadCostData() {
-            document.getElementById('costLoading').style.display = 'block';
-            document.getElementById('costContent').style.display = 'none';
-            try {
-                const [summaryRes, planRes, trendRes] = await Promise.all([
-                    fetch('/api/v1/cost-summary', { headers: authHeaders() }),
-                    fetch('/api/v1/cost-by-plan', { headers: authHeaders() }),
-                    fetch('/api/v1/cost-trend', { headers: authHeaders() })
-                ]);
-                if (summaryRes.status === 401) {
-                    document.getElementById('costLoading').innerHTML = '🔒 请先登录后再查看成本分析';
-                    return;
-                }
-                const summary = (await summaryRes.json()).data || {};
-                const planData = (await planRes.json()).data || [];
-                const trendData = (await trendRes.json()).data || [];
-
-                renderOverview(summary);
-                renderTrend(trendData);
-                renderByModel(summary.by_model || []);
-                renderByPlan(planData);
-
-                document.getElementById('costLoading').style.display = 'none';
-                document.getElementById('costContent').style.display = 'block';
-            } catch (e) {
-                document.getElementById('costLoading').innerHTML = '⚠️ 加载失败，可能还没有用量数据';
-            }
-        }
-
-        function fmt(n) { return (n || 0).toLocaleString('zh-CN'); }
-        function fmtYuan(y) { return '¥' + (y || 0).toFixed(2); }
-
-        function renderOverview(summary) {
-            document.getElementById('costOverview').innerHTML = [
-                { label: '今日成本', value: fmtYuan(summary.today_cost), sub: fmt(summary.today_tokens) + ' tokens', hl: true },
-                { label: '本周成本', value: fmtYuan(summary.week_cost), sub: fmt(summary.week_tokens) + ' tokens', hl: true },
-                { label: '本月成本', value: fmtYuan(summary.month_cost), sub: fmt(summary.month_tokens) + ' tokens', hl: true },
-                { label: '总成本', value: fmtYuan(summary.total_cost), sub: fmt(summary.total_tokens) + ' tokens', hl: false }
-            ].map(s => `
-                <div class="stat-card ${s.hl ? 'highlight' : ''}">
-                    <div class="label">${s.label}</div>
-                    <div class="value">${s.value}</div>
-                    <div class="sub">${s.sub}</div>
-                </div>
-            `).join('');
-        }
-
-        function renderTrend(trend) {
-            const el = document.getElementById('trendChart');
-            if (!trend || trend.length === 0) {
-                el.innerHTML = '<div class="empty-state">暂无趋势数据</div>';
-                return;
-            }
-            const maxCost = Math.max(...trend.map(d => d.cost_yuan || 0), 0.01);
-            el.innerHTML = '<div class="trend-chart">' +
-                trend.map(d => {
-                    const pct = ((d.cost_yuan || 0) / maxCost * 100);
-                    return `<div class="trend-bar-wrap">
-                        <div class="trend-value">${fmtYuan(d.cost_yuan)}</div>
-                        <div class="trend-bar" style="height:${Math.max(pct, 4)}%"></div>
-                        <div class="trend-label">${(d.date || '').slice(5)}</div>
-                        <div style="font-size:10px;color:var(--text-dim)">${fmt(d.count)}次</div>
-                    </div>`;
-                }).join('') + '</div>';
-        }
-
-        function renderByModel(models) {
-            const el = document.getElementById('byModelTable');
-            if (!models || models.length === 0) {
-                el.innerHTML = '<div class="empty-state">暂无数据</div>'; return;
-            }
-            el.innerHTML = `<table>
-                <tr><th>模型</th><th class="text-right">调用次数</th><th class="text-right">输入 tokens</th><th class="text-right">输出 tokens</th><th class="text-right">总计 tokens</th><th class="text-right">成本</th></tr>
-                ${models.map(m => `<tr>
-                    <td>${m.model}</td>
-                    <td class="text-right">${fmt(m.count)}</td>
-                    <td class="text-right">${fmt(m.input_tokens)}</td>
-                    <td class="text-right">${fmt(m.output_tokens)}</td>
-                    <td class="text-right">${fmt(m.total_tokens)}</td>
-                    <td class="text-right">${fmtYuan(m.cost_yuan)}</td>
-                </tr>`).join('')}
-            </table>`;
-        }
-
-        function renderByPlan(plans) {
-            const el = document.getElementById('byPlanTable');
-            if (!plans || plans.length === 0) {
-                el.innerHTML = '<div class="empty-state">暂无数据</div>'; return;
-            }
-            el.innerHTML = `<table><tr>
-                <th>套餐</th><th class="text-right">调用次数</th><th class="text-right">输入 tokens</th><th class="text-right">输出 tokens</th><th class="text-right">成本</th>
-            </tr>${plans.map(p => `<tr>
-                <td>${p.plan_name || '(无套餐)'}</td>
-                <td class="text-right">${fmt(p.count)}</td>
-                <td class="text-right">${fmt(p.input_tokens)}</td>
-                <td class="text-right">${fmt(p.output_tokens)}</td>
-                <td class="text-right">${fmtYuan(p.cost_yuan)}</td>
-            </tr>`).join('')}</table>`;
-        }
-
-        // 初始加载
-        loadChannelData();
-    </script>
+<div style="text-align:center;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);">
+    🦐 <a href="https://www.aitomoney.online" target="_blank" style="color:var(--text-main);text-decoration:none;">AiToMoney</a> 出品 · 一个人可以走得很快，一群虾可以折腾得更远
+</div>
 </body>
 </html>

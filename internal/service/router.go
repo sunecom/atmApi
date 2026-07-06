@@ -105,9 +105,9 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 	}
 
 	// 3. 检查滑动窗口限流
-	allowed, reason := CheckRateLimit(token)
-	if !allowed {
-		return nil, fmt.Errorf("限流：%s", reason)
+	rlResult := CheckRateLimit(token)
+	if !rlResult.Allowed {
+		return nil, fmt.Errorf("限流：%s", rlResult.Reason)
 	}
 
 	// 4a. 先查聚合组（model_group）

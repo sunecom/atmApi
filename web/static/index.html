@@ -872,7 +872,7 @@
         return '<tr>' +
           '<td>' + tk.id + '</td>' +
           '<td>' + tk.name + '</td>' +
-          '<td><code>' + tk.key + '</code></td>' +
+          '<td><code style="cursor:pointer;user-select:all;color:var(--primary-hover);" onclick="copyKey(\''+tk.key+'\')" title="点击复制">' + tk.key + '</code></td>' +
           '<td>' + formatQuota(tk) + '</td>' +
           '<td>' + expired + '</td>' +
           '<td>' + created + '</td>' +
@@ -883,6 +883,21 @@
         '</tr>';
       }).join('');
       document.getElementById('tokensTableWrap').innerHTML = '<table><thead><tr><th>ID</th><th>名称</th><th>Key</th><th>配额</th><th>过期</th><th>创建</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7">暂无数据</td></tr>') + '</tbody></table>';
+    }
+
+    function copyKey(key) {
+      navigator.clipboard.writeText(key).then(function(){
+        alert('Key 已复制: ' + key);
+      }).catch(function(){
+        // fallback
+        var ta = document.createElement('textarea');
+        ta.value = key;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        alert('Key 已复制');
+      });
     }
 
     async function editToken(id) {

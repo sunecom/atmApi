@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"atmapi/internal/api"
@@ -18,11 +19,19 @@ func main() {
 	cfg := config.Load()
 
 	// 加载支付宝配置（从 .env.alipay 文件）
+	log.Printf("[支付] 开始加载 .env.alipay...")
 	if err := api.LoadEnvFile(".env.alipay"); err != nil {
 		log.Printf("[警告] 加载 .env.alipay 失败: %v（支付宝支付不可用）", err)
 	} else {
+		log.Printf("[支付] .env.alipay 加载成功")
 		// 初始化支付宝支付模块（仅在配置加载成功时）
 		api.InitAlipay()
+		if api.AlipayReady() {
+			log.Printf("[支付] 支付宝初始化成功: APP_ID=%s", os.Getenv("ALIPAY_APP_ID"))
+		} else {
+			log.Printf("[警告] 支付宝就绪检查失败: app_id=%q, private_key_len=%d",
+				os.Getenv("ALIPAY_APP_ID"), len(os.Getenv("ALIPAY_APP_PRIVATE_KEY")))
+		}
 	}
 
 	// 初始化数据库
@@ -52,6 +61,10 @@ func main() {
 
 	// 注册路由
 	api.RegisterRoutes(r)
+
+	// 启动定时任务
+	api.StartExpiryChecker() // 过期 token 自动禁用
+	api.StartUsageAlerter()  // 用量告警
 
 	// 启动服务
 	addr := fmt.Sprintf(":%s", cfg.Port)

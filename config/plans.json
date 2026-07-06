@@ -1,0 +1,128 @@
+{
+  "plans": [
+    {
+      "name": "basic",
+      "display_name": "基础版 ¥29.9/月",
+      "price": "29.9",
+      "monthly_token_limit": 8000,
+      "five_hour_limit": 100,
+      "max_input_tokens": 32000,
+      "max_output_tokens": 4096,
+      "image_enabled": false,
+      "image_daily_limit": 0,
+      "concurrency_limit": 3,
+      "allowed_models": [
+        "deepseek-v3",
+        "qwen3.5-plus",
+        "qwen3.6-plus"
+      ],
+      "description": "入门级套餐，适合个人开发者。每5小时100次，每日400次，每月8000次。"
+    },
+    {
+      "name": "pro",
+      "display_name": "专业版 ¥69/月",
+      "price": "69",
+      "monthly_token_limit": 24000,
+      "five_hour_limit": 300,
+      "max_input_tokens": 64000,
+      "max_output_tokens": 8192,
+      "image_enabled": true,
+      "image_daily_limit": 50,
+      "concurrency_limit": 5,
+      "allowed_models": [
+        "deepseek-v3",
+        "deepseek-a4",
+        "qwen3.5-plus",
+        "qwen3.6-plus",
+        "qwen3.7-plus"
+      ],
+      "description": "专业开发者套餐，支持图片理解。每5小时300次，每日1200次，每月24000次。"
+    },
+    {
+      "name": "flagship",
+      "display_name": "旗舰版 ¥129/月",
+      "price": "129",
+      "monthly_token_limit": 50000,
+      "five_hour_limit": 600,
+      "max_input_tokens": 128000,
+      "max_output_tokens": 16384,
+      "image_enabled": true,
+      "image_daily_limit": 200,
+      "concurrency_limit": 10,
+      "allowed_models": [
+        "deepseek-v3",
+        "deepseek-a4",
+        "qwen3.5-plus",
+        "qwen3.6-plus",
+        "qwen3.7-plus",
+        "qwen3-max"
+      ],
+      "description": "旗舰套餐，全模型访问权限。每5小时600次，每日3000次，每月50000次。"
+    },
+    {
+      "name": "starter",
+      "display_name": "创业版 ¥99/月",
+      "price": "99",
+      "monthly_token_limit": 30000,
+      "five_hour_limit": 400,
+      "max_input_tokens": 64000,
+      "max_output_tokens": 8192,
+      "image_enabled": true,
+      "image_daily_limit": 100,
+      "concurrency_limit": 8,
+      "allowed_models": [
+        "deepseek-v3",
+        "deepseek-a4",
+        "qwen3.5-plus",
+        "qwen3.6-plus",
+        "qwen3.7-plus"
+      ],
+      "description": "创业团队套餐。每5小时400次，每日2000次，每月30000次。"
+    },
+    {
+      "name": "advanced",
+      "display_name": "高级版 ¥299/月",
+      "price": "299",
+      "monthly_token_limit": 100000,
+      "five_hour_limit": 1200,
+      "max_input_tokens": 256000,
+      "max_output_tokens": 32768,
+      "image_enabled": true,
+      "image_daily_limit": 500,
+      "concurrency_limit": 20,
+      "allowed_models": [
+        "deepseek-v3",
+        "deepseek-a4",
+        "qwen3.5-plus",
+        "qwen3.6-plus",
+        "qwen3.7-plus",
+        "qwen3-max",
+        "qwen3-coder-plus"
+      ],
+      "description": "高级企业套餐，大并发支持。每5小时1200次，每日6000次，每月100000次。"
+    },
+    {
+      "name": "enterprise",
+      "display_name": "企业版 ¥599/月",
+      "price": "599",
+      "monthly_token_limit": 300000,
+      "five_hour_limit": 3000,
+      "max_input_tokens": 512000,
+      "max_output_tokens": 65536,
+      "image_enabled": true,
+      "image_daily_limit": 2000,
+      "concurrency_limit": 50,
+      "allowed_models": [
+        "deepseek-v3",
+        "deepseek-a4",
+        "qwen3.5-plus",
+        "qwen3.6-plus",
+        "qwen3.7-plus",
+        "qwen3-max",
+        "qwen3-coder-plus",
+        "qwen3-coder-next"
+      ],
+      "description": "企业旗舰套餐，全功能无限制。每5小时3000次，每日15000次，每月300000次。"
+    }
+  ]
+}
