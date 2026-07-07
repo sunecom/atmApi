@@ -16,12 +16,13 @@ import (
 )
 
 // ============================================================
-// MCP (Model Context Protocol) 端点
+// MCP (Model Context Protocol) 端点 — AiToMoney 团队出品
 // ============================================================
 //
-// 暴露两个工具供外部 AI Agent 调用：
-//   1. query_usage  — 查询 Token 余额和配额
+// 暴露三个工具供外部 AI Agent 调用：
+//   1. query_usage    — 查询 Token 余额和配额
 //   2. create_renewal — 生成续费/升级支付链接
+//   3. list_models    — 查看可用模型列表和介绍
 //
 // 协议：JSON-RPC 2.0 over HTTP
 // 端点：
@@ -55,35 +56,42 @@ type RPCError struct {
 var mcpTools = []map[string]interface{}{
 	{
 		"name":        "query_usage",
-		"description": "查询 atmApi Token 的剩余配额和使用情况。传入 token（API Key），返回 5小时/每日/每周/每月 的已用/剩余次数、套餐信息、到期时间等。",
+		"description": "查询 atmApi Token 的剩余配额和使用情况。返回 5小时/每日/每周/每月 的已用/剩余次数、套餐信息、到期时间等。token 参数可选——如果不传，自动使用当前调用者的 API Key。",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"token": map[string]interface{}{
 					"type":        "string",
-					"description": "atmApi 的 API Key（以 sk- 开头）",
+					"description": "atmApi 的 API Key（可选，不传则自动使用当前调用者的 token）",
 				},
 			},
-			"required": []string{"token"},
+			"required": []string{},
 		},
 	},
 	{
 		"name":        "create_renewal",
-		"description": "生成续费或升级套餐的支付链接。传入 token 和目标套餐名，返回支付宝支付链接。",
+		"description": "生成续费或升级套餐的指引。传入目标套餐名，返回带 token 的 token-info 页面链接，用户可在页面上查看套餐详情并完成支付。token 参数可选——如果不传，自动使用当前调用者的 API Key。可用套餐名请通过 list_models 查询。",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"token": map[string]interface{}{
 					"type":        "string",
-					"description": "atmApi 的 API Key（以 sk- 开头）",
+					"description": "atmApi 的 API Key（可选，不传则自动使用当前调用者的 token）",
 				},
 				"plan": map[string]interface{}{
 					"type":        "string",
-					"description": "目标套餐：basic(¥29.9), pro(¥49.9), premium(¥89)",
-					"enum":         []string{"basic", "pro", "premium"},
+					"description": "目标套餐名（如 basic, pro, flagship 等）。先调 list_models 获取所有可用套餐列表。",
 				},
 			},
-			"required": []string{"token", "plan"},
+			"required": []string{"plan"},
+		},
+	},
+	{
+		"name":        "list_models",
+		"description": "介绍 deepseek-a4 智能路由模型。了解它的核心能力、工作原理、适用场景和套餐价格。AiToMoney 团队出品。",
+		"inputSchema": map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
 		},
 	},
 }
@@ -130,8 +138,8 @@ func mcpSSE(c *gin.Context) {
 				"tools": map[string]interface{}{},
 			},
 			"serverInfo": map[string]interface{}{
-				"name":    "atmapi",
-				"version": "2.0.1",
+				"name":     "atmApi",
+				"version":  "2.0.2", "vendor": "AiToMoney 团队出品 🚀", "homepage": "https://atmapi.aitomoney.online",
 			},
 		},
 	}
@@ -190,8 +198,8 @@ func mcpJSONRPC(c *gin.Context) {
 					"tools": map[string]interface{}{},
 				},
 				"serverInfo": map[string]interface{}{
-					"name":    "atmapi",
-					"version": "2.0.1",
+					"name":     "atmApi",
+					"version":  "2.0.2", "vendor": "AiToMoney 团队出品 🚀", "homepage": "https://atmapi.aitomoney.online",
 				},
 			},
 		})
@@ -239,11 +247,29 @@ func mcpToolCall(c *gin.Context, req *JSONRPCRequest) {
 		return
 	}
 
+	// 🚀 自动注入调用者 token：从 Authorization Bearer 头提取
+	// 智能体调用 query_usage / create_renewal 时不需要手动传 token
+	if params.Arguments == nil {
+		params.Arguments = map[string]interface{}{}
+	}
+	if _, hasToken := params.Arguments["token"]; !hasToken {
+		authHeader := c.GetHeader("Authorization")
+		callerToken := extractTokenFromAuth(authHeader)
+		if callerToken != "" {
+			params.Arguments["token"] = callerToken
+			log.Printf("[MCP] 自动注入调用者 token (tool=%s, auth_len=%d)", params.Name, len(authHeader))
+		} else {
+			log.Printf("[MCP] ⚠️ 未找到 Authorization 头 (tool=%s, auth_header=%q, all_headers=%v)", params.Name, authHeader, c.Request.Header)
+		}
+	}
+
 	switch params.Name {
 	case "query_usage":
 		mcpQueryUsage(c, req.ID, params.Arguments)
 	case "create_renewal":
 		mcpCreateRenewal(c, req.ID, params.Arguments)
+	case "list_models":
+		mcpListModels(c, req.ID)
 	default:
 		c.JSON(http.StatusOK, JSONRPCResponse{
 			JSONRPC: "2.0",
@@ -261,14 +287,14 @@ func mcpQueryUsage(c *gin.Context, id interface{}, args map[string]interface{}) 
 		return
 	}
 
-	var token model.Token
-	if err := model.DB.Where("key = ?", tokenKey).First(&token).Error; err != nil {
+	token, err := model.FindByKey(tokenKey)
+	if err != nil {
 		mcpToolError(c, id, "Token 不存在")
 		return
 	}
 
 	now := time.Now().Unix()
-	rlResult := service.CheckRateLimit(&token)
+	rlResult := service.CheckRateLimit(token)
 
 	// 状态
 	status := "active"
@@ -336,6 +362,11 @@ func mcpQueryUsage(c *gin.Context, id interface{}, args map[string]interface{}) 
 		"remaining_days":    remainingDays,
 	}
 
+	// 快到期时加上续费引导提示
+	if remainingDays >= 0 && remainingDays <= 7 {
+		result["renewal_hint"] = fmt.Sprintf("套餐还有 %d 天到期，如需续费请输入\"我要续费\"", remainingDays)
+	}
+
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 
 	c.JSON(http.StatusOK, JSONRPCResponse{
@@ -366,8 +397,8 @@ func mcpCreateRenewal(c *gin.Context, id interface{}, args map[string]interface{
 	}
 
 	// 验证 Token 存在
-	var token model.Token
-	if err := model.DB.Where("key = ?", tokenKey).First(&token).Error; err != nil {
+	token, err := model.FindByKey(tokenKey)
+	if err != nil {
 		mcpToolError(c, id, "Token 不存在")
 		return
 	}
@@ -397,22 +428,62 @@ func mcpCreateRenewal(c *gin.Context, id interface{}, args map[string]interface{
 		return
 	}
 
-	// 生成支付 URL
-	var payURL string
-	if AlipayReady() {
-		payURL = buildAlipayPayURL(order.OrderNo, plan.DisplayName, price)
-	} else {
-		// 支付宝未配置，返回 web 支付页
-		payURL = fmt.Sprintf("http://%s/pay?order=%s", c.Request.Host, orderNo)
+	// 不再直接生成支付链接，改为引导用户去 token-info 页面自行操作
+	// 链接和 token 分开返回，用户手动复制 token 去页面查询
+
+	result := map[string]interface{}{
+		"plan":         planName,
+		"plan_display": plan.DisplayName,
+		"price":        plan.Price,
+		"token":        tokenKey,
+		"manage_url":   "https://pay.aitomoney.online/token-info",
+		"message":      fmt.Sprintf("请打开链接 https://pay.aitomoney.online/token-info ，输入 Token：%s 查看详情并续费/升级", tokenKey),
+	}
+
+	// 用紧凑格式，避免长 URL 被换行截断
+	resultJSON, _ := json.Marshal(result)
+
+	c.JSON(http.StatusOK, JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": string(resultJSON),
+				},
+			},
+		},
+	})
+}
+
+// mcpListModels — 当前模型介绍（deepseek-a4），套餐信息从数据库动态读取
+func mcpListModels(c *gin.Context, id interface{}) {
+	// 动态读取套餐列表
+	var plans []model.Plan
+	model.DB.Find(&plans)
+	
+	var plansList []map[string]interface{}
+	for _, p := range plans {
+		plansList = append(plansList, map[string]interface{}{
+			"name":      p.Name,
+			"display":   p.DisplayName,
+			"price":      p.Price,
+			"quota_5h":   p.Hourly5Max,
+			"quota_monthly": p.MonthlyMax,
+		})
 	}
 
 	result := map[string]interface{}{
-		"order_id":    orderNo,
-		"plan":        planName,
-		"plan_display": plan.DisplayName,
-		"price":       plan.Price,
-		"pay_url":     payURL,
-		"message":     fmt.Sprintf("续费/升级订单已创建，套餐：%s，价格：¥%s", plan.DisplayName, plan.Price),
+		"vendor":         "AiToMoney 团队出品 🚀",
+		"model":          "deepseek-a4",
+		"display_name":   "DeepSeek A4（智能路由）",
+		"capabilities":   "文本 + 图片理解",
+		"context_window": "1,000,000 tokens（1M）",
+		"max_output":     "384,000 tokens",
+		"description":    "atmApi 智能路由旗舰模型，AiToMoney 团队出品。根据请求内容自动选择最优后端：图片→Qwen3.7-Plus（多模态），简单文本→DeepSeek-V4-Flash（快速便宜），复杂推理→DeepSeek-V4-Pro（深度思考）。一模型打通所有场景。",
+		"routing":        "图片→qwen3.7-plus | 简单文本→deepseek-v4-flash | 复杂文本→deepseek-v4-pro | tool_calls→锁模型",
+		"plans":           plansList,
 	}
 
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")

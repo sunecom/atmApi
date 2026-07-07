@@ -125,8 +125,7 @@ func activatePlanForOrder(order *model.Order) {
 	// ===== 续费/升级场景 =====
 	if order.TokenName != "" {
 		renewTokenKey := order.TokenName
-		var oldToken model.Token
-		if err := model.DB.Where("key = ?", renewTokenKey).First(&oldToken).Error; err == nil {
+		if oldToken, err := model.FindByKey(renewTokenKey); err == nil {
 			// 延长 30 天
 			oldExpired := oldToken.ExpiredTime
 			extra := time.Now().AddDate(0, 1, 0).Unix()

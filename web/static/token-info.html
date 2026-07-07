@@ -318,27 +318,36 @@ function renderResult(data, inputToken) {
     window._renewKey = inputToken;
     window._renewPlan = data.plan || '';
 
-    // 升级套餐：只看到更高档的
-    const planOrder = ['basic', 'pro', 'premium'];
-    const planInfo = {
-        'basic': {name: '专业版', price: '¥49.9', cls: 'pro', desc: '5h 300次 · 日1200次 · 月24000次'},
-        'pro': {name: '旗舰版', price: '¥89', cls: 'premium', desc: '5h 500次 · 日2000次 · 月40000次'},
-        'premium': null
-    };
+    // 升级套餐：从数据库动态获取
     const upgradeDiv = document.getElementById('upgradeSection');
     const upgradeGrid = document.getElementById('upgradeGrid');
-    const curPlan = data.plan || '';
-    const curIdx = planOrder.indexOf(curPlan);
-    const higherPlans = planOrder.filter((p, i) => i > curIdx);
-    if (higherPlans.length > 0) {
-        upgradeGrid.innerHTML = higherPlans.filter(p => planInfo[p]).map(p => {
-            const info = planInfo[p];
-            return `<div class="upgrade-card" onclick="handleUpgrade('${p}')">` +
-                `<div class="name">${info.name}</div>` +
-                `<div class="price ${info.cls}">${info.price}</div>` +
-                `<div class="desc">${info.desc}</div></div>`;
-        }).join('');
-        upgradeDiv.style.display = 'block';
+    
+    if (data.all_plans && data.all_plans.length > 0) {
+        const curPlan = data.plan || '';
+        const curPrice = parseFloat(data.plan_price || 0);
+        // 显示价格高于当前套餐的选项（按价格升序）
+        const higherPlans = data.all_plans
+            .filter(p => p.name !== curPlan && parseFloat(p.price || 0) > curPrice)
+            .sort((a, b) => parseFloat(a.price) - parseFloat(b.price))
+            .slice(0, 6);
+        
+        if (higherPlans.length > 0) {
+            const priceCls = (price) => {
+                const p = parseFloat(price);
+                if (p >= 299) return 'premium';
+                if (p >= 99) return 'pro';
+                return '';
+            };
+            upgradeGrid.innerHTML = higherPlans.map(p => 
+                `<div class="upgrade-card" onclick="handleUpgrade('${p.name}')">` +
+                `<div class="name">${p.display_name || p.name}</div>` +
+                `<div class="price ${priceCls(p.price)}">¥${p.price}/月</div>` +
+                `<div class="desc">5h ${p.hourly_5_max}次 · 月${p.monthly_max}次</div></div>`
+            ).join('');
+            upgradeDiv.style.display = 'block';
+        } else {
+            upgradeDiv.style.display = 'none';
+        }
     } else {
         upgradeDiv.style.display = 'none';
     }

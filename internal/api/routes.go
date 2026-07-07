@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+var dbgFile *os.File
+
+func initDbgLog() {
+	dbgFile, _ = os.OpenFile("/tmp/atmapi-img-debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+}
+
+func dbgLog(format string, args ...interface{}) {
+	msg := fmt.Sprintf(time.Now().Format("2006/01/02 15:04:05 ")+format+"\n", args...)
+	if dbgFile != nil {
+		fmt.Fprintf(dbgFile, msg)
+		dbgFile.Sync()
+	}
+	log.Printf(format, args...) // 也输出到 stderr
+}
 
 // ===== 标准化错误码体系 =====
 
@@ -59,6 +75,7 @@ func respondError(c *gin.Context, httpStatus int, code ErrorCode, message string
 
 // RegisterRoutes 注册所有路由
 func RegisterRoutes(r *gin.Engine) {
+	initDbgLog()
 	// 安全 Headers 中间件
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
@@ -90,7 +107,22 @@ func RegisterRoutes(r *gin.Engine) {
 	r.GET("/account", func(c *gin.Context) { c.Redirect(301, "/static/pay.html?"+c.Request.URL.RawQuery) })
 	r.GET("/health", healthCheck)
 	r.GET("/cache/stats", cacheStats)
-	r.GET("/token-info", func(c *gin.Context) { c.Redirect(301, "/static/token-info.html") })
+	r.GET("/token-info", func(c *gin.Context) { c.File("./web/static/token-info.html") })
+
+	// 短链接跳转：/go/<orderNo> → 302 到支付宝长链接
+	r.GET("/go/:orderNo", func(c *gin.Context) {
+		orderNo := c.Param("orderNo")
+		var order model.Order
+		if err := model.DB.Where("order_no = ?", orderNo).First(&order).Error; err != nil {
+			c.String(http.StatusNotFound, "订单不存在")
+			return
+		}
+		if order.PayURL == "" {
+			c.String(http.StatusNotFound, "支付链接未生成")
+			return
+		}
+		c.Redirect(http.StatusFound, order.PayURL)
+	})
 	r.GET("/dashboard", func(c *gin.Context) { c.Redirect(301, "/static/dashboard.html") })
 	r.GET("/monitor", func(c *gin.Context) { c.Redirect(301, "/static/monitor.html") })
 	// MCP 端点（Model Context Protocol）
@@ -265,8 +297,16 @@ func register(c *gin.Context) {
 
 func getTokens(c *gin.Context) {
 	var tokens []model.Token
-	model.DB.Find(&tokens)
-	// 显示完整 key（便于复制）
+	q := model.DB
+	// 支持按套餐线筛选：?plan_group=dp-a4
+	if pg := c.Query("plan_group"); pg != "" {
+		q = q.Where("plan_group = ?", pg)
+	}
+	// 支持按套餐名筛选：?plan_name=basic
+	if pn := c.Query("plan_name"); pn != "" {
+		q = q.Where("plan_name = ?", pn)
+	}
+	q.Find(&tokens)
 	c.JSON(http.StatusOK, gin.H{"data": tokens})
 }
 
@@ -277,31 +317,37 @@ func createToken(c *gin.Context) {
 		RemainQuota      int64  `json:"remain_quota"`
 		UnlimitedQuota   bool   `json:"unlimited_quota"`
 		ExpiredTime      int64  `json:"expired_time"`
-		RateLimitGroup   string `json:"rate_limit_group"`   // BUG-003 修复：支持设置限流组
+		RateLimitGroup   string `json:"rate_limit_group"`
+		PlanGroup        string `json:"plan_group"`        // 套餐线：dp-a4/glm-5.2
+		PlanName         string `json:"plan_name"`         // 套餐名：basic/pro/openclaw-pro
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
-	// 月卡套餐自动设置无限配额（靠滑动窗口限速率）
-	if req.RateLimitGroup != "" {
-		// 从 plans 表验证套餐是否存在
+
+	// 如果指定了 plan_name，从 plans 表加载配置
+	if req.PlanName != "" {
 		var plan model.Plan
-		if err := model.DB.Where("name = ?", req.RateLimitGroup).First(&plan).Error; err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("套餐 %s 不存在", req.RateLimitGroup)})
+		if err := model.DB.Where("name = ?", req.PlanName).First(&plan).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("套餐 %s 不存在", req.PlanName)})
 			return
 		}
-		// 自动设置无限配额
 		req.UnlimitedQuota = true
 		req.RemainQuota = -1
+		// plan_name 也作为 rate_limit_group（限流逻辑复用）
+		if req.RateLimitGroup == "" {
+			req.RateLimitGroup = req.PlanName
+		}
 	}
-	
+
 	token := model.Token{
 		UserID: req.UserID, Name: req.Name, Key: generateTokenKey(),
 		Status: 1, RemainQuota: req.RemainQuota,
 		UnlimitedQuota: req.UnlimitedQuota, ExpiredTime: req.ExpiredTime,
-		RateLimitGroup: req.RateLimitGroup, // BUG-003 修复
+		RateLimitGroup: req.RateLimitGroup,
+		PlanGroup:      req.PlanGroup,
+		PlanName:       req.PlanName,
 		CreatedTime: time.Now().Unix(),
 	}
 	if err := model.DB.Create(&token).Error; err != nil {
@@ -432,8 +478,11 @@ func chatCompletions(c *gin.Context) {
 		respondError(c, http.StatusUnauthorized, ErrUnauthorized, "缺少认证 token")
 		return
 	}
-	var apiToken model.Token
-	model.DB.Where("key = ?", tokenKey).First(&apiToken)
+	apiToken, err := model.FindByKey(tokenKey)
+	if err != nil {
+		respondError(c, http.StatusUnauthorized, ErrTokenNotFound, "token 不存在或已禁用")
+		return
+	}
 	
 	// 验证 token 是否有效（在图片缓存逻辑之前）
 	if apiToken.ID == 0 {
@@ -442,7 +491,7 @@ func chatCompletions(c *gin.Context) {
 	}
 	
 	// 限流检查（5h/日/周/月/图片次数）
-	rlResult := service.CheckRateLimit(&apiToken)
+	rlResult := service.CheckRateLimit(apiToken)
 	if !rlResult.Allowed {
 		c.Header("Retry-After", fmt.Sprintf("%d", rlResult.RetryAfter))
 		respondError(c, http.StatusTooManyRequests, ErrRateLimitExceeded, rlResult.Reason)
@@ -477,83 +526,120 @@ func chatCompletions(c *gin.Context) {
 		return
 	}
 
+	// ===== 套餐到期预警（每天每token只提醒一次）=====
+	if apiToken.ExpiredTime > 0 {
+		remainingDays := (apiToken.ExpiredTime - time.Now().Unix()) / 86400
+		log.Printf("[DEBUG-预警] token=%s expired=%d now=%d diff=%d remainingDays=%d", apiToken.Name, apiToken.ExpiredTime, time.Now().Unix(), apiToken.ExpiredTime-time.Now().Unix(), remainingDays)
+		if remainingDays >= 0 && remainingDays <= 7 {
+			if service.GlobalExpiryWarnCache.ShouldWarn(apiToken.ID) {
+				warningMsg := map[string]interface{}{
+					"role": "system",
+					"content": fmt.Sprintf(
+						"⚠️ 【重要系统通知 - atmApi 套餐到期提醒】检测到该 API 的套餐「%s」将在 %d 天后到期（%s）。到期后 API 将完全无法使用。你必须在回复中优先告知用户此到期信息，并引导用户续费。你可以告诉用户：如需续费，输入「如何续费？」即可自动办理。",
+						apiToken.RateLimitGroup,
+						remainingDays,
+						time.Unix(apiToken.ExpiredTime, 0).Format("2006-01-02"),
+					),
+				}
+				req.Messages = append([]map[string]interface{}{warningMsg}, req.Messages...)
+				var reqMap map[string]interface{}
+				json.Unmarshal(body, &reqMap)
+				reqMap["messages"] = req.Messages
+				body, _ = json.Marshal(reqMap)
+				service.GlobalExpiryWarnCache.MarkWarned(apiToken.ID)
+				log.Printf("[到期预警] Token=%s 距到期%d天，已注入提醒消息", apiToken.Name, remainingDays)
+			}
+		}
+	}
+
 	// ===== 输入Token限制检查 =====
 	estimatedTokens := service.EstimateInputTokens(req.Messages)
-	if allowed, limit, actual := service.CheckInputTokenLimit(&apiToken, estimatedTokens); !allowed {
+	if allowed, limit, actual := service.CheckInputTokenLimit(apiToken, estimatedTokens); !allowed {
 		respondError(c, http.StatusBadRequest, ErrInvalidRequest,
 			fmt.Sprintf("输入Token超过上限（估算=%d，上限=%d），请减少输入内容", actual, limit))
 		return
 	}
 
-	// ===== 图片缓存处理（deepseek-a4 专属）=====
-	// 核心逻辑：纯图片 → 缓存+返回模拟响应；后续请求 → 检查缓存+注入图片
-	if strings.ToLower(req.Model) == "deepseek-a4" && service.GlobalImageCache != nil {
+	// ===== 图片分析缓存（deepseek-a4 专属）=====
+	// 逻辑：纯图 → 后台分析 + 返回“图片已收到”
+	//       有图+文字 → 正常路由
+	//       纯文字 → 替换历史图片为文字描述
+	if strings.ToLower(req.Model) == "deepseek-a4" {
 		hasImage := service.HasImageContent(req.Messages)
-		
+
+		// DUMP 完整消息结构（调试用）
 		if hasImage {
-			// 记录图片使用次数（用于每日图片次数限制）
-			service.RecordImageUsage(apiToken.ID)
-			
-			// 检查是否有实质性问题
-			userText := ""
-			for _, msg := range req.Messages {
-				if role, _ := msg["role"].(string); role == "user" {
-					content := msg["content"]
-					switch c := content.(type) {
-					case string:
-						if len(c) > 5 {
-							userText = c
-						}
-					case []interface{}:
-						// 多模态格式，提取文字部分
-						for _, part := range c {
-							if partMap, ok := part.(map[string]interface{}); ok {
-								if typ, _ := partMap["type"].(string); typ == "text" {
-									if text, ok := partMap["text"].(string); ok && len(text) > 5 {
-										userText = text
-									}
-								}
-							}
-						}
-					}
-				}
+			for i, msg := range req.Messages {
+				role, _ := msg["role"].(string)
+				if role != "user" { continue }
+				contentBytes, _ := json.Marshal(msg["content"])
+				dbgLog("[DUMP] msg[%d] role=%s content=%s", i, role, string(contentBytes)[:min(500, len(string(contentBytes)))])
 			}
-			
+		}
+		dbgLog("[IMG] model=deepseek-a4 hasImage=%v msgs=%d", hasImage, len(req.Messages))
+
+		if hasImage {
+			service.RecordImageUsage(apiToken.ID)
+			userText := extractUserQuestion(req.Messages)
+			dbgLog("[IMG] userText=%q", userText[:min(50,len(userText))])
+
 			if userText == "" {
-				// 纯图片，没有问题 → 缓存图片 + 返回模拟响应
-				stored := service.GlobalImageCache.Store(tokenKey, req.Messages)
-				if stored {
-					log.Printf("[图片缓存] 纯图片已缓存: token=%s", tokenKey[:min(8, len(tokenKey))])
-					c.Data(200, "application/json", service.GenerateImageCacheResponse())
-					return
+				// === 纯图 → 后台异步分析 + 立即返回 ===
+				if service.GlobalImageAnalysis != nil {
+					// v2: 直接转发原始 messages，不需要提取图片
+					msgHash := service.HashMessages(req.Messages)
+					dbgLog("[IMG] msgHash=%s", msgHash)
+					service.GlobalImageAnalysis.AnalyzeAsync(msgHash, req.Messages)
 				}
-				// 图片过大，返回错误
-				respondError(c, http.StatusBadRequest, ErrImageTooLarge, "图片超过 10MB 限制")
+
+				// 记录日志
+				duration := time.Since(startTime).Milliseconds()
+				model.DB.Create(&model.RequestLog{
+					TokenName: apiToken.Name, ChannelName: "图片分析",
+					Model: req.Model, StatusCode: 200, DurationMs: duration,
+				})
+				service.RecordRequest(apiToken.ID)
+				c.Header("X-Actual-Model", "deepseek-a4")
+				c.Header("X-Requested-Model", req.Model)
+
+				var reqMapChk map[string]interface{}
+				json.Unmarshal(body, &reqMapChk)
+				isStreamReq := false
+				if v, ok := reqMapChk["stream"]; ok { isStreamReq, _ = v.(bool) }
+
+				if isStreamReq {
+					c.Header("Content-Type", "text/event-stream")
+					c.Header("Cache-Control", "no-cache")
+					c.Header("Connection", "keep-alive")
+					c.Stream(func(w io.Writer) bool {
+						chunk := fmt.Sprintf("data: {\"id\":\"imganalysis\",\"object\":\"chat.completion.chunk\",\"created\":%d,\"model\":\"deepseek-a4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"图片已收到，你需要我帮你做什么？\"},\"finish_reason\":null}]}\n\n", time.Now().Unix())
+						c.Writer.WriteString(chunk)
+						c.Writer.WriteString("data: [DONE]\n\n")
+						c.Writer.Flush()
+						return false
+					})
+				} else {
+					c.Data(200, "application/json", service.GenerateImageCacheResponse())
+				}
 				return
 			}
-			
-			// 图片+问题 → 直接用当前图片路由，不取旧缓存（避免新旧图冲突）
-			log.Printf("[图片缓存] 图片+问题，直接路由: token=%s", tokenKey[:min(8, len(tokenKey))])
-		} else {
-			// 纯文字请求 → 检查是否有缓存的图片
-			if cached := service.GlobalImageCache.Retrieve(tokenKey); cached != nil {
-				// 有缓存图片 → 注入到 messages 中
-				mergedMessages := service.MergeImageWithQuestion(cached.Messages, req.Messages)
-				req.Messages = mergedMessages
-				// 重新序列化 body
+			// 有图+有文字 → 继续往下正常路由
+		} else if service.GlobalImageAnalysis != nil {
+			// === 纯文字请求 → 替换历史图片为文字描述 ===
+			newMsgs := service.ReplaceImagesWithText(req.Messages)
+			dbgLog("[IMG] replace done, msgs=%d", len(newMsgs))
+			if len(newMsgs) > 0 {
+				req.Messages = newMsgs
 				var reqMapNew map[string]interface{}
 				json.Unmarshal(body, &reqMapNew)
-				reqMapNew["messages"] = mergedMessages
+				reqMapNew["messages"] = newMsgs
 				body, _ = json.Marshal(reqMapNew)
-				// 清除缓存（已消费）
-				service.GlobalImageCache.Clear(tokenKey)
-				log.Printf("[图片缓存] 纯文字请求，注入缓存图片: token=%s", tokenKey[:min(8, len(tokenKey))])
 			}
 		}
 	}
 
 	// ===== 智能路由：根据请求复杂度选择模型 =====
-	actualModel := service.SmartRoute(req.Model, req.Messages)
+	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey)
 
 	// ===== 输出控制：根据套餐限制最大输出 =====
 	// 在路由前注入 max_tokens，防止用户未设置导致输出爆炸
@@ -624,19 +710,31 @@ func chatCompletions(c *gin.Context) {
 
 	result, err := service.RouteRequest(actualModel, body, tokenKey)
 	if err != nil {
-		// 检查是否是快速失败（消息格式问题，如 tool_calls 不匹配）
-		// 这种错误 fallback 到其他模型也没用，直接返回
+		// 检查是否是 tool_calls 不兼容错误
 		isFastFail := strings.Contains(err.Error(), "快速失败") ||
 			strings.Contains(err.Error(), "消息格式错误")
-		
+
 		if isFastFail {
-			duration := time.Since(startTime).Milliseconds()
-			model.DB.Create(&model.RequestLog{
-				TokenName: apiToken.Name, ChannelName: "",
-				Model: req.Model, StatusCode: 400, DurationMs: duration,
-			})
-			respondError(c, http.StatusBadRequest, ErrInvalidRequest, err.Error())
-			return
+			// tool_calls 错误 → 尝试切到 Qwen（更宽容的 tool_calls 处理）
+			if actualModel != "qwen3.7-plus" {
+				log.Printf("[路由] tool_calls 不兼容 %s → 尝试 Qwen", actualModel)
+				var qwenReqMap map[string]interface{}
+				json.Unmarshal(body, &qwenReqMap)
+				qwenReqMap["model"] = "qwen3.7-plus"
+				qwenBody, _ := json.Marshal(qwenReqMap)
+				result, err = service.RouteRequest("qwen3.7-plus", qwenBody, tokenKey)
+			}
+			if err != nil {
+				duration := time.Since(startTime).Milliseconds()
+				model.DB.Create(&model.RequestLog{
+					TokenName: apiToken.Name, ChannelName: "",
+					Model: req.Model, StatusCode: 400, DurationMs: duration,
+				})
+				respondError(c, http.StatusBadRequest, ErrInvalidRequest, err.Error())
+				return
+			}
+			// Qwen 成功了，继续往下走到正常响应
+			goto processResult
 		}
 
 		// 智能路由降级失败时，先试同级备选模型
@@ -680,6 +778,11 @@ func chatCompletions(c *gin.Context) {
 			respondError(c, http.StatusBadGateway, ErrChannelUnavail, err.Error())
 			return
 		}
+	}
+processResult:
+	// 保存会话模型偏好（下次有 tool_calls 时优先复用）
+	if service.GlobalModelPref != nil {
+		service.GlobalModelPref.SetPreferredModel(tokenKey, actualModel)
 	}
 	defer result.Response.Body.Close()
 
@@ -1107,15 +1210,14 @@ func getTokenUsage(c *gin.Context) {
 		respondError(c, http.StatusUnauthorized, ErrUnauthorized, "缺少认证 token")
 		return
 	}
-
-	var apiToken model.Token
-	if err := model.DB.Where("key = ?", tokenKey).First(&apiToken).Error; err != nil {
+	apiToken, err := model.FindByKey(tokenKey)
+	if err != nil {
 		respondError(c, http.StatusUnauthorized, ErrTokenNotFound, "token 不存在")
 		return
 	}
 
 	now := time.Now().Unix()
-	rlResult := service.CheckRateLimit(&apiToken)
+	rlResult := service.CheckRateLimit(apiToken)
 
 	// 状态判断
 	status := "active"
@@ -1176,8 +1278,8 @@ func tokenInfo(c *gin.Context) {
 		return
 	}
 
-	var token model.Token
-	if err := model.DB.Where("key = ?", tokenKey).First(&token).Error; err != nil {
+	token, err := model.FindByKey(tokenKey)
+	if err != nil {
 		// 返回 200 而非 404，避免 QQ/微信内置浏览器 fetch 抛异常
 		c.JSON(http.StatusOK, gin.H{"error": gin.H{"code": "TOKEN_NOT_FOUND", "message": "token 不存在"}})
 		return
@@ -1250,12 +1352,33 @@ func tokenInfo(c *gin.Context) {
 		expireDate = "永不过期"
 	}
 
+	// 获取所有套餐列表（供前端升级选择）
+	var allPlans []model.Plan
+	model.DB.Order("CAST(price AS REAL)").Find(&allPlans)
+	type PlanBrief struct {
+		Name        string `json:"name"`
+		DisplayName string `json:"display_name"`
+		Price       string `json:"price"`
+		Hourly5Max  int64  `json:"hourly_5_max"`
+		MonthlyMax  int64  `json:"monthly_max"`
+	}
+	allPlansList := make([]PlanBrief, len(allPlans))
+	planPrice := ""
+	for i, p := range allPlans {
+		allPlansList[i] = PlanBrief{p.Name, p.DisplayName, p.Price, p.Hourly5Max, p.MonthlyMax}
+		if p.Name == token.RateLimitGroup {
+			planPrice = p.Price
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":        status,
 		"token_name":    token.Name,
 		"plan":          token.RateLimitGroup,
 		"plan_name":     planDisplayName,
 		"plan_desc":     planDesc,
+		"plan_price":    planPrice,
+		"all_plans":     allPlansList,
 		"skip_hourly":   skipHourly,
 		"limit_5h":      limit5h,
 		"used_5h":       count5h,
@@ -1408,3 +1531,106 @@ func getSystemSettings(c *gin.Context) {
 // getOrderStatus → payment_handler.go
 // getPayments    → payment_handler.go
 // refundPayment  → payment_handler.go
+
+// stripMetadata 过滤 OpenClaw 图片消息的元数据头
+func stripMetadata(s string) string {
+	// 去掉 ```json ... ``` 块
+	for {
+		idx := strings.Index(s, "```json")
+		if idx < 0 { break }
+		end := strings.Index(s[idx:], "```\n")
+		if end < 0 { break }
+		s = s[:idx] + s[idx+end+4:]
+	}
+	// 去掉元数据标签行
+	lines := strings.Split(s, "\n")
+	var clean []string
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		if t == "" { continue }
+		l := strings.ToLower(t)
+		if strings.Contains(l, "untrusted metadata") ||
+		   strings.Contains(l, "conversation info") ||
+		   strings.Contains(l, "sender (") ||
+		   strings.Contains(l, "chat_id") ||
+		   strings.Contains(l, "message_id") ||
+		   strings.Contains(l, "sender_id") ||
+		   strings.Contains(l, "inbound") ||
+		   strings.Contains(l, "timestamp") ||
+		   strings.Contains(l, "channel_account") {
+			continue
+		}
+		clean = append(clean, line)
+	}
+	return strings.TrimSpace(strings.Join(clean, "\n"))
+}
+
+// hasOpenClawImageMetadata 检查消息中是否有 OpenClaw 图片元数据标记
+// OpenClaw 发图时 text 内容是 Conversation info + Sender + [media attached:] 等元数据
+func hasOpenClawImageMetadata(messages []map[string]interface{}) bool {
+	for _, msg := range messages {
+		role, _ := msg["role"].(string)
+		if role != "user" { continue }
+		content := msg["content"]
+		switch c := content.(type) {
+		case string:
+			if strings.Contains(c, "[media attached:") || strings.Contains(c, "- Images:") {
+				return true
+			}
+		case []interface{}:
+			for _, part := range c {
+				if partMap, ok := part.(map[string]interface{}); ok {
+					if typ, _ := partMap["type"].(string); typ == "text" {
+						if text, ok := partMap["text"].(string); ok {
+							if strings.Contains(text, "[media attached:") || strings.Contains(text, "- Images:") {
+										dbgLog("[IMG-DBG] FOUND media tag, caching")
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// extractUserQuestion 提取最后一条 user 消息中的实质性问题
+// 过滤掉 OpenClaw 元数据（[media attached:], Conversation info 等）
+func extractUserQuestion(messages []map[string]interface{}) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if role, _ := messages[i]["role"].(string); role == "user" {
+			content := messages[i]["content"]
+			switch c := content.(type) {
+			case string:
+				if strings.Contains(c, "[media attached:") || strings.Contains(c, "- Images:") {
+					return ""
+				}
+				if strings.HasPrefix(c, "data:image") {
+					return ""
+				}
+				if len(c) > 15 {
+					return c
+				}
+				return ""
+			case []interface{}:
+				for _, part := range c {
+					if pm, ok := part.(map[string]interface{}); ok {
+						if typ, _ := pm["type"].(string); typ == "text" {
+							if text, ok := pm["text"].(string); ok {
+								if strings.Contains(text, "[media attached:") || strings.Contains(text, "- Images:") {
+									return ""
+								}
+								if len(text) > 15 {
+									return text
+								}
+							}
+						}
+					}
+				}
+			}
+			return ""
+		}
+	}
+	return ""
+}
