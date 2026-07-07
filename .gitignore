@@ -36,3 +36,10 @@ logs/
 # Environment
 .env
 .env.local
+
+# Additional
+alipay.env
+.env.alipay
+backups/
+atmapi-test
+main

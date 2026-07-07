@@ -78,7 +78,7 @@ var modelRouter = map[string][]ModelRouteEntry{
 	// 这里的路由表是兜底，万一 SmartRoute 没有命中（不太可能）
 	"deepseek-a4": {
 		{ChannelID: 1, ModelOverride: "qwen3.7-plus", Priority: 100},    // 多模态
-		{ChannelID: 17, ModelOverride: "deepseek-v4-pro", Priority: 90}, // 深度推理
+		{ChannelID: 2, ModelOverride: "deepseek-v4-pro", Priority: 90}, // 深度推理（同 DeepSeek 渠道）
 		{ChannelID: 2, ModelOverride: "deepseek-v4-flash", Priority: 80}, // 默认
 	},
 }
@@ -346,32 +346,31 @@ func TestChannel(channel model.Channel) (int, error) {
 
 // validateToken 验证 token
 func validateToken(key string) (*model.Token, error) {
-	var token model.Token
-	result := model.DB.Where("key = ? AND status = ?", key, 1).First(&token)
-	if result.Error != nil {
+	tk, err := model.FindByKey(key)
+	if err != nil {
 		return nil, fmt.Errorf("token 不存在或已禁用")
 	}
 
 	// 首次使用激活逻辑：所有 token 首次使用都设置过期时间
-	if token.ActivatedAt == 0 {
+	if tk.ActivatedAt == 0 {
 		now := time.Now()
-		token.ActivatedAt = now.Unix()
+		tk.ActivatedAt = now.Unix()
 		// 过期时间 = 激活时刻 + 1个自然月
-		token.ExpiredTime = now.AddDate(0, 1, 0).Unix()
-		model.DB.Save(&token)
+		tk.ExpiredTime = now.AddDate(0, 1, 0).Unix()
+		model.DB.Save(tk)
 		log.Printf("[激活] token %s 首次使用，激活时间=%s，过期时间=%s", 
-			token.Name, 
+			tk.Name, 
 			now.Format("2006-01-02 15:04:05"),
 			now.AddDate(0, 1, 0).Format("2006-01-02 15:04:05"))
 	}
 
-	if token.ExpiredTime > 0 && time.Now().Unix() > token.ExpiredTime {
-		token.Status = 3
-		model.DB.Save(&token)
+	if tk.ExpiredTime > 0 && time.Now().Unix() > tk.ExpiredTime {
+		tk.Status = 3
+		model.DB.Save(tk)
 		return nil, fmt.Errorf("token 已过期")
 	}
 
-	return &token, nil
+	return tk, nil
 }
 
 // getChannelsForModel 获取支持指定模型的渠道列表

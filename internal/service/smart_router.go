@@ -1,6 +1,7 @@
 package service
 
 import (
+	"log"
 	"regexp"
 	"strings"
 )
@@ -15,11 +16,13 @@ func hasImageURL(text string) bool {
 }
 
 // SmartRoute 根据请求内容智能选择模型
-// 优先级：1. 图片消息 → qwen3.7-plus（多模态）
+// 优先级：0. 有 tool_calls/tool 消息 → 锁定模型（避免跨模型 tool_call 不兼容）
+//         1. 图片消息 → qwen3.7-plus（多模态）
 //         2. 纯文本：简单 → deepseek-v4-flash（便宜）
 //         3. 纯文本：复杂 → deepseek-v4-pro（深度推理）
 // 仅对 deepseek-a4 做智能路由，其他模型尊重用户选择
-func SmartRoute(requestedModel string, messages []map[string]interface{}) string {
+// tokenKey: 用于会话级模型偏好记忆（有 tool_calls 时优先复用上次模型）
+func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenKey string) string {
 	// 统一转小写
 	requestedModel = strings.ToLower(requestedModel)
 
@@ -28,9 +31,19 @@ func SmartRoute(requestedModel string, messages []map[string]interface{}) string
 		return requestedModel
 	}
 
-	// 检查有没有图片
-	if HasImageContent(messages) {
+	// 图片检测（只看用户消息）
+	hasImg := HasImageContent(messages)
+	if hasImg {
 		return "qwen3.7-plus"
+	}
+
+	// 🧠 会话模型偏好：有 tool_calls 时优先复用上次模型
+	// 避免跨模型切换导致 tool_calls 格式不兼容
+	if hasToolCalls(messages) && GlobalModelPref != nil {
+		if preferred := GlobalModelPref.GetPreferredModel(tokenKey); preferred != "" {
+			log.Printf("[路由] tool_calls存在 → 复用偏好模型: %s", preferred)
+			return preferred
+		}
 	}
 
 	// 纯文本，分析复杂度
@@ -38,47 +51,59 @@ func SmartRoute(requestedModel string, messages []map[string]interface{}) string
 
 	switch complexity {
 	case "simple":
-		return "deepseek-v4-flash" // 便宜
+		return "deepseek-v4-flash"
 	case "complex":
-		return "deepseek-v4-pro"   // 深度推理
+		return "deepseek-v4-pro"
 	default:
-		return "deepseek-v4-flash" // 默认用 Flash
+		return "deepseek-v4-flash"
 	}
 }
 
-// HasImageContent 检查消息中是否包含图片（base64 或 URL）
-// 检测方式：
-// 1. base64 data:image/...
-// 2. 文本中包含图片 URL（http(s)://...xxx.png）
-// 3. 多模态格式中 type=image_url 或 type=image
-func HasImageContent(messages []map[string]interface{}) bool {
+// hasToolCalls 检查消息中是否有进行中的工具调用
+func hasToolCalls(messages []map[string]interface{}) bool {
 	for _, msg := range messages {
-		content, ok := msg["content"]
-		if !ok {
+		role, _ := msg["role"].(string)
+		if role == "tool" || role == "assistant" {
+			if _, ok := msg["tool_calls"]; ok && role == "assistant" {
+				return true
+			}
+			if role == "tool" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// HasImageContent 检查**最后一条 user 消息**中是否包含图片
+// 不扫描历史消息，避免旧的图片标记影响新请求的路由
+func HasImageContent(messages []map[string]interface{}) bool {
+	// 从后往前找最后一条 user 消息
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		role, _ := msg["role"].(string)
+		if role != "user" {
 			continue
 		}
-
+		// 找到最后一条 user 消息，只检查这一条
+		content, ok := msg["content"]
+		if !ok {
+			return false
+		}
 		switch c := content.(type) {
 		case string:
-			// 检查 base64 图片
 			if strings.Contains(c, "data:image") {
 				return true
 			}
-			// 检查图片 URL（.png/.jpg/.jpeg/.gif/.webp/.svg）
 			if hasImageURL(c) {
 				return true
 			}
 		case []interface{}:
-			// 检查多模态格式：[{"type":"text","text":"..."},{"type":"image_url","image_url":{"url":"..."}}]
 			for _, part := range c {
 				if partMap, ok := part.(map[string]interface{}); ok {
-					if typ, ok := partMap["type"].(string); ok && typ == "image_url" {
+					if typ, _ := partMap["type"].(string); typ == "image_url" || typ == "image" {
 						return true
 					}
-					if typ, ok := partMap["type"].(string); ok && typ == "image" {
-						return true
-					}
-					// 检查 image_url 对象里是否有 data:image base64
 					if imageURL, ok := partMap["image_url"].(map[string]interface{}); ok {
 						if url, ok := imageURL["url"].(string); ok {
 							if strings.Contains(url, "data:image") {
@@ -89,10 +114,10 @@ func HasImageContent(messages []map[string]interface{}) bool {
 				}
 			}
 		}
+		return false
 	}
 	return false
 }
-
 // analyzeComplexityV2 分析请求复杂度
 func analyzeComplexityV2(messages []map[string]interface{}) string {
 	if len(messages) == 0 {
@@ -164,6 +189,37 @@ func analyzeComplexityV2(messages []map[string]interface{}) string {
 	}
 
 	return "complex"
+}
+
+// detectLastToolCallModel 检测消息历史中是否有 tool_calls，并判断来源模型
+// DeepSeek tool_call ID 格式: call_xxxxxxxx（"call_"前缀 + 7+位）
+// Qwen tool_call ID 格式: 纯数字 + 字母短串，通常无 "call_" 前缀
+func detectLastToolCallModel(messages []map[string]interface{}) string {
+	for _, msg := range messages {
+		role, _ := msg["role"].(string)
+
+		if role == "assistant" {
+			if tc, ok := msg["tool_calls"]; ok && tc != nil {
+				if tcList, ok := tc.([]interface{}); ok && len(tcList) > 0 {
+					if tcMap, ok := tcList[0].(map[string]interface{}); ok {
+						if id, ok := tcMap["id"].(string); ok && id != "" {
+							if strings.HasPrefix(id, "call_") && len(id) >= 10 {
+								return "deepseek-v4-pro"
+							}
+						}
+					}
+					// 默认锁 deepseek-v4-pro（1M 上下文，更快更稳）
+					return "deepseek-v4-pro"
+				}
+			}
+		}
+
+		if role == "tool" {
+			// tool 消息 → 有工具调用，锁 deepseek-v4-pro
+			return "deepseek-v4-pro"
+		}
+	}
+	return ""
 }
 
 // GetAlternativeModels 获取模型降级失败时的同级备选模型

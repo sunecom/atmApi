@@ -43,6 +43,12 @@ func main() {
 	// 初始化图片缓存（TTL 5分钟）
 	service.InitImageCache(5)
 
+	// 初始化模型偏好缓存（TTL 5分钟）
+	service.InitModelPreferenceCache(5)
+
+	// 初始化图片分析缓存
+	service.InitImageAnalysisCache()
+
 	// 启动定时清理 rate_limits 过期记录（每天凌晨 3 点清理 7 天前的数据）
 	go func() {
 		for {

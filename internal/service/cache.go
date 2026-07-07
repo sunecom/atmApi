@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -126,4 +127,42 @@ func GetCacheStats() map[string]interface{} {
 		}
 	}
 	return GlobalCache.Stats()
+}
+
+// ===== 套餐到期预警缓存（每天每token只提醒一次）=====
+
+type ExpiryWarnCache struct {
+	entries map[string]time.Time
+	mu      sync.RWMutex
+}
+
+var GlobalExpiryWarnCache = &ExpiryWarnCache{
+	entries: make(map[string]time.Time),
+}
+
+// ShouldWarn 检查某 token 今天是否应该发送到期提醒
+func (c *ExpiryWarnCache) ShouldWarn(tokenID uint) bool {
+	c.mu.RLock()
+	key := fmt.Sprintf("%d_%s", tokenID, time.Now().Format("2006-01-02"))
+	_, exists := c.entries[key]
+	c.mu.RUnlock()
+	
+	// 清理过期条目（超过2天的）
+	c.mu.Lock()
+	for k, t := range c.entries {
+		if time.Since(t) > 48*time.Hour {
+			delete(c.entries, k)
+		}
+	}
+	c.mu.Unlock()
+	
+	return !exists
+}
+
+// MarkWarned 标记某 token 今天已发送提醒
+func (c *ExpiryWarnCache) MarkWarned(tokenID uint) {
+	c.mu.Lock()
+	key := fmt.Sprintf("%d_%s", tokenID, time.Now().Format("2006-01-02"))
+	c.entries[key] = time.Now()
+	c.mu.Unlock()
 }

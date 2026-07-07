@@ -134,9 +134,11 @@
       gap: 20px;
     }
     .span-12 { grid-column: span 12; }
+    .span-9 { grid-column: span 9; }
     .span-8 { grid-column: span 8; }
     .span-6 { grid-column: span 6; }
     .span-4 { grid-column: span 4; }
+    .span-3 { grid-column: span 3; }
     
     /* Tables */
     table {
@@ -325,7 +327,7 @@
       <input id="loginPass" type="password" placeholder="密码" />
       <button class="btn btn-primary" onclick="doLogin()" style="margin-top:8px;">登录</button>
       <div id="loginErr" class="muted" style="margin-top:12px;color:var(--danger);font-size:12px;"></div>
-      <div class="login-hint" style="margin-top:20px;">请使用管理员账号登录</div>
+      <div class="login-hint" style="margin-top:20px;">请使用管理员账号登录 <span style="opacity:0.3;font-size:10px;">v0706.1618</span></div>
       <div style="text-align:center;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);">🦐 <a href="https://www.aitomoney.online" target="_blank" style="color:var(--text-main);text-decoration:none;">AiToMoney</a> 出品</div>
     </div>
   </div>
@@ -377,14 +379,27 @@
             <pre id="modelsOut">等待加载…</pre>
           </div>
           <div class="card span-4">
-            <div class="card-title">快速说明</div>
-            <div class="muted" style="font-size:12px;line-height:1.8;">
-              - 根路径是后台首页<br/>
-              - /health 是健康检查<br/>
-              - /api/v1/models 是模型列表<br/>
-              - chat/completions 支持 fallback<br/>
-              - 请求日志自动记录
+            <div class="card-title">套餐线路由</div>
+            <div style="font-size:12px;line-height:1.8;">
+              <div style="margin-bottom:10px;padding:8px;background:var(--bg-card2);border-radius:6px;">
+                <b style="color:var(--primary);">dp-a4</b>
+                <div class="muted" style="font-size:11px;">
+                  图片 → qwen3.7-plus<br/>
+                  简单文本 → deepseek-v4-flash<br/>
+                  复杂文本 → deepseek-v4-pro<br/>
+                  降级: qwen3.5-plus
+                </div>
+              </div>
+              <div class="muted" style="font-size:11px;">
+                glm-5.2 — 待配置路由规则
+              </div>
             </div>
+          </div>
+        </div>
+        <div class="grid" style="margin-top:16px;">
+          <div class="card span-12">
+            <div class="card-title">套餐线统计 <button class="btn btn-secondary btn-sm" onclick="loadPlanStats()" style="margin-left:8px;">刷新</button></div>
+            <div id="planStatsWrap" class="muted" style="font-size:12px;">等待加载…</div>
           </div>
         </div>
       </section>
@@ -429,12 +444,12 @@
 
       <section id="tab-tokens" class="tab hidden">
         <div class="grid">
-          <div class="card span-8">
+          <div class="card span-9">
             <div class="card-title">Token 列表</div>
-            <button class="btn btn-primary mb-4" onclick="loadTokens()">刷新列表</button> <input id="tokenSearch" placeholder="搜索 Token..." oninput="loadTokens()" style="width:200px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;" />
+            <button class="btn btn-primary mb-4" onclick="loadTokens()">刷新列表</button> <input id="tokenSearch" placeholder="搜索 Token..." oninput="loadTokens()" style="width:200px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;" /> <select id="planGroupFilter" onchange="loadTokens()" style="width:160px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;margin-left:8px;"><option value="">全部套餐线</option><option value="dp-a4">dp-a4 (DeepSeek A4)</option></select>
             <div id="tokensTableWrap" class="muted">等待加载…</div>
           </div>
-          <div class="card span-4">
+          <div class="card span-3">
             <div class="card-title">新建 / 编辑 Token</div>
             <div class="muted" style="font-size:11px;margin-bottom:8px;">编辑时自动填充表单，修改后点击创建保存。</div>
             <input id="tk_user_id" value="1" placeholder="用户 ID" />
@@ -671,6 +686,11 @@
       document.getElementById('tab-' + name).classList.remove('hidden');
       document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
+      // 自动加载对应数据
+      if (name === 'tokens') loadTokens();
+      if (name === 'channels') loadChannels();
+      if (name === 'users') loadUsers();
+      if (name === 'logs') loadLogs();
     }
 
     function openExternalTab(name, btn) {
@@ -839,40 +859,39 @@
     }
 
     function formatQuota(tk) {
-      // 有 rate_limit_group 的显示对应次数
-      const group = tk.rate_limit_group || '';
-      const groupMap = {
-        'basic': '500次/5小时',
-        'standard': '1000次/5小时',
-        'premium': '1500次/5小时',
-        'pro': '2000次/5小时',
-        'weekly': '40000次/周',
-        'trial': '100次/月'
-      };
-      if (groupMap[group]) return groupMap[group];
-      // 没有 rate_limit_group 的无限卡显示"无限"
+      // 月度套餐：显示 init_quota（月额度）
+      if (tk.plan_name && tk.init_quota > 0) {
+        return tk.init_quota.toLocaleString() + '次/月';
+      }
+      // 团队无限卡
       if (tk.unlimited_quota) return '无限';
+      // 子卡/体验卡：显示剩余
       return tk.remain_quota;
     }
 
     async function loadTokens() {
-      const res = await fetch('/api/v1/tokens', { headers: authHeaders() });
+      const pg = document.getElementById('planGroupFilter').value;
+      let url = '/api/v1/tokens';
+      if (pg) url += '?plan_group=' + encodeURIComponent(pg);
+      const res = await fetch(url, { headers: authHeaders() });
       if (res.status === 401) return setText('tokensTableWrap', '请先登录');
       const data = await safeJson(res);
       const rows = (data.data || []).map(tk => {
         const created = tk.created_time ? new Date(tk.created_time * 1000).toLocaleString() : '-';
         const expired = (() => {
-          // 有 rate_limit_group 的卡（月卡类）需要激活
           if (tk.rate_limit_group) {
             return tk.activated_at === 0 ? '未激活' : (tk.expired_time > 0 ? new Date(tk.expired_time * 1000).toLocaleString() : '永不过期');
           }
-          // 没有 rate_limit_group 的卡（团队卡等）不需要激活
           return tk.expired_time > 0 ? new Date(tk.expired_time * 1000).toLocaleString() : '永不过期';
         })();
+        const planBadge = tk.plan_group ? '<span style="background:var(--primary);color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;white-space:nowrap;">' + tk.plan_group + '</span>' : '<span class="muted">-</span>';
+        const planName = tk.plan_name || '<span class="muted">-</span>';
         return '<tr>' +
           '<td>' + tk.id + '</td>' +
           '<td>' + tk.name + '</td>' +
           '<td><code style="cursor:pointer;user-select:all;color:var(--primary-hover);" onclick="copyKey(\''+tk.key+'\')" title="点击复制">' + tk.key + '</code></td>' +
+          '<td>' + planBadge + '</td>' +
+          '<td>' + planName + '</td>' +
           '<td>' + formatQuota(tk) + '</td>' +
           '<td>' + expired + '</td>' +
           '<td>' + created + '</td>' +
@@ -882,7 +901,7 @@
           '</td>' +
         '</tr>';
       }).join('');
-      document.getElementById('tokensTableWrap').innerHTML = '<table><thead><tr><th>ID</th><th>名称</th><th>Key</th><th>配额</th><th>过期</th><th>创建</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7">暂无数据</td></tr>') + '</tbody></table>';
+      document.getElementById('tokensTableWrap').innerHTML = '<table><thead><tr><th>ID</th><th>名称</th><th>Key</th><th>套餐线</th><th>套餐名</th><th>配额</th><th>过期</th><th>创建</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">暂无数据</td></tr>') + '</tbody></table>';
     }
 
     function copyKey(key) {
@@ -944,6 +963,47 @@
       window._editingTokenId = null;
       document.getElementById('tk_name').value = '';
       loadTokens();
+    }
+
+    async function loadPlanStats() {
+      const res = await fetch('/api/v1/tokens', { headers: authHeaders() });
+      if (res.status === 401) return setText('planStatsWrap', '请先登录');
+      const data = await safeJson(res);
+      const tokens = data.data || [];
+      // 按 plan_group 分组统计
+      const groups = {};
+      tokens.forEach(tk => {
+        const pg = tk.plan_group || '(未分组)';
+        const pn = tk.plan_name || '-';
+        if (!groups[pg]) groups[pg] = {};
+        if (!groups[pg][pn]) groups[pg][pn] = { count: 0, total_quota: 0 };
+        groups[pg][pn].count++;
+        groups[pg][pn].total_quota += tk.init_quota || 0;
+      });
+      // 渲染
+      let html = '<table><thead><tr><th>套餐线</th><th>套餐名</th><th>Token 数</th><th>总月额度</th></tr></thead><tbody>';
+      Object.keys(groups).sort().forEach(pg => {
+        const plans = groups[pg];
+        let first = true;
+        let pgTotal = 0;
+        Object.keys(plans).forEach(pn => {
+          pgTotal += plans[pn].count;
+        });
+        Object.keys(plans).sort().forEach(pn => {
+          html += '<tr>';
+          if (first) {
+            html += '<td rowspan="' + Object.keys(plans).length + '"><b>' + pg + '</b> (' + pgTotal + ' tokens)</td>';
+            first = false;
+          }
+          html += '<td>' + pn + '</td>';
+          html += '<td>' + plans[pn].count + '</td>';
+          html += '<td>' + (plans[pn].total_quota > 0 ? plans[pn].total_quota.toLocaleString() + '次/月' : '-') + '</td>';
+          html += '</tr>';
+        });
+      });
+      html += '</tbody></table>';
+      if (!Object.keys(groups).length) html = '<span class="muted">暂无数据</span>';
+      document.getElementById('planStatsWrap').innerHTML = html;
     }
 
     async function loadUsers() {
