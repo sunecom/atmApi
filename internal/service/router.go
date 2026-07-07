@@ -298,7 +298,9 @@ func trySingleChannel(channel model.Channel, targetModel string, originalBody []
 	// 模型名替换：如果有 model_mapping 先用他，否则用目标模型名
 	mappedModel := applyModelMapping(channel.ModelMapping, targetModel)
 	limitedBody := limitTokenUsage(originalBody)
-	modifiedBody := replaceModelInRequest(limitedBody, mappedModel)
+	// 压缩大图（减少 coding 端点超时）
+	compressedBody := compressImagesInBody(limitedBody)
+	modifiedBody := replaceModelInRequest(compressedBody, mappedModel)
 
 	resp, err := sendToChannel(channel, modifiedBody)
 	if err != nil {
@@ -460,7 +462,12 @@ func sendToChannel(channel model.Channel, body []byte) (*http.Response, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+channel.Key)
-	client := &http.Client{Timeout: 30 * time.Second}
+	// 图片请求需要更长时间（qwen3.7-plus 处理大图可能要 60-90 秒）
+	timeout := 30 * time.Second
+	if strings.Contains(string(body), "image_url") || strings.Contains(string(body), "data:image") {
+		timeout = 90 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
 	return client.Do(req)
 }
 

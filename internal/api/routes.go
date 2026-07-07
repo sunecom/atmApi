@@ -673,36 +673,41 @@ func chatCompletions(c *gin.Context) {
 			// Qwen 成功了，继续往下走到正常响应
 			goto processResult
 		}
-		// 智能路由降级失败时，先试同级备选模型
-		alternatives := service.GetAlternativeModels(actualModel)
-		for _, altModel := range alternatives {
-			var altReqMap map[string]interface{}
-			if err := json.Unmarshal(body, &altReqMap); err == nil {
-				altReqMap["model"] = altModel
-				altBody, _ := json.Marshal(altReqMap)
-				result, err = service.RouteRequest(altModel, altBody, tokenKey)
-				if err == nil {
-					log.Printf("[路由] 降级 %s 失败，备选 %s 成功", actualModel, altModel)
-					break
+		// 图片请求失败后不 fallback 到非视觉模型（DeepSeek 不支持图片，必 400）
+		if !service.HasImageContent(req.Messages) {
+			// 智能路由降级失败时，先试同级备选模型
+			alternatives := service.GetAlternativeModels(actualModel)
+			for _, altModel := range alternatives {
+				var altReqMap map[string]interface{}
+				if err := json.Unmarshal(body, &altReqMap); err == nil {
+					altReqMap["model"] = altModel
+					altBody, _ := json.Marshal(altReqMap)
+					result, err = service.RouteRequest(altModel, altBody, tokenKey)
+					if err == nil {
+						log.Printf("[路由] 降级 %s 失败，备选 %s 成功", actualModel, altModel)
+						break
+					}
 				}
 			}
-		}
-		
-		// 备选也失败时，尝试用原始模型重试
-		if err != nil {
-			retryModel := req.Model
-			if actualModel != req.Model {
-				log.Printf("[路由] 备选均失败，尝试原始模型 %s", req.Model)
-			} else {
-				log.Printf("[路由] 原始模型 %s 失败，重试一次", req.Model)
-			}
 			
-			var retryReqMap map[string]interface{}
-			if err := json.Unmarshal(body, &retryReqMap); err == nil {
-				retryReqMap["model"] = retryModel
-				retryBody, _ := json.Marshal(retryReqMap)
-				result, err = service.RouteRequest(retryModel, retryBody, tokenKey)
+			// 备选也失败时，尝试用原始模型重试
+			if err != nil {
+				retryModel := req.Model
+				if actualModel != req.Model {
+					log.Printf("[路由] 备选均失败，尝试原始模型 %s", req.Model)
+				} else {
+					log.Printf("[路由] 原始模型 %s 失败，重试一次", req.Model)
+				}
+				
+				var retryReqMap map[string]interface{}
+				if err := json.Unmarshal(body, &retryReqMap); err == nil {
+					retryReqMap["model"] = retryModel
+					retryBody, _ := json.Marshal(retryReqMap)
+					result, err = service.RouteRequest(retryModel, retryBody, tokenKey)
+				}
 			}
+		} else {
+			log.Printf("[路由] 图片请求 %s 失败，跳过 fallback（非视觉模型不支持图片）", actualModel)
 		}
 		
 		if err != nil {
