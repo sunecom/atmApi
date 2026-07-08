@@ -223,17 +223,19 @@ func detectLastToolCallModel(messages []map[string]interface{}) string {
 }
 
 // GetAlternativeModels 获取模型降级失败时的同级备选模型
+// DeepSeek 有两个 key 做冗余，不需要跨模型到 qwen（避免 tool_calls 不兼容）
+// Qwen 图片通道需要视觉模型备选链
 func GetAlternativeModels(model string) []string {
 	switch model {
 	case "qwen3.7-plus":
-		// Qwen 备选
-		return []string{"qwen3.5-plus"}
+		// 图片通道备选链：3.7 → 3.6 → 3.5（都是视觉模型）
+		return []string{"qwen3.6-plus", "qwen3.5-plus"}
 	case "deepseek-v4-flash":
-		// Flash 备选
-		return []string{"qwen3.5-plus"}
+		// 已有两个 DS key 冗余，不需要跨模型备选
+		return nil
 	case "deepseek-v4-pro":
-		// Pro 备选
-		return []string{"qwen3.7-plus"}
+		// 已有两个 DS key 冗余，不需要跨模型备选
+		return nil
 	default:
 		return nil
 	}

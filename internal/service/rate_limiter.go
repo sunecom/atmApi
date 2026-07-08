@@ -262,3 +262,170 @@ func CleanOldRecords() {
 	model.DB.Where("created_at < ?", time.Now().Add(-31*24*time.Hour)).Delete(&model.ImageUsage{})
 	log.Printf("[限流] 清理31天前的限流记录和图片使用记录完成")
 }
+
+// ===== RPM 限流（每分钟请求数）=====
+// 内存级滑动窗口，防止突发打爆
+
+// RPMLimiter 每分钟请求数限制器
+type RPMLimiter struct {
+	mu       sync.Mutex
+	requests map[uint][]int64 // tokenID -> 请求时间戳列表
+}
+
+var GlobalRPMLimiter = &RPMLimiter{
+	requests: make(map[uint][]int64),
+}
+
+// CheckRPM 检查 RPM 是否超限
+// 返回 (是否允许, 当前RPM, 上限, 建议等待秒数)
+func (r *RPMLimiter) CheckRPM(tokenID uint, maxRPM int64) (bool, int64, int64, int64) {
+	if maxRPM <= 0 {
+		return true, 0, maxRPM, 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now().Unix()
+	windowStart := now - 60 // 1分钟窗口
+
+	// 清理过期记录
+	if reqs, ok := r.requests[tokenID]; ok {
+		validReqs := []int64{}
+		for _, ts := range reqs {
+			if ts > windowStart {
+				validReqs = append(validReqs, ts)
+			}
+		}
+		r.requests[tokenID] = validReqs
+	}
+
+	currentRPM := int64(len(r.requests[tokenID]))
+	if currentRPM >= maxRPM {
+		// 计算最早一条记录距今多久
+		var retryAfter int64 = 60
+		if len(r.requests[tokenID]) > 0 {
+			oldest := r.requests[tokenID][0]
+			retryAfter = 60 - (now - oldest) + 1
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+		}
+		return false, currentRPM, maxRPM, retryAfter
+	}
+
+	return true, currentRPM, maxRPM, 0
+}
+
+// RecordRPM 记录一次请求
+func (r *RPMLimiter) RecordRPM(tokenID uint) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now().Unix()
+	r.requests[tokenID] = append(r.requests[tokenID], now)
+}
+
+// CleanRPM 清理过期记录（定期调用）
+func (r *RPMLimiter) CleanRPM() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	windowStart := time.Now().Unix() - 60
+	for tokenID, reqs := range r.requests {
+		validReqs := []int64{}
+		for _, ts := range reqs {
+			if ts > windowStart {
+				validReqs = append(validReqs, ts)
+			}
+		}
+		if len(validReqs) == 0 {
+			delete(r.requests, tokenID)
+		} else {
+			r.requests[tokenID] = validReqs
+		}
+	}
+}
+
+// ===== 渠道维度限流 =====
+// 保护特定渠道不被打爆（如 qwen3.7 图片请求）
+
+// ChannelLimiter 渠道维度限流器
+type ChannelLimiter struct {
+	mu       sync.Mutex
+	requests map[string][]int64 // "tokenID:channelName" -> 请求时间戳列表
+}
+
+var GlobalChannelLimiter = &ChannelLimiter{
+	requests: make(map[string][]int64),
+}
+
+// CheckChannelRPM 检查渠道维度 RPM 是否超限
+// 返回 (是否允许, 当前RPM, 上限, 建议等待秒数)
+func (c *ChannelLimiter) CheckChannelRPM(tokenID uint, channelName string, maxChannelRPM int64) (bool, int64, int64, int64) {
+	if maxChannelRPM <= 0 {
+		return true, 0, maxChannelRPM, 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	key := fmt.Sprintf("%d:%s", tokenID, channelName)
+	now := time.Now().Unix()
+	windowStart := now - 60
+
+	// 清理过期记录
+	if reqs, ok := c.requests[key]; ok {
+		validReqs := []int64{}
+		for _, ts := range reqs {
+			if ts > windowStart {
+				validReqs = append(validReqs, ts)
+			}
+		}
+		c.requests[key] = validReqs
+	}
+
+	currentRPM := int64(len(c.requests[key]))
+	if currentRPM >= maxChannelRPM {
+		var retryAfter int64 = 60
+		if len(c.requests[key]) > 0 {
+			oldest := c.requests[key][0]
+			retryAfter = 60 - (now - oldest) + 1
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+		}
+		return false, currentRPM, maxChannelRPM, retryAfter
+	}
+
+	return true, currentRPM, maxChannelRPM, 0
+}
+
+// RecordChannelRPM 记录一次渠道请求
+func (c *ChannelLimiter) RecordChannelRPM(tokenID uint, channelName string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	key := fmt.Sprintf("%d:%s", tokenID, channelName)
+	now := time.Now().Unix()
+	c.requests[key] = append(c.requests[key], now)
+}
+
+// CleanChannelRPM 清理过期记录
+func (c *ChannelLimiter) CleanChannelRPM() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	windowStart := time.Now().Unix() - 60
+	for key, reqs := range c.requests {
+		validReqs := []int64{}
+		for _, ts := range reqs {
+			if ts > windowStart {
+				validReqs = append(validReqs, ts)
+			}
+		}
+		if len(validReqs) == 0 {
+			delete(c.requests, key)
+		} else {
+			c.requests[key] = validReqs
+		}
+	}
+}

@@ -13,6 +13,8 @@ type Plan struct {
 	WeeklyMax    int64     `gorm:"default:0" json:"weekly_max"`               // 每周配额，0=不限
 	MonthlyMax   int64     `gorm:"default:0" json:"monthly_max"`              // 每月配额，0=不限
 	MaxQPS       int64     `gorm:"default:0" json:"max_qps"`                  // 最大并发QPS，0=不限
+	MaxRPM       int64     `gorm:"default:0" json:"max_rpm"`                  // 每分钟请求数，0=不限
+	MaxChannelRPM int64    `gorm:"default:0" json:"max_channel_rpm"`          // 单渠道每分钟请求数，0=不限
 	MaxOutputTokens int   `gorm:"default:0" json:"max_output_tokens"`         // 单次最大输出 token，0=不限
 	MaxInputTokens  int   `gorm:"default:0" json:"max_input_tokens"`          // 单次最大输入 token，0=不限
 	DailyImageMax   int64 `gorm:"default:0" json:"daily_image_max"`           // 每日图片次数限制，0=不限

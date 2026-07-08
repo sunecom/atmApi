@@ -451,6 +451,19 @@ func chatCompletions(c *gin.Context) {
 		respondError(c, http.StatusTooManyRequests, ErrRateLimitExceeded, rlResult.Reason)
 		return
 	}
+	// RPM 限流（每分钟请求数）
+	if apiToken.RateLimitGroup != "" {
+		plan, planErr := service.GetPlan(apiToken.RateLimitGroup)
+		if planErr == nil && plan.MaxRPM > 0 {
+			allowed, currentRPM, maxRPM, retryAfter := service.GlobalRPMLimiter.CheckRPM(apiToken.ID, plan.MaxRPM)
+			if !allowed {
+				c.Header("Retry-After", fmt.Sprintf("%d", retryAfter))
+				respondError(c, http.StatusTooManyRequests, ErrRateLimitExceeded,
+					fmt.Sprintf("RPM已达上限（%d/%d），请%d秒后再试", currentRPM, maxRPM, retryAfter))
+				return
+			}
+		}
+	}
 	// 并发限制（内存级QPS控制）
 	if apiToken.RateLimitGroup != "" {
 		plan, planErr := service.GetPlan(apiToken.RateLimitGroup)
@@ -581,39 +594,80 @@ func chatCompletions(c *gin.Context) {
 			}
 		}
 	}
-	// ===== 智能路由：根据请求复杂度选择模型 =====
-	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey)
-	// ===== 输出控制：根据套餐限制最大输出 =====
-	// 在路由前注入 max_tokens，防止用户未设置导致输出爆炸
+	// ===== 输出控制：简洁回复约束（替代硬截断）=====
+	// 2026-07-08：用 system message 约束输出长度，而不是 max_tokens 硬截断
+	// 用户明确要求"详细/完整/长文"时不注入，尊重用户意图
+	{
+		longFormKeywords := []string{"详细", "完整", "长文", "展开", "深入", "全面", "长篇", "写一篇", "详细解释", "详细说明"}
+		needLongForm := false
+		// 检查最后一条用户消息
+		for i := len(req.Messages) - 1; i >= 0; i-- {
+			if role, _ := req.Messages[i]["role"].(string); role == "user" {
+				content, _ := req.Messages[i]["content"].(string)
+				for _, kw := range longFormKeywords {
+					if strings.Contains(content, kw) {
+						needLongForm = true
+					}
+				}
+				break
+			}
+		}
+		if !needLongForm {
+			// 注入简洁约束 system message（短指令，避免被模型误当对话内容）
+			conciseMsg := map[string]interface{}{
+				"role":    "system",
+				"content": "指令：请始终用最简洁的方式回复，避免任何多余解释和长篇背景介绍。回复总字数控制在300字以内，除非用户明确要求详细说明。",
+			}
+			var reqMapNew map[string]interface{}
+			json.Unmarshal(body, &reqMapNew)
+			msgs, _ := reqMapNew["messages"].([]interface{})
+			newMsgs := append([]interface{}{conciseMsg}, msgs...)
+			reqMapNew["messages"] = newMsgs
+			body, _ = json.Marshal(reqMapNew)
+			// 同步更新 req.Messages（类型转换）
+			newReqMsgs := []map[string]interface{}{conciseMsg}
+			newReqMsgs = append(newReqMsgs, req.Messages...)
+			req.Messages = newReqMsgs
+			log.Printf("[输出控制] token=%s 注入简洁回复约束", apiToken.Name)
+		} else {
+			log.Printf("[输出控制] token=%s 用户要求长文，跳过简洁约束", apiToken.Name)
+		}
+	}
+	// ===== 输出控制：max_tokens 安全上限（仅防极端情况）=====
+	// 不再硬截断，只设一个很高的安全上限防止输出爆炸
 	if apiToken.RateLimitGroup != "" {
 		plan, _ := service.GetPlan(apiToken.RateLimitGroup)
 		if plan != nil {
-			// 根据套餐设置默认 max_tokens 上限
-			// 有显式设置且比套餐上限低就用用户的，否则用套餐上限
-			var userMaxTokens *int
+			// 安全上限 = 套餐上限 * 2，最低 16384
+			safetyMax := plan.MaxOutputTokens * 2
+			if safetyMax < 16384 {
+				safetyMax = 16384
+			}
+			if safetyMax > 128000 {
+				safetyMax = 128000
+			}
 			var reqMapCheck map[string]interface{}
 			json.Unmarshal(body, &reqMapCheck)
+			var userMaxTokens *int
 			if v, ok := reqMapCheck["max_tokens"]; ok {
 				if f, ok := v.(float64); ok {
 					mt := int(f)
 					userMaxTokens = &mt
 				}
 			}
-			planMaxTokens := plan.MaxOutputTokens
-			if planMaxTokens <= 0 {
-				planMaxTokens = 4096 // 默认安全值
-			}
-			if userMaxTokens == nil || *userMaxTokens > planMaxTokens {
-				// 覆盖/注入 max_tokens
+			// 只在用户没设或超过安全上限时才注入
+			if userMaxTokens == nil || *userMaxTokens > safetyMax {
 				var reqMapNew map[string]interface{}
 				json.Unmarshal(body, &reqMapNew)
-				reqMapNew["max_tokens"] = planMaxTokens
+				reqMapNew["max_tokens"] = safetyMax
 				body, _ = json.Marshal(reqMapNew)
-				log.Printf("[输出控制] token=%s plan=%s 注入max_tokens=%d",
-					apiToken.Name, plan.Name, planMaxTokens)
+				log.Printf("[输出控制] token=%s plan=%s 安全上限max_tokens=%d",
+					apiToken.Name, plan.Name, safetyMax)
 			}
 		}
 	}
+	// ===== 智能路由：根据请求复杂度选择模型 =====
+	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey)
 	if actualModel != req.Model {
 		// 替换请求体中的 model
 		var reqMap map[string]interface{}
@@ -638,7 +692,7 @@ func chatCompletions(c *gin.Context) {
 			c.Header("X-Requested-Model", req.Model)
 			model.DB.Create(&model.RequestLog{
 				TokenName: apiToken.Name, ChannelName: "缓存命中",
-				Model: actualModel, StatusCode: 200, DurationMs: duration,
+				Model: actualModel, RoutedModel: actualModel, StatusCode: 200, DurationMs: duration,
 			})
 			// 缓存命中也记录限流（防止通过重复请求绕过限流）
 			service.RecordRequest(apiToken.ID)
@@ -673,41 +727,37 @@ func chatCompletions(c *gin.Context) {
 			// Qwen 成功了，继续往下走到正常响应
 			goto processResult
 		}
-		// 图片请求失败后不 fallback 到非视觉模型（DeepSeek 不支持图片，必 400）
-		if !service.HasImageContent(req.Messages) {
-			// 智能路由降级失败时，先试同级备选模型
-			alternatives := service.GetAlternativeModels(actualModel)
-			for _, altModel := range alternatives {
-				var altReqMap map[string]interface{}
-				if err := json.Unmarshal(body, &altReqMap); err == nil {
-					altReqMap["model"] = altModel
-					altBody, _ := json.Marshal(altReqMap)
-					result, err = service.RouteRequest(altModel, altBody, tokenKey)
-					if err == nil {
-						log.Printf("[路由] 降级 %s 失败，备选 %s 成功", actualModel, altModel)
-						break
-					}
+		// 智能路由降级：尝试备选模型
+		// 图片请求只尝试视觉模型（qwen 系列），非视觉模型（DeepSeek）不支持图片
+		alternatives := service.GetAlternativeModels(actualModel)
+		for _, altModel := range alternatives {
+			var altReqMap map[string]interface{}
+			if err := json.Unmarshal(body, &altReqMap); err == nil {
+				altReqMap["model"] = altModel
+				altBody, _ := json.Marshal(altReqMap)
+				result, err = service.RouteRequest(altModel, altBody, tokenKey)
+				if err == nil {
+					log.Printf("[路由] 降级 %s 失败，备选 %s 成功", actualModel, altModel)
+					break
 				}
+			}
+		}
+		
+		// 备选也失败时，尝试用原始模型重试
+		if err != nil {
+			retryModel := req.Model
+			if actualModel != req.Model {
+				log.Printf("[路由] 备选均失败，尝试原始模型 %s", req.Model)
+			} else {
+				log.Printf("[路由] 原始模型 %s 失败，重试一次", req.Model)
 			}
 			
-			// 备选也失败时，尝试用原始模型重试
-			if err != nil {
-				retryModel := req.Model
-				if actualModel != req.Model {
-					log.Printf("[路由] 备选均失败，尝试原始模型 %s", req.Model)
-				} else {
-					log.Printf("[路由] 原始模型 %s 失败，重试一次", req.Model)
-				}
-				
-				var retryReqMap map[string]interface{}
-				if err := json.Unmarshal(body, &retryReqMap); err == nil {
-					retryReqMap["model"] = retryModel
-					retryBody, _ := json.Marshal(retryReqMap)
-					result, err = service.RouteRequest(retryModel, retryBody, tokenKey)
-				}
+			var retryReqMap map[string]interface{}
+			if err := json.Unmarshal(body, &retryReqMap); err == nil {
+				retryReqMap["model"] = retryModel
+				retryBody, _ := json.Marshal(retryReqMap)
+				result, err = service.RouteRequest(retryModel, retryBody, tokenKey)
 			}
-		} else {
-			log.Printf("[路由] 图片请求 %s 失败，跳过 fallback（非视觉模型不支持图片）", actualModel)
 		}
 		
 		if err != nil {
@@ -731,7 +781,7 @@ processResult:
 		duration := time.Since(startTime).Milliseconds()
 		model.DB.Create(&model.RequestLog{
 			TokenName: apiToken.Name, ChannelName: result.ChannelName,
-			Model: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
+			Model: req.Model, RoutedModel: actualModel, StatusCode: result.Response.StatusCode, DurationMs: duration,
 		})
 		c.Header("X-Actual-Model", actualModel)
 		c.Header("X-Requested-Model", req.Model)
@@ -767,7 +817,7 @@ processResult:
 	duration := time.Since(startTime).Milliseconds()
 	model.DB.Create(&model.RequestLog{
 		TokenName: apiToken.Name, ChannelName: result.ChannelName,
-		Model: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
+		Model: req.Model, RoutedModel: actualModel, StatusCode: result.Response.StatusCode, DurationMs: duration,
 	})
 	// 设置响应头：返回实际路由的模型名
 	c.Header("X-Actual-Model", actualModel)

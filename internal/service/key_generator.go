@@ -10,15 +10,14 @@ import (
 	"atmapi/internal/model"
 )
 
-// GenerateAPIKey 生成 sk-atm- 前缀的随机 API Key
-// 格式: sk-atm-<32位随机hex>
+// GenerateAPIKey 生成 sk- 前缀的随机 API Key
+// 格式: sk-<32位随机hex>
 func GenerateAPIKey() string {
 	bytes := make([]byte, 16) // 16 bytes = 32 hex chars
 	if _, err := rand.Read(bytes); err != nil {
-		// fallback to timestamp-based (should never happen)
-		return fmt.Sprintf("sk-atm-%d", time.Now().UnixNano())
+		return fmt.Sprintf("sk-%d", time.Now().UnixNano())
 	}
-	return fmt.Sprintf("sk-atm-%s", hex.EncodeToString(bytes))
+	return fmt.Sprintf("sk-%s", hex.EncodeToString(bytes))
 }
 
 // CreateKeyWithPlan 创建 API Key 并绑定套餐

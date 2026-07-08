@@ -14,7 +14,7 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		Port:      getEnv("PORT", "3000"),
+		Port:      getEnv("PORT", "3300"),
 		DBType:    getEnv("DB_TYPE", "sqlite"),
 		DBPath:    getEnv("DB_PATH", "./data/atmapi.db"),
 		JWTSecret: getEnv("JWT_SECRET", "atmapi-secret-key"),

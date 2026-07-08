@@ -8,6 +8,7 @@ type RequestLog struct {
 	TokenName   string    `gorm:"size:100" json:"token_name"`
 	ChannelName string    `gorm:"size:100" json:"channel_name"`
 	Model       string    `gorm:"size:100" json:"model"`
+	RoutedModel string    `gorm:"size:100;default:''" json:"routed_model"` // 实际路由到的子模型
 	StatusCode  int       `json:"status_code"`
 	DurationMs  int64     `json:"duration_ms"`
 	CreatedAt   time.Time `json:"created_at"`

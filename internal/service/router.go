@@ -156,6 +156,19 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 	// 5. 尝试每个渠道（自动 fallback）
 	var lastErr error
 	for _, channel := range channels {
+		// 渠道维度限流（保护特定渠道不被打爆）
+		if token.RateLimitGroup != "" {
+			plan, planErr := GetPlan(token.RateLimitGroup)
+			if planErr == nil && plan.MaxChannelRPM > 0 {
+				allowed, currentRPM, maxChannelRPM, retryAfter := GlobalChannelLimiter.CheckChannelRPM(token.ID, channel.Name, plan.MaxChannelRPM)
+				if !allowed {
+					log.Printf("[路由] 渠道 %s RPM超限（%d/%d），跳过", channel.Name, currentRPM, maxChannelRPM)
+					lastErr = fmt.Errorf("渠道 %s RPM超限，请%d秒后再试", channel.Name, retryAfter)
+					continue
+				}
+			}
+		}
+
 		resp, err := trySingleChannel(channel, targetModel, requestBody)
 		if err != nil {
 			// 快速失败直接返回
@@ -169,6 +182,8 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 		// 更新配额
 		updateQuota(token, 1)
 		RecordRequest(token.ID) // 记录滑动窗口
+		GlobalRPMLimiter.RecordRPM(token.ID) // 记录 RPM
+		GlobalChannelLimiter.RecordChannelRPM(token.ID, channel.Name) // 记录渠道 RPM
 
 		return &RouteRequestResult{Response: resp, ChannelName: channel.Name}, nil
 	}
@@ -409,33 +424,12 @@ func applyModelMapping(mappingJSON string, originalModel string) string {
 }
 
 // limitTokenUsage 限制每次调用的 token 消耗（控制成本核心手段）
+// 2026-07-08 修复：不再裁剪历史消息，交给 OpenClaw compaction 管理上下文
+// 原逻辑：只保留 system + 最近 3 轮（最多 7 条）→ 导致"失忆"
 func limitTokenUsage(body []byte) []byte {
-	var req map[string]interface{}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return body
-	}
-
-	// 1. 裁剪历史消息：只保留 system + 最近 3 轮（最多 7 条）
-	if msgs, ok := req["messages"].([]interface{}); ok && len(msgs) > 7 {
-		systemMsgs := []interface{}{}
-		nonSystemMsgs := []interface{}{}
-		for _, m := range msgs {
-			if msg, ok := m.(map[string]interface{}); ok {
-				if role, _ := msg["role"].(string); role == "system" {
-					systemMsgs = append(systemMsgs, m)
-				} else {
-					nonSystemMsgs = append(nonSystemMsgs, m)
-				}
-			}
-		}
-		if len(nonSystemMsgs) > 6 {
-			nonSystemMsgs = nonSystemMsgs[len(nonSystemMsgs)-6:]
-		}
-		req["messages"] = append(systemMsgs, nonSystemMsgs...)
-	}
-
-	newBody, _ := json.Marshal(req)
-	return newBody
+	// 不再裁剪历史，直接返回原始 body
+	// 上下文管理交给客户端（OpenClaw compaction）
+	return body
 }
 
 // replaceModelInRequest 替换请求体中的模型名
