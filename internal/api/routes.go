@@ -203,28 +203,40 @@ func login(c *gin.Context) {
 		respondError(c, http.StatusTooManyRequests, ErrRateLimitExceeded, "登录尝试过于频繁，请稍后再试")
 		return
 	}
+
+	// 从本地文件读取登录密钥
 	var req struct {
-		Username string `json:"username" binding:"required"`
-		Password string `json:"password" binding:"required"`
+		Key string `json:"key" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, http.StatusBadRequest, ErrInvalidRequest, err.Error())
+		respondError(c, http.StatusBadRequest, ErrInvalidRequest, "请提供登录密钥")
 		return
 	}
-	var user model.User
-	if err := model.DB.Where("username = ? AND password = ? AND status = ?", req.Username, req.Password, 1).First(&user).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
+
+	// 读取本地密钥文件
+	localKeyBytes, err := os.ReadFile("/home/admin/.openclaw/atmApi-adminkey.secret")
+	if err != nil {
+		log.Printf("[登录] 密钥文件读取失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器配置异常"})
 		return
 	}
-	token, err := middleware.GenerateToken(user.ID, user.Username, user.Role)
+	localKey := strings.TrimSpace(string(localKeyBytes))
+
+	if req.Key != localKey {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密钥错误"})
+		return
+	}
+
+	// 生成 JWT token
+	token, err := middleware.GenerateToken(1, "admin", 100)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 token 失败"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "登录成功", "token": token,
-		"user_id": user.ID, "username": user.Username,
-		"display_name": user.DisplayName, "role": user.Role,
+		"user_id": 1, "username": "admin",
+		"display_name": "系统管理员", "role": 100,
 	})
 }
 func register(c *gin.Context) {
@@ -667,6 +679,21 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 	// ===== 智能路由：根据请求复杂度选择模型 =====
+	// 调试：打印最后3条消息角色
+	lastRoles := ""
+	start := len(req.Messages) - 3
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(req.Messages); i++ {
+		r, _ := req.Messages[i]["role"].(string)
+		if i == len(req.Messages)-1 {
+			lastRoles += fmt.Sprintf("[%s]←最后", r)
+		} else {
+			lastRoles += fmt.Sprintf("[%s]→", r)
+		}
+	}
+	log.Printf("[路由] 最后3条: %s", lastRoles)
 	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey)
 	if actualModel != req.Model {
 		// 替换请求体中的 model
@@ -771,9 +798,25 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 processResult:
-	// 保存会话模型偏好（下次有 tool_calls 时优先复用）
+	// 保存/清除会话模型偏好
+	// 有活跃 tool_calls → 缓存模型（保持格式兼容）
+	// 无活跃 tool_calls → 清除缓存（即时回落 flash，不等 TTL）
 	if service.GlobalModelPref != nil {
-		service.GlobalModelPref.SetPreferredModel(tokenKey, actualModel)
+		lastRole := ""
+		if len(req.Messages) > 0 {
+			lastRole, _ = req.Messages[len(req.Messages)-1]["role"].(string)
+		}
+		hasActiveTC := lastRole == "tool"
+		if !hasActiveTC && lastRole == "assistant" {
+			if _, ok := req.Messages[len(req.Messages)-1]["tool_calls"]; ok {
+				hasActiveTC = true
+			}
+		}
+		if hasActiveTC {
+			service.GlobalModelPref.SetPreferredModel(tokenKey, actualModel)
+		} else {
+			service.GlobalModelPref.ClearPreferredModel(tokenKey)
+		}
 	}
 	defer result.Response.Body.Close()
 	// ===== 流式响应分支：逐 chunk 转发 =====
@@ -795,6 +838,7 @@ processResult:
 		c.Status(result.Response.StatusCode)
 		flusher, hasFlusher := c.Writer.(interface{ Flush() })
 		bufReader := bufio.NewReader(result.Response.Body)
+		var lastChunk string
 		for {
 			line, err := bufReader.ReadString('\n')
 			if line != "" {
@@ -802,12 +846,49 @@ processResult:
 				if hasFlusher {
 					flusher.Flush()
 				}
+				// 记录最后一条非空 data: 行（含 usage 信息）
+				if strings.HasPrefix(line, "data: ") && !strings.Contains(line, "[DONE]") {
+					lastChunk = strings.TrimPrefix(line, "data: ")
+				}
 			}
 			if err != nil {
 				break
 			}
 		}
 		c.Writer.Flush()
+		
+		// 从流式最后一个 chunk 提取 usage 并记录
+		if lastChunk != "" {
+			var lastResp struct {
+				Usage struct {
+					PromptTokens     int64 `json:"prompt_tokens"`
+					CompletionTokens int64 `json:"completion_tokens"`
+					TotalTokens      int64 `json:"total_tokens"`
+				} `json:"usage"`
+			}
+			if err := json.Unmarshal([]byte(lastChunk), &lastResp); err == nil && lastResp.Usage.TotalTokens > 0 {
+				planName := ""
+				if apiToken.RateLimitGroup != "" {
+					planName = apiToken.RateLimitGroup
+				}
+				usageLog := model.UsageLog{
+					TokenID:      apiToken.ID,
+					TokenName:    apiToken.Name,
+					PlanName:     planName,
+					ChannelName:  result.ChannelName,
+					Model:        actualModel,
+					InputTokens:  lastResp.Usage.PromptTokens,
+					OutputTokens: lastResp.Usage.CompletionTokens,
+					TotalTokens:  lastResp.Usage.TotalTokens,
+					StatusCode:   result.Response.StatusCode,
+					DurationMs:   duration,
+				}
+				model.DB.Create(&usageLog)
+				log.Printf("[流式usage] token=%s model=%s tokens=%d",
+					apiToken.Name, actualModel, lastResp.Usage.TotalTokens)
+			}
+		}
+		
 		log.Printf("[流式] token=%s model=%s channel=%s status=%d duration=%dms",
 			apiToken.Name, actualModel, result.ChannelName, result.Response.StatusCode, duration)
 		return
@@ -1503,32 +1584,36 @@ func hasOpenClawImageMetadata(messages []map[string]interface{}) bool {
 // 过滤掉 OpenClaw 元数据（[media attached:], Conversation info 等）
 func extractUserQuestion(messages []map[string]interface{}) string {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if role, _ := messages[i]["role"].(string); role == "user" {
-			content := messages[i]["content"]
-			switch c := content.(type) {
-			case string:
-				if strings.Contains(c, "[media attached:") || strings.Contains(c, "- Images:") {
-					return ""
-				}
-				if strings.HasPrefix(c, "data:image") {
-					return ""
-				}
-				return strings.TrimSpace(c)
-			case []interface{}:
-				for _, part := range c {
-					if pm, ok := part.(map[string]interface{}); ok {
-						if typ, _ := pm["type"].(string); typ == "text" {
-							if text, ok := pm["text"].(string); ok {
-								if strings.Contains(text, "[media attached:") || strings.Contains(text, "- Images:") {
-									return ""
-								}
-							return strings.TrimSpace(text)
-					}
+		if role, _ := messages[i]["role"].(string); role != "user" {
+			continue
+		}
+		content := messages[i]["content"]
+		switch c := content.(type) {
+		case string:
+			if strings.Contains(c, "[media attached:") || strings.Contains(c, "- Images:") {
+				continue
+			}
+			if strings.HasPrefix(c, "data:image") {
+				continue
+			}
+			return strings.TrimSpace(c)
+		case []interface{}:
+			// 找最后一个不含元数据的 text（图片+文字混合时，用户文字通常在最后）
+			var lastText string
+			for _, part := range c {
+				if pm, ok := part.(map[string]interface{}); ok {
+					if typ, _ := pm["type"].(string); typ == "text" {
+						if text, ok := pm["text"].(string); ok {
+							if !strings.Contains(text, "[media attached:") && !strings.Contains(text, "- Images:") {
+								lastText = text
+							}
 						}
 					}
 				}
 			}
-			return ""
+			if lastText != "" {
+				return strings.TrimSpace(lastText)
+			}
 		}
 	}
 	return ""

@@ -127,7 +127,7 @@
     <div class="card">
         <div class="card-title">最近请求（最新 20 条）</div>
         <table>
-            <thead><tr><th>时间</th><th>Token</th><th>模型</th><th>渠道</th><th>状态</th><th>耗时</th></tr></thead>
+            <thead><tr><th>时间</th><th>Token</th><th>实际模型</th><th>渠道</th><th>状态</th><th>耗时</th></tr></thead>
             <tbody id="recentTable"><tr><td colspan="6" class="dim" style="text-align:center;">加载中...</td></tr></tbody>
         </table>
     </div>
@@ -169,7 +169,12 @@ async function loadAll() {
         document.getElementById('recentTable').innerHTML = recent.length ? recent.map(r => {
             const time = (r.created_at||'').substring(5,19);
             const cls = r.status_code >= 400 ? 'badge badge-danger' : 'badge badge-success';
-            return `<tr><td>${time}</td><td>${r.token_name||'-'}</td><td>${r.model||'-'}</td><td>${r.channel_name||'-'}</td><td><span class="${cls}">${r.status_code}</span></td><td>${r.duration_ms||0}ms</td></tr>`;
+            // 模型显示：flash 绿色，pro 橙色
+            let modelLabel = r.routed_model || r.model || '-';
+            if (modelLabel.includes('flash')) modelLabel = '<span class="badge badge-success" style="background:#27ae60">⚡ flash</span>';
+            else if (modelLabel.includes('pro')) modelLabel = '<span class="badge badge-warning" style="background:#e67e22">🧠 pro</span>';
+            else if (modelLabel.includes('qwen')) modelLabel = '<span class="badge badge-info" style="background:#3498db">🖼 qwen</span>';
+            return `<tr><td>${time}</td><td>${r.token_name||'-'}</td><td>${modelLabel}</td><td>${r.channel_name||'-'}</td><td><span class="${cls}">${r.status_code}</span></td><td>${r.duration_ms||0}ms</td></tr>`;
         }).join('') : '<tr><td colspan="6" class="dim" style="text-align:center;">暂无数据</td></tr>';
         
     } catch(e) {

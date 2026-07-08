@@ -53,6 +53,13 @@ func (c *ModelPreferenceCache) SetPreferredModel(tokenKey, model string) {
 	}
 }
 
+// ClearPreferredModel 清除 token 的模型偏好缓存，立即回落自然路由
+func (c *ModelPreferenceCache) ClearPreferredModel(tokenKey string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.items, tokenKey)
+}
+
 func (c *ModelPreferenceCache) cleanupLoop() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()

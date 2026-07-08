@@ -323,11 +323,10 @@
         <div style="font-size:12px;color:var(--text-dim);">你的 AI 模型自动提款机</div>
       </div>
       <div class="login-title">管理员登录</div>
-      <input id="loginUser" placeholder="用户名" />
-      <input id="loginPass" type="password" placeholder="密码" />
+      <input id="loginKey" type="password" placeholder="登录密钥" style="font-family:monospace;" />
       <button class="btn btn-primary" onclick="doLogin()" style="margin-top:8px;">登录</button>
       <div id="loginErr" class="muted" style="margin-top:12px;color:var(--danger);font-size:12px;"></div>
-      <div class="login-hint" style="margin-top:20px;">请使用管理员账号登录 <span style="opacity:0.3;font-size:10px;">v0706.1618</span></div>
+      <div class="login-hint" style="margin-top:20px;">请输入本机存储的登录密钥 <span style="opacity:0.3;font-size:10px;">v2.0.1</span></div>
       <div style="text-align:center;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);">🦐 <a href="https://www.aitomoney.online" target="_blank" style="color:var(--text-main);text-decoration:none;">AiToMoney</a> 出品</div>
     </div>
   </div>
@@ -347,7 +346,7 @@
         <button onclick="showTab('channels', this)">渠道管理</button>
         <button onclick="showTab('tokens', this)">Token 管理</button>
         <button onclick="showTab('users', this)">用户管理</button>
-        <button onclick="showTab('logs', this)">请求日志 <span id="logBadge" class="badge badge-success" style="display:none;">0</span></button>
+        <button onclick="showTab('logs', this)">请求日志</button>
         <button onclick="showTab('usage', this)">用量统计</button>
         <button onclick="showTab('settings', this)">系统设置</button>
         <button onclick="showTab('api-docs', this)">API 文档</button>
@@ -406,12 +405,12 @@
 
       <section id="tab-channels" class="tab hidden">
         <div class="grid">
-          <div class="card span-8">
+          <div class="card span-9">
             <div class="card-title">渠道列表</div>
             <button class="btn btn-primary mb-4" onclick="loadChannels()">刷新列表</button> <button class="btn btn-success mb-4" onclick="batchActionChannels("enable")">✅ 批量启用</button> <button class="btn btn-danger mb-4" onclick="batchActionChannels("disable")">❌ 批量禁用</button> <button class="btn btn-secondary mb-4" onclick="batchActionChannels("delete")">🗑️ 批量删除</button>
             <div id="channelsTableWrap" class="muted">等待加载…</div>
           </div>
-          <div class="card span-4">
+          <div class="card span-3">
             <div class="card-title">新建 / 编辑渠道</div>
             <div class="muted" style="font-size:11px;margin-bottom:8px;">编辑时自动填充表单，修改后点击创建保存。</div>
             <input id="ch_name" placeholder="渠道名称" />
@@ -446,7 +445,7 @@
         <div class="grid">
           <div class="card span-9">
             <div class="card-title">Token 列表</div>
-            <button class="btn btn-primary mb-4" onclick="loadTokens()">刷新列表</button> <input id="tokenSearch" placeholder="搜索 Token..." oninput="loadTokens()" style="width:200px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;" /> <select id="planGroupFilter" onchange="loadTokens()" style="width:160px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;margin-left:8px;"><option value="">全部套餐线</option><option value="dp-a4">dp-a4 (DeepSeek A4)</option></select>
+            <button class="btn btn-primary mb-4" onclick="loadTokens()">刷新列表</button> <input id="tokenSearch" placeholder="搜索 Token..." oninput="loadTokens()" style="width:200px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;" /> <select id="planGroupFilter" onchange="planGroupChanged()" style="width:180px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;margin-left:8px;"><option value="">全部套餐线</option><option value="dp-a4">DP-A4(BASIC)</option><option value="openclaw">DP-A4(Openclaw)</option><option value="hermes">DP-A4(Hermes)</option></select> <select id="planNameFilter" onchange="loadTokens()" style="width:320px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;margin-left:4px;"><option value="">全部套餐</option></select>
             <div id="tokensTableWrap" class="muted">等待加载…</div>
           </div>
           <div class="card span-3">
@@ -612,18 +611,18 @@
     }
 
     async function doLogin() {
-      const username = document.getElementById('loginUser').value.trim();
-      const password = document.getElementById('loginPass').value;
+      const key = document.getElementById('loginKey').value.trim();
       const errEl = document.getElementById('loginErr');
       const loginBtn = document.querySelector('#loginOverlay button');
       errEl.textContent = '';
+      if (!key) { errEl.textContent = '请输入登录密钥'; return; }
       loginBtn.disabled = true;
       loginBtn.textContent = '登录中...';
       try {
         const res = await fetch('/api/v1/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password }),
+          body: JSON.stringify({ key }),
         });
         const text = await res.text();
         const data = JSON.parse(text);
@@ -742,7 +741,7 @@
           '<td>' + ch.weight + '</td>' +
           '<td><code>' + (ch.base_url || '') + '</code></td>' +
           '<td>' + (ch.models || '') + '</td>' +
-          '<td>' +
+          '<td style="white-space:nowrap">' +
             '<button class="btn btn-primary btn-sm" onclick="testChannelById(' + ch.id + ')">测试</button> ' +
             '<button class="btn btn-secondary btn-sm" onclick="editChannel(' + ch.id + ')">编辑</button> ' +
             '<button class="btn btn-danger btn-sm" onclick="deleteChannel(' + ch.id + ')">删除</button>' +
@@ -869,10 +868,28 @@
       return tk.remain_quota;
     }
 
+    // 套餐线变更时更新套餐名下拉
+    function planGroupChanged() {
+      const pg = document.getElementById('planGroupFilter').value;
+      const pnSelect = document.getElementById('planNameFilter');
+      const plans = {
+        'dp-a4': ['','basic','pro','starter','flagship','advanced','enterprise'],
+        'openclaw': ['','openclaw-basic','openclaw-pro'],
+        'hermes': ['','hermes-basic','hermes-pro']
+      };
+      const list = plans[pg] || [''];
+      const labels = {'':'全部套餐','basic':'基础版 ¥29.9 | 5h=100 8,000次/月','pro':'专业版 ¥69 | 5h=300 24,000次/月','starter':'创业版 ¥99 | 5h=400 30,000次/月','flagship':'旗舰版 ¥129 | 5h=600 50,000次/月','advanced':'高级版 ¥299 | 5h=1,200 100,000次/月','enterprise':'企业版 ¥599 | 5h=3,000 300,000次/月','openclaw-basic':'OpenClaw基础 ¥99 | 5h=500 30,000次/月','openclaw-pro':'OpenClaw进阶 ¥299 | 5h=2,000 100,000次/月','hermes-basic':'Hermes基础 ¥149 | 5h=800 50,000次/月','hermes-pro':'Hermes进阶 ¥399 | 5h=3,000 150,000次/月'};
+      pnSelect.innerHTML = list.map(v => '<option value="' + v + '">' + (labels[v] || v || '全部套餐') + '</option>').join('');
+      loadTokens();
+    }
+
     async function loadTokens() {
       const pg = document.getElementById('planGroupFilter').value;
-      let url = '/api/v1/tokens';
-      if (pg) url += '?plan_group=' + encodeURIComponent(pg);
+      const pn = document.getElementById('planNameFilter').value;
+      let params = [];
+      if (pg) params.push('plan_group=' + encodeURIComponent(pg));
+      if (pn) params.push('plan_name=' + encodeURIComponent(pn));
+      let url = '/api/v1/tokens' + (params.length ? '?' + params.join('&') : '');
       const res = await fetch(url, { headers: authHeaders() });
       if (res.status === 401) return setText('tokensTableWrap', '请先登录');
       const data = await safeJson(res);
@@ -1051,8 +1068,6 @@
       const res = await fetch('/api/v1/logs', { headers: authHeaders() });
       if (res.status === 401) return setText('logsWrap', '请先登录');
       const data = await safeJson(res);
-      const badge = document.getElementById('logBadge');
-      badge.style.display = '';
       const rows = (data.data || []).map(log => {
         const t = new Date(log.created_at).toLocaleString();
         return '<tr>' +
@@ -1060,7 +1075,7 @@
           '<td>' + t + '</td>' +
           '<td>' + log.token_name + '</td>' +
           '<td>' + log.channel_name + '</td>' +
-          '<td>' + log.model + '</td>' +
+          '<td>' + (log.routed_model || log.model) + '</td>' +
           '<td>' + logStatusBadge(log.status_code) + '</td>' +
           '<td>' + log.duration_ms + 'ms</td>' +
         '</tr>';
