@@ -48,6 +48,7 @@ func releaseConcurrency(channelID uint) {
 type RouteRequestResult struct {
 	Response    *http.Response
 	ChannelName string
+	AtmModel    string
 }
 
 // ModelRoute 模型路由表
@@ -185,7 +186,7 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 		GlobalRPMLimiter.RecordRPM(token.ID) // 记录 RPM
 		GlobalChannelLimiter.RecordChannelRPM(token.ID, channel.Name) // 记录渠道 RPM
 
-		return &RouteRequestResult{Response: resp, ChannelName: channel.Name}, nil
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel}, nil
 	}
 
 	return nil, fmt.Errorf("所有渠道均失败：%w", lastErr)
@@ -234,7 +235,7 @@ func routeToModelGroup(channels []model.Channel, requestBody []byte, token *mode
 		}
 		updateQuota(token, 1)
 		RecordRequest(token.ID) // 记录滑动窗口
-		return &RouteRequestResult{Response: resp, ChannelName: channel.Name}, nil
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel}, nil
 	}
 
 	// 聚合组全挂 → 直接报错（不偷偷换模型）
@@ -282,7 +283,7 @@ func routeToBestChannel(originalModel string, requestBody []byte, token *model.T
 		}
 		updateQuota(token, 1)
 		RecordRequest(token.ID) // 记录滑动窗口
-		return &RouteRequestResult{Response: resp, ChannelName: channel.Name}, nil
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel}, nil
 	}
 
 	return nil, fmt.Errorf("路由策略无可用渠道：%w", lastErr)

@@ -1199,11 +1199,12 @@
           '<td>' + log.token_name + '</td>' +
           '<td>' + log.channel_name + '</td>' +
           '<td>' + (log.routed_model || log.model) + '</td>' +
+          '<td>' + (log.atm_model || '-') + '</td>' +
           '<td>' + logStatusBadge(log.status_code) + '</td>' +
           '<td>' + log.duration_ms + 'ms</td>' +
         '</tr>';
       }).join('');
-      document.getElementById('logsWrap').innerHTML = '<table><thead><tr><th>ID</th><th>时间</th><th>Token</th><th>渠道</th><th>模型</th><th>状态</th><th>耗时</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7">暂无请求日志</td></tr>') + '</tbody></table>';
+      document.getElementById('logsWrap').innerHTML = '<table><thead><tr><th>ID</th><th>时间</th><th>Token</th><th>渠道</th><th>大模型</th><th>atm模型</th><th>状态</th><th>耗时</th></tr></thead><tbody>' + (rows || '<tr><td colspan="8">暂无请求日志</td></tr>') + '</tbody></table>';
     }
 
     async function loadUsage() {

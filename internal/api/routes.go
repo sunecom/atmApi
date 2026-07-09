@@ -966,7 +966,7 @@ processResult:
 	if isStream {
 		duration := time.Since(startTime).Milliseconds()
 		model.DB.Create(&model.RequestLog{
-			TokenName: apiToken.Name, ChannelName: result.ChannelName,
+			TokenName: apiToken.Name, ChannelName: result.ChannelName, AtmModel: result.AtmModel,
 			Model: req.Model, RoutedModel: actualModel, StatusCode: result.Response.StatusCode, DurationMs: duration,
 		})
 		c.Header("X-Actual-Model", actualModel)
@@ -1041,7 +1041,7 @@ processResult:
 	respBody, _ := io.ReadAll(result.Response.Body)
 	duration := time.Since(startTime).Milliseconds()
 	model.DB.Create(&model.RequestLog{
-		TokenName: apiToken.Name, ChannelName: result.ChannelName,
+		TokenName: apiToken.Name, ChannelName: result.ChannelName, AtmModel: result.AtmModel,
 		Model: req.Model, RoutedModel: actualModel, StatusCode: result.Response.StatusCode, DurationMs: duration,
 	})
 	// 设置响应头：返回实际路由的模型名
