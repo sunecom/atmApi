@@ -44,7 +44,7 @@ func GetTokenCostSummary(tokenID uint, startTime, endTime time.Time) (*TokenCost
 		summary.TotalRequests++
 		summary.TotalInput += log.InputTokens
 		summary.TotalOutput += log.OutputTokens
-		summary.TotalCost += model.CalculateCost(log.InputTokens, log.OutputTokens, log.Model)
+		summary.TotalCost += model.CalculateCost(log.InputTokens, log.OutputTokens, log.CachedTokens, log.Model)
 	}
 
 	summary.AvgCostPerReq = summary.TotalCost / float64(summary.TotalRequests)
@@ -132,7 +132,7 @@ func GetDashboardSummary(startTime, endTime time.Time) (*DashboardSummary, error
 
 	for _, log := range logs {
 		summary.TotalRequests++
-		cost := model.CalculateCost(log.InputTokens, log.OutputTokens, log.Model)
+		cost := model.CalculateCost(log.InputTokens, log.OutputTokens, log.CachedTokens, log.Model)
 		summary.TotalCost += cost
 
 		// 按套餐分组

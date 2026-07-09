@@ -145,6 +145,12 @@ func RegisterRoutes(r *gin.Engine) {
 			managed.PUT("/channels/:id", updateChannel)
 			managed.DELETE("/channels/:id", deleteChannel)
 			managed.POST("/channels/:id/test", testChannel)
+			// 定价管理 API
+			managed.GET("/pricing", getPricings)
+			managed.GET("/pricing/:id", getPricingByID)
+			managed.POST("/pricing", createPricing)
+			managed.PUT("/pricing/:id", updatePricing)
+			managed.DELETE("/pricing/:id", deletePricing)
 			managed.GET("/logs", getLogs)
 			managed.GET("/usage", getUsageStats)
 			managed.GET("/settings", getSystemSettings)
@@ -1007,6 +1013,9 @@ processResult:
 					PromptTokens     int64 `json:"prompt_tokens"`
 					CompletionTokens int64 `json:"completion_tokens"`
 					TotalTokens      int64 `json:"total_tokens"`
+					PromptTokensDetails struct {
+						CachedTokens int64 `json:"cached_tokens"`
+					} `json:"prompt_tokens_details"`
 				} `json:"usage"`
 			}
 			if err := json.Unmarshal([]byte(lastChunk), &lastResp); err == nil && lastResp.Usage.TotalTokens > 0 {
@@ -1014,6 +1023,7 @@ processResult:
 				if apiToken.RateLimitGroup != "" {
 					planName = apiToken.RateLimitGroup
 				}
+				cachedTokens := lastResp.Usage.PromptTokensDetails.CachedTokens
 				usageLog := model.UsageLog{
 					TokenID:       apiToken.ID,
 					TokenName:     apiToken.Name,
@@ -1022,14 +1032,15 @@ processResult:
 					Model:         actualModel,
 					InputTokens:   lastResp.Usage.PromptTokens,
 					OutputTokens:  lastResp.Usage.CompletionTokens,
+					CachedTokens:  cachedTokens,
 					TotalTokens:   lastResp.Usage.TotalTokens,
-					EstimatedCost: model.CalculateCost(lastResp.Usage.PromptTokens, lastResp.Usage.CompletionTokens, actualModel),
+					EstimatedCost: model.CalculateCost(lastResp.Usage.PromptTokens, lastResp.Usage.CompletionTokens, cachedTokens, actualModel),
 					StatusCode:    result.Response.StatusCode,
 					DurationMs:    duration,
 				}
 				model.DB.Create(&usageLog)
-				log.Printf("[流式usage] token=%s model=%s tokens=%d cost=%.6f",
-					apiToken.Name, actualModel, lastResp.Usage.TotalTokens, usageLog.EstimatedCost)
+				log.Printf("[流式usage] token=%s model=%s tokens=%d cached=%d cost=%.6f",
+					apiToken.Name, actualModel, lastResp.Usage.TotalTokens, cachedTokens, usageLog.EstimatedCost)
 			}
 		}
 		
@@ -1058,6 +1069,9 @@ processResult:
 				PromptTokens     int64 `json:"prompt_tokens"`
 				CompletionTokens int64 `json:"completion_tokens"`
 				TotalTokens      int64 `json:"total_tokens"`
+				PromptTokensDetails struct {
+					CachedTokens int64 `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal(respBody, &upstreamResp); err == nil && upstreamResp.Usage.TotalTokens > 0 {
@@ -1081,6 +1095,7 @@ processResult:
 			if apiToken.RateLimitGroup != "" {
 				planName = apiToken.RateLimitGroup
 			}
+			cachedTokens := upstreamResp.Usage.PromptTokensDetails.CachedTokens
 			usageLog := model.UsageLog{
 				TokenID:       apiToken.ID,
 				TokenName:     apiToken.Name,
@@ -1090,14 +1105,15 @@ processResult:
 				Model:         actualModel,
 				InputTokens:   upstreamResp.Usage.PromptTokens,
 				OutputTokens:  upstreamResp.Usage.CompletionTokens,
+				CachedTokens:  cachedTokens,
 				TotalTokens:   upstreamResp.Usage.TotalTokens,
-				EstimatedCost: model.CalculateCost(upstreamResp.Usage.PromptTokens, upstreamResp.Usage.CompletionTokens, actualModel),
+				EstimatedCost: model.CalculateCost(upstreamResp.Usage.PromptTokens, upstreamResp.Usage.CompletionTokens, cachedTokens, actualModel),
 				StatusCode:    result.Response.StatusCode,
 				DurationMs:    duration,
 			}
 			model.DB.Create(&usageLog)
-			log.Printf("[usage] token=%s model=%s tokens=%d cost=%.6f",
-				apiToken.Name, actualModel, upstreamResp.Usage.TotalTokens, usageLog.EstimatedCost)
+			log.Printf("[usage] token=%s model=%s tokens=%d cached=%d cost=%.6f",
+				apiToken.Name, actualModel, upstreamResp.Usage.TotalTokens, cachedTokens, usageLog.EstimatedCost)
 		}
 	}
 	// 写入缓存（非流式且成功）
@@ -1137,7 +1153,7 @@ func getCostSummary(c *gin.Context) {
 	var totalCost float64
 	var totalTokens int64
 	for _, r := range rows {
-		cost := model.CalculateCost(r.InputTokens, r.OutputTokens, r.Model)
+		cost := model.CalculateCost(r.InputTokens, r.OutputTokens, 0, r.Model)
 		totalCost += cost
 		totalTokens += r.InputTokens + r.OutputTokens
 		summary = append(summary, SummaryItem{
@@ -1169,19 +1185,19 @@ func getCostSummary(c *gin.Context) {
 	model.DB.Raw(`SELECT input_tokens as input, output_tokens as output, model FROM usage_logs
 		WHERE date(created_at)=date('now','localtime')`).Scan(&todayRows)
 	for _, r := range todayRows {
-		todayCost += model.CalculateCost(r.Input, r.Output, r.Model)
+		todayCost += model.CalculateCost(r.Input, r.Output, 0, r.Model)
 	}
 	var weekRows []AllRow
 	model.DB.Raw(`SELECT input_tokens as input, output_tokens as output, model FROM usage_logs
 		WHERE created_at >= datetime('now', '-7 days', 'localtime')`).Scan(&weekRows)
 	for _, r := range weekRows {
-		weekCost += model.CalculateCost(r.Input, r.Output, r.Model)
+		weekCost += model.CalculateCost(r.Input, r.Output, 0, r.Model)
 	}
 	var monthRows []AllRow
 	model.DB.Raw(`SELECT input_tokens as input, output_tokens as output, model FROM usage_logs
 		WHERE created_at >= datetime('now', '-30 days', 'localtime')`).Scan(&monthRows)
 	for _, r := range monthRows {
-		monthCost += model.CalculateCost(r.Input, r.Output, r.Model)
+		monthCost += model.CalculateCost(r.Input, r.Output, 0, r.Model)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"total_cost":    totalCost,
@@ -1216,7 +1232,7 @@ func getCostByPlan(c *gin.Context) {
 	var result []PlanRow
 	for _, r := range rows {
 		// 用默认模型价格估算
-		cost := model.CalculateCost(r.InputTokens, r.OutputTokens, "default")
+		cost := model.CalculateCost(r.InputTokens, r.OutputTokens, 0, "default")
 		result = append(result, PlanRow{
 			PlanName:     r.PlanName,
 			InputTokens:  r.InputTokens,
@@ -1252,7 +1268,7 @@ func getCostTrend(c *gin.Context) {
 	}
 	var trend []TrendItem
 	for _, r := range rows {
-		cost := model.CalculateCost(r.InputTokens, r.OutputTokens, "default")
+		cost := model.CalculateCost(r.InputTokens, r.OutputTokens, 0, "default")
 		trend = append(trend, TrendItem{
 			Date:        r.Date,
 			TotalTokens: r.InputTokens + r.OutputTokens,

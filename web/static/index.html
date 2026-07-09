@@ -344,6 +344,7 @@
       <div class="nav">
         <button class="active" onclick="showTab('dashboard', this)">总览面板</button>
         <button onclick="showTab('channels', this)">渠道管理</button>
+        <button onclick="showTab('pricing', this)">定价管理</button>
         <button onclick="showTab('tokens', this)">Token 管理</button>
         <button onclick="showTab('users', this)">用户管理</button>
         <button onclick="showTab('logs', this)">请求日志</button>
@@ -443,6 +444,41 @@
             </div>
             <button class="btn btn-success" onclick="createChannel()">创建 / 保存</button>
             <pre id="channelCreateOut" style="margin-top:12px;">填写表单后创建…</pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-pricing" class="tab hidden">
+        <div class="grid">
+          <div class="card span-9">
+            <div class="card-title">定价列表</div>
+            <button class="btn btn-primary mb-4" onclick="loadPricings()">刷新列表</button>
+            <select id="pricingFilter" style="padding:6px 12px;border-radius:4px;border:1px solid #ccc;margin-left:10px;" onchange="loadPricings()"></select>
+            <div id="pricingsTableWrap" class="muted">等待加载…</div>
+          </div>
+          <div class="card span-3">
+            <div class="card-title">新建 / 编辑定价</div>
+            <div class="muted" style="font-size:11px;margin-bottom:8px;">编辑时自动填充表单，修改后点击创建保存。</div>
+            <input id="pr_model_name" placeholder="模型名（如 deepseek-v4-flash）" />
+            <select id="pr_pricing_type">
+              <option value="pay_per_use">按量计费</option>
+              <option value="monthly">包月</option>
+            </select>
+            <input id="pr_provider" placeholder="供应商（deepseek/qwen/zhipu）" />
+            <input id="pr_input_price" type="number" step="0.000001" placeholder="输入价（元/千token）" />
+            <input id="pr_input_cache_price" type="number" step="0.000001" placeholder="缓存命中输入价" />
+            <input id="pr_output_price" type="number" step="0.000001" placeholder="输出价（元/千token）" />
+            <input id="pr_monthly_fee" type="number" step="0.01" placeholder="包月费用（元）" />
+            <input id="pr_included_quota" type="number" placeholder="包月包含额度（token）" />
+            <input id="pr_overage_price" type="number" step="0.000001" placeholder="超额单价" />
+            <input id="pr_effective_date" type="date" placeholder="生效日期" />
+            <select id="pr_status">
+              <option value="1">启用</option>
+              <option value="0">停用</option>
+            </select>
+            <button class="btn btn-primary" onclick="createOrUpdatePricing()">创建 / 更新</button>
+            <button class="btn btn-secondary" onclick="clearPricingForm()">清空表单</button>
+            <pre id="pricingCreateOut" style="margin-top:12px;">填写表单后创建…</pre>
           </div>
         </div>
       </section>
@@ -706,6 +742,7 @@
       // 自动加载对应数据
       if (name === 'tokens') loadTokens();
       if (name === 'channels') loadChannels();
+      if (name === 'pricing') loadPricings();
       if (name === 'users') loadUsers();
       if (name === 'logs') loadLogs();
     }
@@ -746,7 +783,130 @@
       return '<span class="badge badge-danger">' + code + '</span>';
     }
 
-        async function loadChannels() {
+        // ===== 定价管理 =====
+    let _editingPricingId = null;
+
+    async function loadPricings() {
+      const res = await fetch('/api/v1/pricing', { headers: authHeaders() });
+      if (res.status === 401) return setText('pricingsTableWrap', '请先登录');
+      const data = await safeJson(res);
+      const allPricings = data.data || [];
+      // 动态生成筛选下拉
+      const providers = [...new Set(allPricings.map(p => p.provider || '未分类'))].sort();
+      const filterEl = document.getElementById('pricingFilter');
+      const currentFilter = filterEl.value;
+      filterEl.innerHTML = '<option value="">全部 (' + allPricings.length + ')</option>' +
+        providers.map(p => {
+          const count = allPricings.filter(pr => (pr.provider || '未分类') === p).length;
+          return '<option value="' + p + '">' + p + ' (' + count + ')</option>';
+        }).join('');
+      filterEl.value = currentFilter;
+      // 筛选
+      const filterVal = filterEl.value;
+      const filtered = filterVal ? allPricings.filter(p => (p.provider || '未分类') === filterVal) : allPricings;
+      const rows = filtered.map(p => {
+        const typeBadge = p.pricing_type === 'monthly'
+          ? '<span class="badge badge-success">包月 ¥' + p.monthly_fee + '</span>'
+          : '<span class="badge badge-warning">按量</span>';
+        const statusBadge = p.status === 1
+          ? '<span class="badge badge-success">启用</span>'
+          : '<span class="badge badge-danger">停用</span>';
+        return '<tr>' +
+          '<td>' + p.id + '</td>' +
+          '<td><strong>' + p.model_name + '</strong></td>' +
+          '<td>' + typeBadge + '</td>' +
+          '<td>' + (p.input_cache_price || '-') + '</td>' +
+          '<td>' + (p.input_price || '-') + '</td>' +
+          '<td>' + (p.output_price || '-') + '</td>' +
+          '<td>' + (p.provider || '-') + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td style="white-space:nowrap">' +
+            '<button class="btn btn-secondary btn-sm" onclick="editPricing(' + p.id + ')">编辑</button> ' +
+            '<button class="btn btn-danger btn-sm" onclick="deletePricing(' + p.id + ')">删除</button>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+      document.getElementById('pricingsTableWrap').innerHTML = '<table><thead><tr><th>ID</th><th>模型名</th><th>计费类型</th><th>缓存命中价</th><th>输入价</th><th>输出价</th><th>供应商</th><th>状态</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">暂无数据</td></tr>') + '</tbody></table>';
+    }
+
+    async function editPricing(id) {
+      const res = await fetch('/api/v1/pricing/' + id, { headers: authHeaders() });
+      const data = await safeJson(res);
+      const p = data.data;
+      if (!p) return alert('定价不存在');
+      document.getElementById('pr_model_name').value = p.model_name;
+      document.getElementById('pr_pricing_type').value = p.pricing_type;
+      document.getElementById('pr_provider').value = p.provider || '';
+      document.getElementById('pr_input_price').value = p.input_price || '';
+      document.getElementById('pr_input_cache_price').value = p.input_cache_price || '';
+      document.getElementById('pr_output_price').value = p.output_price || '';
+      document.getElementById('pr_monthly_fee').value = p.monthly_fee || '';
+      document.getElementById('pr_included_quota').value = p.included_quota || '';
+      document.getElementById('pr_overage_price').value = p.overage_price || '';
+      if (p.effective_date) {
+        const d = new Date(p.effective_date);
+        document.getElementById('pr_effective_date').value = d.toISOString().split('T')[0];
+      }
+      document.getElementById('pr_status').value = p.status;
+      _editingPricingId = id;
+      document.getElementById('pricingCreateOut').textContent = '编辑模式，ID: ' + id;
+    }
+
+    async function createOrUpdatePricing() {
+      const body = {
+        model_name: document.getElementById('pr_model_name').value,
+        pricing_type: document.getElementById('pr_pricing_type').value,
+        provider: document.getElementById('pr_provider').value,
+        input_price: parseFloat(document.getElementById('pr_input_price').value) || 0,
+        input_cache_price: parseFloat(document.getElementById('pr_input_cache_price').value) || 0,
+        output_price: parseFloat(document.getElementById('pr_output_price').value) || 0,
+        monthly_fee: parseFloat(document.getElementById('pr_monthly_fee').value) || 0,
+        included_quota: parseInt(document.getElementById('pr_included_quota').value) || 0,
+        overage_price: parseFloat(document.getElementById('pr_overage_price').value) || 0,
+        effective_date: document.getElementById('pr_effective_date').value,
+        status: parseInt(document.getElementById('pr_status').value)
+      };
+      if (!body.model_name) return alert('模型名不能为空');
+      const url = _editingPricingId ? '/api/v1/pricing/' + _editingPricingId : '/api/v1/pricing';
+      const method = _editingPricingId ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method: method,
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const result = await safeJson(res);
+      setText('pricingCreateOut', JSON.stringify(result, null, 2));
+      if (res.ok) {
+        clearPricingForm();
+        loadPricings();
+      }
+    }
+
+    async function deletePricing(id) {
+      if (!confirm('确定删除该定价？')) return;
+      const res = await fetch('/api/v1/pricing/' + id, { method: 'DELETE', headers: authHeaders() });
+      const result = await safeJson(res);
+      alert(result.message || result.error || '操作完成');
+      loadPricings();
+    }
+
+    function clearPricingForm() {
+      _editingPricingId = null;
+      document.getElementById('pr_model_name').value = '';
+      document.getElementById('pr_pricing_type').value = 'pay_per_use';
+      document.getElementById('pr_provider').value = '';
+      document.getElementById('pr_input_price').value = '';
+      document.getElementById('pr_input_cache_price').value = '';
+      document.getElementById('pr_output_price').value = '';
+      document.getElementById('pr_monthly_fee').value = '';
+      document.getElementById('pr_included_quota').value = '';
+      document.getElementById('pr_overage_price').value = '';
+      document.getElementById('pr_effective_date').value = '';
+      document.getElementById('pr_status').value = '1';
+      document.getElementById('pricingCreateOut').textContent = '填写表单后创建…';
+    }
+
+    async function loadChannels() {
       const res = await fetch('/api/v1/channels', { headers: authHeaders() });
       if (res.status === 401) return setText('channelsTableWrap', '请先登录');
       const data = await safeJson(res);
