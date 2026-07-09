@@ -407,8 +407,15 @@ const DefaultBehaviorHint = "能直接做就直接做；只有遇到阻塞性信
 
 // ApplyDefaultBehaviorStrategy 对开发类任务注入默认行为策略
 // 使用 InsertAfterSystemBlock 保证前缀稳定
+// 安全补丁：如果用户明确要求分步确认，跳过注入
 func ApplyDefaultBehaviorStrategy(messages []map[string]interface{}) ([]map[string]interface{}, bool) {
 	if !IsDevelopmentTask(messages) {
+		return messages, false
+	}
+
+	// 安全补丁：用户要求分步确认时，不注入默认策略
+	if UserWantsStepByStep(messages) {
+		log.Printf("[默认策略] 用户要求分步确认，跳过默认策略注入")
 		return messages, false
 	}
 
@@ -420,4 +427,55 @@ func ApplyDefaultBehaviorStrategy(messages []map[string]interface{}) ([]map[stri
 	result := InsertAfterSystemBlock(messages, hintMsg)
 	log.Printf("[默认策略] 开发类任务，注入默认行为策略")
 	return result, true
+}
+
+// ===== 安全补丁：用户分步意图检测（Phase 2C） =====
+// 当用户明确要求"分步骤/一步步/先问我确认"时，跳过所有行为修正
+// 防止"过度修正"——用户要求分步确认时强行"一次性完成"会降低质量
+
+// stepByStepPattern 匹配用户要求分步确认的意图
+var stepByStepPattern = regexp.MustCompile(`(?i)(分步[骤来]?|一步步|一步一步|逐步|先问我|先确认|一步一步来|慢慢来|不要急|分步确认|逐步确认|每[一每]步|等我确认|我确认[后再之]|需要我确认|先给[我你]看|先[不别]急)`)
+
+// UserWantsStepByStep 检测用户是否要求分步确认
+// 检查最后一条用户消息，如果包含分步意图关键词则返回 true
+func UserWantsStepByStep(messages []map[string]interface{}) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		role, _ := messages[i]["role"].(string)
+		if role != "user" {
+			continue
+		}
+		text := getUserText(messages[i])
+		if text == "" {
+			continue
+		}
+		if stepByStepPattern.MatchString(text) {
+			log.Printf("[安全补丁] 检测到用户分步意图: %s", truncateForLog(text, 50))
+			return true
+		}
+		// 只检查最后一条 user 消息
+		return false
+	}
+	return false
+}
+
+// ShouldSkipBehaviorHint 综合判断是否应跳过行为修正
+// 在 routes.go 中调用，替代直接调用 ShouldApplyBehaviorHint
+func ShouldSkipBehaviorHint(messages []map[string]interface{}, tokenKey string) bool {
+	// 用户要求分步确认 → 跳过
+	if UserWantsStepByStep(messages) {
+		return true
+	}
+	// 套餐级别开关
+	if !ShouldApplyBehaviorHint(tokenKey) {
+		return true
+	}
+	return false
+}
+
+// truncateForLog 截断字符串用于日志
+func truncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

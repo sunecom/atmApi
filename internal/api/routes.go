@@ -831,7 +831,8 @@ modelAllowed:
 	}
 	// ===== 行为修正引擎 v2（Phase 2） =====
 	// 检测低效对话模式，注入 system hint 减少冗余轮次
-	if service.ShouldApplyBehaviorHint(tokenKey) {
+	// 安全补丁：用户要求分步确认时跳过（Phase 2C）
+	if !service.ShouldSkipBehaviorHint(req.Messages, tokenKey) {
 		estTokens := service.EstimateTokensForBehavior(req.Messages)
 		hint := service.DetectAndFixBehavior(req.Messages, estTokens)
 		if hint != nil {
