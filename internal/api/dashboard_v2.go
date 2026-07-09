@@ -218,6 +218,27 @@ func getDashboardV2(c *gin.Context) {
 	}
 
 	// 4. 每日趋势
+	// 收入按套餐激活日（该 token 在时间段内首次调用日）一次性确认
+	tokenFirstDate := make(map[uint]string) // tokenID -> 首次调用日期
+	for _, log := range filteredLogs {
+		date := log.CreatedAt.Format("2006-01-02")
+		if d, ok := tokenFirstDate[log.TokenID]; !ok || date < d {
+			tokenFirstDate[log.TokenID] = date
+		}
+	}
+	// 按日期聚合收入：每个 token 的套餐收入计入它的首次调用日
+	tokenPlanCache := make(map[uint]string)
+	for _, log := range filteredLogs {
+		tokenPlanCache[log.TokenID] = log.PlanName
+	}
+	dailyRevenueMap := make(map[string]float64)
+	for tokenID, firstDate := range tokenFirstDate {
+		planName := tokenPlanCache[tokenID]
+		if planName != "" {
+			dailyRevenueMap[firstDate] += calculateTokenRevenue(planName)
+		}
+	}
+
 	dailyMap := make(map[string]*DailyTrendItem)
 	for _, log := range filteredLogs {
 		date := log.CreatedAt.Format("2006-01-02")
@@ -226,13 +247,8 @@ func getDashboardV2(c *gin.Context) {
 		}
 		dailyMap[date].Cost += model.CalculateCost(log.InputTokens, log.OutputTokens, log.CachedTokens, log.Model)
 	}
-	// 为每天计算收入（简化：按 token 日均分摊）
-	for _, item := range dailyMap {
-		// 简化：收入按天均摊
-		days := len(dailyMap)
-		if days > 0 {
-			item.Revenue = totalRevenue / float64(days)
-		}
+	for date, item := range dailyMap {
+		item.Revenue = dailyRevenueMap[date]
 		item.Profit = item.Revenue - item.Cost
 	}
 	var dailyTrend []DailyTrendItem
