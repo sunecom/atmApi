@@ -136,6 +136,7 @@ func RegisterRoutes(r *gin.Engine) {
 		{
 			managed.GET("/tokens", getTokens)
 			managed.POST("/tokens", createToken)
+			managed.POST("/tokens/batch", batchCreateTokens)
 			managed.PUT("/tokens/:id", updateToken)
 			managed.DELETE("/tokens/:id", deleteToken)
 			managed.GET("/channels", getChannels)
@@ -189,7 +190,7 @@ func RegisterRoutes(r *gin.Engine) {
 }
 func indexPage(c *gin.Context)     { c.File("./web/static/index.html") }
 func healthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "version": "2.0.1", "time": time.Now().Format("2006-01-02 15:04:05")})
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "version": "2.1.0", "time": time.Now().Format("2006-01-02 15:04:05")})
 }
 func cacheStats(c *gin.Context) {
 	stats := service.GetCacheStats()
@@ -702,6 +703,35 @@ func chatCompletions(c *gin.Context) {
 		reqMap["model"] = actualModel
 		body, _ = json.Marshal(reqMap)
 	}
+
+	// ===== 模型权限校验：token 的套餐必须允许此模型 =====
+	apiPlanName := apiToken.PlanName
+	if apiPlanName == "" {
+		apiPlanName = apiToken.RateLimitGroup
+	}
+	if apiPlanName != "" {
+		allowedModels := service.GetAllowedModels(apiPlanName)
+		if len(allowedModels) > 0 {
+			// 用户请求的模型名用于鉴权，deepseek-a4 是统一入口
+			if req.Model == "deepseek-a4" && containsString(allowedModels, "deepseek-a4") {
+				// deepseek-a4 在允许列表中 → 其下游模型自动放行
+				goto modelAllowed
+			}
+			if !containsString(allowedModels, actualModel) {
+				// actualModel 不在允许列表 → 尝试用 deepseek-a4 作为入口（套餐允许 a4）
+				if containsString(allowedModels, "deepseek-a4") {
+					goto modelAllowed
+				}
+				log.Printf("[鉴权] token=*** 套餐=%s 不允许模型=%s, allowed=%v",
+					apiToken.Name, apiPlanName, actualModel, allowedModels)
+				respondError(c, http.StatusForbidden, "MODEL_NOT_ALLOWED",
+					fmt.Sprintf("当前套餐「%s」不支持模型「%s」，可用模型: %s",
+						apiPlanName, actualModel, strings.Join(allowedModels, ", ")))
+				return
+			}
+		}
+	}
+modelAllowed:
 	// 检查缓存（只对非流式请求）
 	var isStream bool
 	var reqMap map[string]interface{}
@@ -727,6 +757,40 @@ func chatCompletions(c *gin.Context) {
 			return
 		}
 	}
+	// ===== 上下文压缩引擎 v2 =====
+	// 两级策略：> 100K 无损截断，> 200K 摘要替换
+	{
+		compressedMsgs := service.CompressContext(req.Messages, tokenKey)
+		if len(compressedMsgs) != len(req.Messages) {
+			var reqMapCC map[string]interface{}
+			json.Unmarshal(body, &reqMapCC)
+			newMsgs := make([]interface{}, len(compressedMsgs))
+			for i, m := range compressedMsgs {
+				newMsgs[i] = m
+			}
+			reqMapCC["messages"] = newMsgs
+			body, _ = json.Marshal(reqMapCC)
+			req.Messages = compressedMsgs
+		}
+	}
+	// ===== 行为修正引擎 v2（Phase 2） =====
+	// 检测低效对话模式，注入 system hint 减少冗余轮次
+	if service.ShouldApplyBehaviorHint(tokenKey) {
+		estTokens := service.EstimateTokensForBehavior(req.Messages)
+		hint := service.DetectAndFixBehavior(req.Messages, estTokens)
+		if hint != nil {
+			req.Messages = service.ApplyBehaviorHint(req.Messages, hint)
+			var reqMapBH map[string]interface{}
+			json.Unmarshal(body, &reqMapBH)
+			newMsgs := make([]interface{}, len(req.Messages))
+			for i, m := range req.Messages {
+				newMsgs[i] = m
+			}
+			reqMapBH["messages"] = newMsgs
+			body, _ = json.Marshal(reqMapBH)
+		}
+	}
+
 	result, err := service.RouteRequest(actualModel, body, tokenKey)
 	if err != nil {
 		// 检查是否是 tool_calls 不兼容错误
@@ -1117,19 +1181,44 @@ func getCostTrend(c *gin.Context) {
 }
 // ===== 模型列表 =====
 func listModels(c *gin.Context) {
-	var channels []model.Channel
-	model.DB.Where("status = ?", 1).Find(&channels)
-	models := make(map[string]bool)
-	for _, ch := range channels {
-		for _, m := range parseModels(ch.Models) {
-			models[m] = true
+	// 按 token 套餐过滤：只返回当前套餐允许的模型
+	var allowedList []string
+
+	// 提取 token
+	tokenKey := extractToken(c)
+	if tokenKey != "" {
+		if apiToken, err := model.FindByKey(tokenKey); err == nil && apiToken.ID > 0 {
+			// 用 plan_name 查找套餐（优先），其次是 rate_limit_group
+			planName := apiToken.PlanName
+			if planName == "" {
+				planName = apiToken.RateLimitGroup
+			}
+			if planName != "" {
+				allowedList = service.GetAllowedModels(planName)
+			}
 		}
 	}
-	modelList := make([]string, 0, len(models))
-	for m := range models {
-		modelList = append(modelList, m)
+
+	// 如果没有 token 或套餐未配置，回退到通用 deepseek-a4 列表
+	if len(allowedList) == 0 {
+		// 不鉴权时只显示 deepseek-a4（统一入口模型）
+		allowedList = []string{"deepseek-a4"}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": modelList})
+
+	// 如果 allowed_models 包含 deepseek-a4，补充其实际后端模型（方便客户端理解）
+	hasA4 := false
+	for _, m := range allowedList {
+		if m == "deepseek-a4" {
+			hasA4 = true
+			break
+		}
+	}
+	if hasA4 {
+		// deepseek-a4 的下游模型不直接暴露，deepseek-a4 作为统一入口
+		// 只保留 deepseek-a4，不放具体后端
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": allowedList})
 }
 // ===== 用量统计 =====
 func getUsageStats(c *gin.Context) {
@@ -1471,6 +1560,89 @@ func checkLoginRateLimit(ip string) bool {
 func generateTokenKey() string {
 	return service.GenerateAPIKey()
 }
+
+// batchCreateTokens 批量生产 token
+func batchCreateTokens(c *gin.Context) {
+	var req struct {
+		PlanGroup  string `json:"plan_group" binding:"required"`
+		PlanName   string `json:"plan_name" binding:"required"`
+		Count      int    `json:"count" binding:"required,min=1,max=100"`
+		ExpireDays int    `json:"expire_days"`
+		NamePrefix string `json:"name_prefix"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.ExpireDays <= 0 {
+		req.ExpireDays = 30
+	}
+
+	var plan model.Plan
+	if err := model.DB.Where("name = ?", req.PlanName).First(&plan).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("套餐 %s 不存在", req.PlanName)})
+		return
+	}
+
+	expiredTime := int64(0)
+	if req.ExpireDays > 0 {
+		expiredTime = time.Now().AddDate(0, 0, req.ExpireDays).Unix()
+	}
+	activatedAt := time.Now().Unix()
+
+	type Result struct {
+		Key         string `json:"key"`
+		PlanDisplay string `json:"plan_display"`
+		ExpiredAt   string `json:"expired_at"`
+	}
+	var results []Result
+
+	for i := 0; i < req.Count; i++ {
+		key := generateTokenKey()
+		name := fmt.Sprintf("%s-%s-%03d", req.PlanGroup, req.PlanName, i+1)
+
+		token := model.Token{
+			UserID:         0,
+			Name:           name,
+			Key:            key,
+			Status:         1,
+			RemainQuota:    plan.MonthlyMax,
+			InitQuota:      plan.MonthlyMax,
+			UnlimitedQuota: false,
+			ExpiredTime:    expiredTime,
+			ActivatedAt:    activatedAt,
+			CreatedTime:    activatedAt,
+			RateLimitGroup: req.PlanName,
+			PlanGroup:      req.PlanGroup,
+			PlanName:       req.PlanName,
+		}
+		if err := model.DB.Create(&token).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败", "index": i})
+			return
+		}
+
+		expiredStr := "永久"
+		if expiredTime > 0 {
+			expiredStr = time.Unix(expiredTime, 0).Format("2006-01-02")
+		}
+
+		results = append(results, Result{
+			Key:         key,
+			PlanDisplay: plan.DisplayName,
+			ExpiredAt:   expiredStr,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  fmt.Sprintf("成功生产 %d 个 token", len(results)),
+		"tokens":   results,
+		"plan":     plan.DisplayName,
+		"quota":    plan.MonthlyMax,
+	})
+}
+
+// compressLongContext 已迁移到 service/context_compressor.go（CompressContext）
+
 func extractToken(c *gin.Context) string {
 	auth := c.GetHeader("Authorization")
 	if len(auth) > 7 && auth[:7] == "Bearer " {
@@ -1480,6 +1652,15 @@ func extractToken(c *gin.Context) string {
 }
 func parseModels(modelsStr string) []string {
 	return strings.Split(modelsStr, ",")
+}
+func containsString(slice []string, target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	for _, s := range slice {
+		if strings.ToLower(strings.TrimSpace(s)) == target {
+			return true
+		}
+	}
+	return false
 }
 // 导出日志为 CSV
 func exportLogs(c *gin.Context) {

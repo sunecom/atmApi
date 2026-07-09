@@ -1,0 +1,227 @@
+package service
+
+import (
+	"fmt"
+	"log"
+	"regexp"
+	"strings"
+)
+
+// ===== 行为修正引擎（Phase 2） =====
+// 检测 AI 对话中的低效模式，主动注入 system hint 减少冗余轮次
+// 三档检测：
+//   1. confirmation_loop — 连续 >3 次"可以吗/继续吗"式确认 → 注入"一次性给完整方案"
+//   2. fragmented_output — 连续 >5 次短轮（<50 字）→ 注入"请完整回复"
+//   3. verbose_context — 估算 tokens >50K → 注入"直接给最终方案，不逐项确认"
+//
+// 设计原则（第一性原理）：
+//   - 不替用户做决定，只帮 AI 减少不必要的 token 浪费
+//   - 不改变对话内容质量
+//   - 仅消除冗余确认轮次和碎片化输出
+
+// BehaviorHint 检测到的行为修正建议
+type BehaviorHint struct {
+	Pattern  string // "verbose" | "confirmation_loop" | "fragmented"
+	Hint     string // 要注入的系统提示
+	Priority int    // 优先级（高优先级覆盖低优先级）
+}
+
+// 确认模式关键词正则（匹配 AI 回复中的确认请求）
+// 例如："这样可以吗？" "需要我继续吗？" "你觉得呢？"
+var confirmationPattern = regexp.MustCompile(`(?i)(可以吗|继续吗|需要我|你觉得|行不行|对不对|是否|要不要|确认一下|可以继续)`)
+
+// 短轮阈值（字符数）
+const (
+	ShortReplyThreshold = 80   // <80 字算短轮
+	FragmentedCountMax  = 5    // >5 次短轮触发
+	ConfirmationCountMax = 3   // >3 次确认触发
+	VerboseTokenThreshold = 50000 // >50K tokens 触发
+)
+
+// DetectAndFixBehavior 检测对话模式，返回需要注入的 hint
+// 在 routes.go 中调用：messages = CompressContext(messages, tokenKey) 之后
+// 然后 DetectAndFixBehavior(messages)，如果有 hint 则追加到 messages
+func DetectAndFixBehavior(messages []map[string]interface{}, estTokens int) *BehaviorHint {
+	if len(messages) < 4 {
+		return nil // 对话太短，不检测
+	}
+
+	// 收集 assistant 回复
+	var assistantReplies []string
+	for _, msg := range messages {
+		role, _ := msg["role"].(string)
+		if role != "assistant" {
+			continue
+		}
+		text := getUserText(msg)
+		if text != "" {
+			assistantReplies = append(assistantReplies, text)
+		}
+	}
+
+	if len(assistantReplies) < 3 {
+		return nil // 回复太少，不检测
+	}
+
+	hints := make([]*BehaviorHint, 0)
+
+	// ===== 检测 1：confirmation_loop =====
+	confCount := 0
+	for _, reply := range assistantReplies {
+		if confirmationPattern.MatchString(reply) {
+			confCount++
+		}
+	}
+	if confCount > ConfirmationCountMax {
+		hints = append(hints, &BehaviorHint{
+			Pattern:  "confirmation_loop",
+			Hint:     "注意：检测到多轮确认模式。接下来的回复请一次性给出完整方案，不需要逐项确认。如果方案有多个步骤，用编号列表形式一次输出。",
+			Priority: 10,
+		})
+		log.Printf("[行为修正] confirmation_loop: %d 次确认请求", confCount)
+	}
+
+	// ===== 检测 2：fragmented_output =====
+	// 只看最近的回复（最后 10 条 assistant 消息）
+	recentReplies := assistantReplies
+	if len(recentReplies) > 10 {
+		recentReplies = recentReplies[len(recentReplies)-10:]
+	}
+
+	shortCount := 0
+	for _, reply := range recentReplies {
+		if len(reply) < ShortReplyThreshold {
+			shortCount++
+		}
+	}
+	if shortCount > FragmentedCountMax {
+		hints = append(hints, &BehaviorHint{
+			Pattern:  "fragmented",
+			Hint:     "注意：检测到碎片化回复模式。请对当前问题给出完整、详细的回复，将相关信息整合在一条消息中，避免分多条发送。",
+			Priority: 8,
+		})
+		log.Printf("[行为修正] fragmented_output: %d/%d 次短轮", shortCount, len(recentReplies))
+	}
+
+	// ===== 检测 3：verbose_context =====
+	if estTokens > VerboseTokenThreshold {
+		hints = append(hints, &BehaviorHint{
+			Pattern:  "verbose",
+			Hint:     "注意：当前对话上下文较长。请直接给出最终方案和结论，不需要重复已知背景，不需要逐项确认。保持回复简洁高效。",
+			Priority: 5,
+		})
+		log.Printf("[行为修正] verbose_context: estTokens=%d", estTokens)
+	}
+
+	if len(hints) == 0 {
+		return nil
+	}
+
+	// 取最高优先级的 hint
+	best := hints[0]
+	for _, h := range hints[1:] {
+		if h.Priority > best.Priority {
+			best = h
+		}
+	}
+
+	log.Printf("[行为修正] 选中: pattern=%s priority=%d", best.Pattern, best.Priority)
+	return best
+}
+
+// ApplyBehaviorHint 将 hint 注入到 messages 中（追加为 system 消息）
+func ApplyBehaviorHint(messages []map[string]interface{}, hint *BehaviorHint) []map[string]interface{} {
+	if hint == nil {
+		return messages
+	}
+
+	hintMsg := map[string]interface{}{
+		"role":    "system",
+		"content": hint.Hint,
+	}
+
+	// 找到最后一条 system 消息的位置，在其后插入
+	// 这样 hint 不会打断 system → user → assistant 的结构
+	insertAt := 0
+	for i, msg := range messages {
+		role, _ := msg["role"].(string)
+		if role == "system" {
+			insertAt = i + 1
+		} else {
+			break
+		}
+	}
+
+	// 如果开头没有 system（不太可能），直接 prepend
+	if insertAt == 0 {
+		result := make([]map[string]interface{}, 0, len(messages)+1)
+		result = append(result, hintMsg)
+		result = append(result, messages...)
+		return result
+	}
+
+	// 在 system 块末尾插入
+	result := make([]map[string]interface{}, 0, len(messages)+1)
+	result = append(result, messages[:insertAt]...)
+	result = append(result, hintMsg)
+	result = append(result, messages[insertAt:]...)
+
+	log.Printf("[行为修正] 已注入 hint: pattern=%s at position=%d", hint.Pattern, insertAt)
+	return result
+}
+
+// ShouldApplyBehaviorHint 根据套餐决定是否启用行为修正
+// Phase 3 预留：基础版强制启用，旗舰版可选关闭
+func ShouldApplyBehaviorHint(tokenKey string) bool {
+	// Phase 2：所有套餐默认启用
+	// Phase 3 可以根据 plan 配置开关
+	return true
+}
+
+// EstimateTokensForBehavior 供 routes.go 调用的便捷方法
+// 如果已经算过 estTokens 直接传入，否则现场算
+func EstimateTokensForBehavior(messages []map[string]interface{}) int {
+	return estimateTokens(messages)
+}
+
+// FormatBehaviorStats 格式化行为检测统计（用于日志/调试）
+func FormatBehaviorStats(messages []map[string]interface{}) string {
+	var assistantCount, userCount, systemCount int
+	var totalReplyLen int
+	var shortReplies int
+
+	for _, msg := range messages {
+		role, _ := msg["role"].(string)
+		text := getUserText(msg)
+		switch role {
+		case "assistant":
+			assistantCount++
+			totalReplyLen += len(text)
+			if len(text) < ShortReplyThreshold {
+				shortReplies++
+			}
+		case "user":
+			userCount++
+		case "system":
+			systemCount++
+		}
+	}
+
+	avgReplyLen := 0
+	if assistantCount > 0 {
+		avgReplyLen = totalReplyLen / assistantCount
+	}
+
+	return fmt.Sprintf("msg=%d (sys=%d usr=%d ast=%d) shortReplies=%d avgReplyLen=%d",
+		len(messages), systemCount, userCount, assistantCount, shortReplies, avgReplyLen)
+}
+
+// stripMarkdown 简单去除 markdown 标记，用于更准确的长度判断
+func stripMarkdown(s string) string {
+	s = strings.ReplaceAll(s, "**", "")
+	s = strings.ReplaceAll(s, "`", "")
+	s = strings.ReplaceAll(s, "#", "")
+	s = strings.ReplaceAll(s, "-", "")
+	s = strings.ReplaceAll(s, "*", "")
+	return s
+}

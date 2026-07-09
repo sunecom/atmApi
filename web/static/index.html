@@ -449,19 +449,31 @@
             <div id="tokensTableWrap" class="muted">等待加载…</div>
           </div>
           <div class="card span-3">
-            <div class="card-title">新建 / 编辑 Token</div>
-            <div class="muted" style="font-size:11px;margin-bottom:8px;">编辑时自动填充表单，修改后点击创建保存。</div>
-            <input id="tk_user_id" value="1" placeholder="用户 ID" />
-            <input id="tk_name" placeholder="Token 名称" />
-            <div class="row">
-              <input id="tk_remain_quota" value="-1" placeholder="剩余配额 (-1 无限)" />
-              <input id="tk_expired_time" value="-1" placeholder="过期 (-1 永不过期)" />
+            <div class="card-title">⚙️ Token 生产</div>
+            <div class="muted" style="font-size:11px;margin-bottom:8px;">选择套餐，批量生产 token，自动按套餐配额分配。</div>
+            <select id="bp_planGroup" onchange="updateBatchPlanList()" style="width:100%;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);margin-bottom:6px;">
+              <option value="">选择套餐线</option>
+              <option value="dp-a4">DP-A4(BASIC)</option>
+              <option value="openclaw">DP-A4(Openclaw)</option>
+              <option value="hermes">DP-A4(Hermes)</option>
+            </select>
+            <select id="bp_planName" style="width:100%;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);margin-bottom:6px;">
+              <option value="">选择套餐</option>
+            </select>
+            <div style="margin-bottom:6px;">
+              <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:2px;">数量（1-100）</label>
+              <input id="bp_count" value="1" placeholder="数量" onchange="updateBatchPreview()" style="width:100%;" />
             </div>
-            <div style="margin-bottom:12px;">
-              <label><input id="tk_unlimited" type="checkbox" checked style="width:auto;margin-right:6px;" /> 无限配额</label>
+            <div style="margin-bottom:6px;">
+              <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:2px;">有效期（天）</label>
+              <input id="bp_days" value="30" placeholder="有效期(天)" onchange="updateBatchPreview()" style="width:100%;" />
             </div>
-            <button class="btn btn-success" onclick="createToken()">创建 / 保存</button>
-            <pre id="tokenCreateOut" style="margin-top:12px;">填写表单后创建…</pre>
+            <div id="bp_preview" class="muted" style="font-size:11px;padding:8px;background:var(--bg-hover);border-radius:6px;margin-bottom:8px;min-height:32px;">选择套餐后显示配额预览</div>
+            <button class="btn btn-success" onclick="batchProduceTokens()" style="width:100%;margin-bottom:6px;">🚀 批量生产</button>
+            <div id="bp_result" style="margin-top:8px;">
+              <pre id="bp_resultText" style="font-size:11px;max-height:200px;overflow-y:auto;background:var(--bg-input);padding:8px;border-radius:6px;">等待生产...</pre>
+              <button id="bp_exportBtn" class="btn btn-secondary btn-sm" onclick="exportBatchResult()" style="display:none;margin-top:4px;width:100%;">📋 复制导出格式（千牛）</button>
+            </div>
           </div>
         </div>
       </section>
@@ -937,24 +949,114 @@
     }
 
     async function editToken(id) {
-      const res = await fetch('/api/v1/tokens', { headers: authHeaders() });
-      const data = await safeJson(res);
-      const tk = (data.data || []).find(t => t.id === id);
-      if (!tk) return alert('Token 不存在');
-      document.getElementById('tk_user_id').value = tk.user_id;
-      document.getElementById('tk_name').value = tk.name;
-      document.getElementById('tk_remain_quota').value = tk.remain_quota;
-      document.getElementById('tk_expired_time').value = tk.expired_time;
-      document.getElementById('tk_unlimited').checked = tk.unlimited_quota;
-      window._editingTokenId = id;
-      showTab('tokens', document.querySelectorAll('.nav button')[2]);
+      const newName = prompt('输入新名称（留空不修改）：');
+      if (newName === null) return;
+      if (newName.trim()) {
+        const res = await fetch('/api/v1/tokens/' + id, {
+          method: 'PUT', headers: {'Content-Type': 'application/json', ...authHeaders()},
+          body: JSON.stringify({name: newName.trim()}),
+        });
+        const data = await safeJson(res);
+        if (res.ok) { loadTokens(); alert('✅ 已更新'); }
+        else alert(data.error || '更新失败');
+      }
     }
 
     async function deleteToken(id) {
       if (!confirm('确定删除该 Token？')) return;
       const res = await fetch('/api/v1/tokens/' + id, { method: 'DELETE', headers: authHeaders() });
-      setText('tokenCreateOut', await safeJson(res));
+      const data = await safeJson(res);
       loadTokens();
+      alert(data.message || data.error || '已删除');
+    }
+
+    // ===== Token 批量生产 =====
+    function updateBatchPlanList() {
+      const pg = document.getElementById('bp_planGroup').value;
+      const pn = document.getElementById('bp_planName');
+      const plans = {
+        'dp-a4': ['basic|基础版 ¥29.9|8,000次|100','pro|专业版 ¥69|24,000次|300','starter|创业版 ¥99|30,000次|400','flagship|旗舰版 ¥129|50,000次|600','advanced|高级版 ¥299|100,000次|1,200','enterprise|企业版 ¥599|300,000次|3,000'],
+        'openclaw': ['openclaw-basic|OpenClaw基础 ¥99|30,000次|500','openclaw-pro|OpenClaw进阶 ¥299|100,000次|2,000'],
+        'hermes': ['hermes-basic|Hermes基础 ¥149|50,000次|800','hermes-pro|Hermes进阶 ¥399|150,000次|3,000']
+      };
+      const list = plans[pg] || [];
+      pn.innerHTML = '<option value="">选择套餐</option>' + list.map(v => {
+        const parts = v.split('|');
+        return '<option value="' + parts[0] + '" data-label="' + parts[1] + ' | 月=' + parts[2] + ' 5h=' + parts[3] + '">' + parts[1] + '</option>';
+      }).join('');
+      updateBatchPreview();
+    }
+
+    function updateBatchPreview() {
+      const sel = document.getElementById('bp_planName');
+      const opt = sel.options[sel.selectedIndex];
+      const preview = document.getElementById('bp_preview');
+      const count = parseInt(document.getElementById('bp_count').value) || 1;
+      const days = parseInt(document.getElementById('bp_days').value) || 30;
+      if (opt && opt.dataset && opt.dataset.label) {
+        preview.innerHTML = '📋 ' + opt.dataset.label + '<br>📦 生产 ' + count + ' 个 · 有效期 ' + days + ' 天';
+      } else {
+        preview.innerHTML = '选择套餐后显示配额预览';
+      }
+    }
+
+    async function batchProduceTokens() {
+      const pg = document.getElementById('bp_planGroup').value;
+      const pn = document.getElementById('bp_planName').value;
+      const count = parseInt(document.getElementById('bp_count').value) || 1;
+      const days = parseInt(document.getElementById('bp_days').value) || 30;
+      if (!pg || !pn) return alert('请选择套餐线+套餐名');
+      if (count < 1 || count > 100) return alert('数量 1-100');
+
+      const btn = document.querySelector('#tab-tokens .btn-success');
+      btn.disabled = true; btn.textContent = '生产中...';
+      const res = await fetch('/api/v1/tokens/batch', {
+        method: 'POST', headers: {'Content-Type': 'application/json', ...authHeaders()},
+        body: JSON.stringify({plan_group: pg, plan_name: pn, count, expire_days: days}),
+      });
+      const data = await safeJson(res);
+      btn.disabled = false; btn.textContent = '🚀 批量生产';
+
+      if (!res.ok) return setText('bp_resultText', data.error || '生产失败');
+
+      // 显示结果
+      const lines = data.tokens.map(t => t.key + ' | ' + t.plan_display + ' | ' + t.expired_at).join('\n');
+      document.getElementById('bp_resultText').textContent = '✅ ' + data.message + '\n\n' + lines;
+
+      // 存储结果供导出
+      window._lastBatchResult = data.tokens;
+      window._lastBatchQuota = data.quota;
+      document.getElementById('bp_exportBtn').style.display = 'block';
+
+      // 刷新列表
+      loadTokens();
+    }
+
+    function exportBatchResult() {
+      const data = window._lastBatchResult || [];
+      if (!data.length) return;
+      // 千牛自动发货格式：密钥,,说明
+      // 说明格式：套餐 | 到期 | 月配额
+      const quota = window._lastBatchQuota || '';
+      const lines = data.map(t => t.key + ',,' + t.plan_display + ' | ' + t.expired_at + ' | 月' + quota);
+      const text = lines.join('\n');
+
+      // 复制到剪贴板（兼容 HTTP）
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        // 同时在结果区显示
+        const pre = document.getElementById('bp_resultText');
+        pre.textContent = '✅ 已复制 ' + data.length + ' 条（千牛格式）\n\n' + text;
+      } catch(e) {
+        const pre = document.getElementById('bp_resultText');
+        pre.textContent = '⚠️ 复制失败，请手动全选复制：\n\n' + text;
+      }
+      document.body.removeChild(ta);
     }
 
     async function createToken() {
