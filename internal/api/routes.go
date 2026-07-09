@@ -163,6 +163,7 @@ func RegisterRoutes(r *gin.Engine) {
 			managed.GET("/dashboard", getDashboard)
 			managed.GET("/token/:id/cost", getTokenCost)
 			managed.GET("/cost-dashboard/enhanced", getDashboardEnhanced)
+			managed.GET("/dashboard/v2", getDashboardV2)
 			managed.GET("/token-ranking", getTokenRanking)
 			managed.GET("/alerts", getAlerts)
 			// 套餐管理

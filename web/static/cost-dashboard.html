@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>atmApi 成本监控预警中心</title>
+    <title>atmApi 成本监控预警中心 v2</title>
     <link rel="icon" href="logo.png"/>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
@@ -35,7 +35,7 @@
         /* 头部 */
         .header {
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
             padding: 20px;
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -47,9 +47,7 @@
         .header::before {
             content: '';
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
+            top: 0; left: 0; right: 0;
             height: 3px;
             background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple), var(--accent-green));
         }
@@ -67,13 +65,67 @@
             margin-top: 8px;
             font-size: 0.9em;
         }
+
+        /* atm模型切换器 */
+        .model-switcher {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 12px;
+            margin: 16px 0 0;
+        }
+
+        .model-switcher label {
+            color: var(--text-secondary);
+            font-size: 0.9em;
+        }
+
+        .model-select {
+            padding: 8px 16px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--accent-blue);
+            border-radius: 25px;
+            color: var(--accent-blue);
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            outline: none;
+            appearance: none;
+            -webkit-appearance: none;
+            padding-right: 30px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2300d4ff' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+        }
+
+        .model-select option {
+            background: #1a1f3a;
+            color: var(--text-primary);
+        }
+
+        .auto-rotate-btn {
+            padding: 6px 14px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.3s;
+        }
+
+        .auto-rotate-btn.active {
+            background: rgba(0, 212, 255, 0.15);
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+        }
         
         /* 时间选择器 */
         .period-selector {
             display: flex;
             justify-content: center;
             gap: 12px;
-            margin: 20px 0;
+            margin: 16px 0;
         }
         
         .period-btn {
@@ -125,9 +177,7 @@
         .kpi-card::before {
             content: '';
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
+            top: 0; left: 0; right: 0;
             height: 4px;
             background: var(--card-accent, var(--accent-blue));
         }
@@ -136,7 +186,7 @@
         .kpi-card.cost { --card-accent: var(--accent-red); }
         .kpi-card.profit { --card-accent: var(--accent-green); }
         .kpi-card.margin { --card-accent: var(--accent-yellow); }
-        .kpi-card.alert { --card-accent: var(--accent-orange); }
+        .kpi-card.alerts { --card-accent: var(--accent-orange); }
         
         .kpi-label {
             font-size: 0.85em;
@@ -237,36 +287,14 @@
         .ranking-pos.top3 { background: linear-gradient(135deg, #cd7f32, #8b4513); color: #fff; }
         .ranking-pos.normal { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
         
-        .ranking-info {
-            flex: 1;
-        }
-        
-        .ranking-name {
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-        
-        .ranking-meta {
-            font-size: 0.8em;
-            color: var(--text-secondary);
-        }
-        
-        .ranking-value {
-            text-align: right;
-        }
-        
-        .ranking-profit {
-            font-size: 1.1em;
-            font-weight: 700;
-        }
-        
+        .ranking-info { flex: 1; }
+        .ranking-name { font-weight: 600; margin-bottom: 4px; }
+        .ranking-meta { font-size: 0.8em; color: var(--text-secondary); }
+        .ranking-value { text-align: right; }
+        .ranking-profit { font-size: 1.1em; font-weight: 700; }
         .ranking-profit.positive { color: var(--accent-green); }
         .ranking-profit.negative { color: var(--accent-red); }
-        
-        .ranking-calls {
-            font-size: 0.8em;
-            color: var(--text-secondary);
-        }
+        .ranking-calls { font-size: 0.8em; color: var(--text-secondary); }
         
         /* 预警列表 */
         .alert-list {
@@ -301,64 +329,28 @@
             background: rgba(255, 107, 107, 0.2);
         }
         
-        .alert-info {
-            flex: 1;
-        }
-        
-        .alert-title {
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-        
-        .alert-desc {
-            font-size: 0.85em;
-            color: var(--text-secondary);
-        }
-        
-        .alert-loss {
-            font-size: 1.2em;
-            font-weight: 700;
-            color: var(--accent-red);
-        }
+        .alert-info { flex: 1; }
+        .alert-title { font-weight: 600; margin-bottom: 4px; }
+        .alert-desc { font-size: 0.85em; color: var(--text-secondary); }
+        .alert-loss { font-size: 1.2em; font-weight: 700; color: var(--accent-red); }
         
         /* 图表容器 */
-        .chart-container {
-            width: 100%;
-            height: 300px;
-        }
+        .chart-container { width: 100%; height: 300px; }
         
         /* 加载状态 */
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: var(--text-secondary);
-        }
-        
+        .loading { text-align: center; padding: 40px; color: var(--text-secondary); }
         .loading-spinner {
-            width: 40px;
-            height: 40px;
+            width: 40px; height: 40px;
             border: 3px solid rgba(0, 212, 255, 0.1);
             border-top-color: var(--accent-blue);
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 0 auto 15px;
         }
+        @keyframes spin { to { transform: rotate(360deg); } }
         
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: var(--text-secondary);
-        }
-        
-        .empty-state .icon {
-            font-size: 3em;
-            margin-bottom: 15px;
-            opacity: 0.5;
-        }
+        .empty-state { text-align: center; padding: 40px; color: var(--text-secondary); }
+        .empty-state .icon { font-size: 3em; margin-bottom: 15px; opacity: 0.5; }
         
         /* 刷新按钮 */
         .refresh-btn {
@@ -377,13 +369,22 @@
             transition: transform 0.3s;
             z-index: 100;
         }
-        
-        .refresh-btn:hover {
-            transform: scale(1.1);
+        .refresh-btn:hover { transform: scale(1.1); }
+        .refresh-btn.spinning { animation: spin 1s linear infinite; }
+
+        /* 轮播指示器 */
+        .rotate-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            margin-right: 6px;
+            animation: pulse 2s infinite;
         }
-        
-        .refresh-btn.spinning {
-            animation: spin 1s linear infinite;
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
         }
     </style>
 </head>
@@ -391,6 +392,15 @@
     <div class="header">
         <h1>💰 atmApi 成本监控预警中心</h1>
         <div class="subtitle">实时监控 · 盈亏分析 · 智能预警</div>
+        <div class="model-switcher">
+            <label>atm模型：</label>
+            <select class="model-select" id="atmModelSelect" onchange="switchModel()">
+                <option value="">全部模型</option>
+            </select>
+            <button class="auto-rotate-btn" id="autoRotateBtn" onclick="toggleAutoRotate()">
+                🔄 自动轮播
+            </button>
+        </div>
     </div>
     
     <div class="period-selector">
@@ -405,39 +415,39 @@
         <div class="kpi-card revenue">
             <div class="kpi-label">总收入</div>
             <div class="kpi-value" id="kpi-revenue">¥0.00</div>
-            <div class="kpi-detail" id="kpi-revenue-detail">加载中...</div>
+            <div class="kpi-detail" id="kpi-revenue-detail">-</div>
         </div>
         <div class="kpi-card cost">
             <div class="kpi-label">总成本</div>
             <div class="kpi-value" id="kpi-cost">¥0.00</div>
-            <div class="kpi-detail" id="kpi-cost-detail">加载中...</div>
+            <div class="kpi-detail" id="kpi-cost-detail">-</div>
         </div>
         <div class="kpi-card profit">
             <div class="kpi-label">总利润</div>
             <div class="kpi-value" id="kpi-profit">¥0.00</div>
-            <div class="kpi-detail" id="kpi-profit-detail">加载中...</div>
+            <div class="kpi-detail" id="kpi-profit-detail">-</div>
         </div>
         <div class="kpi-card margin">
             <div class="kpi-label">利润率</div>
             <div class="kpi-value" id="kpi-margin">0%</div>
-            <div class="kpi-detail" id="kpi-margin-detail">加载中...</div>
+            <div class="kpi-detail" id="kpi-margin-detail">-</div>
         </div>
-        <div class="kpi-card alert">
+        <div class="kpi-card alerts">
             <div class="kpi-label">预警 Token</div>
             <div class="kpi-value" id="kpi-alerts">0</div>
-            <div class="kpi-detail" id="kpi-alerts-detail">加载中...</div>
+            <div class="kpi-detail" id="kpi-alerts-detail">-</div>
         </div>
     </div>
     
     <!-- 图表区域 -->
     <div class="content-grid">
         <div class="panel">
-            <div class="panel-title">模型成本分布</div>
-            <div class="chart-container" id="chart-model"></div>
+            <div class="panel-title">上游大模型成本分布</div>
+            <div class="chart-container" id="chart-upstream"></div>
         </div>
         <div class="panel">
-            <div class="panel-title">套餐利润对比</div>
-            <div class="chart-container" id="chart-plan"></div>
+            <div class="panel-title">📈 成本趋势</div>
+            <div class="chart-container" id="chart-trend"></div>
         </div>
     </div>
     
@@ -471,29 +481,28 @@
     
     <script>
         let currentPeriod = 'today';
+        let currentAtmModel = '';
         let jwtToken = '';
         let charts = {};
-        
+        let autoRotate = false;
+        let rotateTimer = null;
+        let atmModels = [];
+
         // 初始化
         async function init() {
             await login();
             setupPeriodSelector();
             initCharts();
             await refreshAll();
-            // 自动刷新
             setInterval(refreshAll, 60000);
         }
         
-        // 登录获取 JWT
+        // 登录
         async function login() {
-            // 尝试从 localStorage 获取
             jwtToken = localStorage.getItem('atmapi_jwt');
             if (jwtToken) return;
-            
-            // 需要登录
             const key = prompt('请输入管理员密钥:');
             if (!key) return;
-            
             try {
                 const resp = await fetch('/api/v1/login', {
                     method: 'POST',
@@ -529,12 +538,58 @@
                 });
             });
         }
+
+        // atm模型切换
+        function switchModel() {
+            currentAtmModel = document.getElementById('atmModelSelect').value;
+            refreshAll();
+        }
+
+        // 自动轮播
+        function toggleAutoRotate() {
+            autoRotate = !autoRotate;
+            const btn = document.getElementById('autoRotateBtn');
+            if (autoRotate) {
+                btn.classList.add('active');
+                btn.innerHTML = '<span class="rotate-indicator"></span>轮播中';
+                startAutoRotate();
+            } else {
+                btn.classList.remove('active');
+                btn.innerHTML = '🔄 自动轮播';
+                if (rotateTimer) clearInterval(rotateTimer);
+            }
+        }
+
+        function startAutoRotate() {
+            if (rotateTimer) clearInterval(rotateTimer);
+            rotateTimer = setInterval(() => {
+                if (!autoRotate || atmModels.length <= 1) return;
+                const select = document.getElementById('atmModelSelect');
+                const currentIdx = select.selectedIndex;
+                const nextIdx = (currentIdx + 1) % select.options.length;
+                select.selectedIndex = nextIdx;
+                currentAtmModel = select.value;
+                refreshAll();
+            }, 30000); // 30秒切换
+        }
+
+        // 更新 atm模型 下拉列表
+        function updateModelSelect(models) {
+            atmModels = models || [];
+            const select = document.getElementById('atmModelSelect');
+            const currentVal = select.value;
+            select.innerHTML = '<option value="">全部模型</option>' +
+                atmModels.map(m => '<option value="' + m + '">' + m + '</option>').join('');
+            // 恢复之前的选择
+            if (currentVal && atmModels.includes(currentVal)) {
+                select.value = currentVal;
+            }
+        }
         
         // 初始化图表
         function initCharts() {
-            charts.model = echarts.init(document.getElementById('chart-model'));
-            charts.plan = echarts.init(document.getElementById('chart-plan'));
-            
+            charts.upstream = echarts.init(document.getElementById('chart-upstream'));
+            charts.trend = echarts.init(document.getElementById('chart-trend'));
             window.addEventListener('resize', () => {
                 Object.values(charts).forEach(c => c.resize());
             });
@@ -544,74 +599,65 @@
         async function refreshAll() {
             const btn = document.querySelector('.refresh-btn');
             btn.classList.add('spinning');
-            
             try {
-                await Promise.all([
-                    loadDashboard(),
-                    loadTokenRanking(),
-                    loadAlerts()
-                ]);
+                await loadDashboardV2();
             } catch (e) {
                 console.error('刷新失败:', e);
             }
-            
             setTimeout(() => btn.classList.remove('spinning'), 1000);
         }
         
-        // 加载仪表盘数据
-        async function loadDashboard() {
-            const data = await apiRequest(`/api/v1/dashboard?period=${currentPeriod}`);
-            if (!data.data) return;
+        // 加载 v2 仪表盘数据
+        async function loadDashboardV2() {
+            const modelParam = currentAtmModel ? '&atm_model=' + encodeURIComponent(currentAtmModel) : '';
+            const data = await apiRequest('/api/v1/dashboard/v2?period=' + currentPeriod + modelParam);
             
-            const d = data.data;
+            // 更新 atm模型 列表
+            if (data.atm_models) {
+                updateModelSelect(data.atm_models);
+            }
+
+            // 核心指标
+            const m = data.core_metrics || {};
+            document.getElementById('kpi-revenue').textContent = '¥' + (m.total_revenue || 0).toFixed(2);
+            document.getElementById('kpi-revenue-detail').textContent = currentAtmModel || '全部模型';
             
-            // KPI 卡片
-            document.getElementById('kpi-revenue').textContent = `¥${d.total_revenue.toFixed(2)}`;
-            document.getElementById('kpi-revenue-detail').textContent = `${d.total_tokens.toLocaleString()} tokens`;
+            document.getElementById('kpi-cost').textContent = '¥' + (m.total_cost || 0).toFixed(2);
+            document.getElementById('kpi-cost-detail').textContent = (m.total_requests || 0) + ' 次调用';
             
-            document.getElementById('kpi-cost').textContent = `¥${d.total_cost.toFixed(2)}`;
-            document.getElementById('kpi-cost-detail').textContent = `${d.total_requests} 次调用`;
+            document.getElementById('kpi-profit').textContent = '¥' + (m.total_profit || 0).toFixed(2);
+            document.getElementById('kpi-profit-detail').textContent = (m.total_profit || 0) >= 0 ? '✅ 盈利中' : '❌ 亏损中';
             
-            document.getElementById('kpi-profit').textContent = `¥${d.total_profit.toFixed(2)}`;
-            document.getElementById('kpi-profit-detail').textContent = d.total_profit >= 0 ? '盈利中' : '亏损中';
-            
-            document.getElementById('kpi-margin').textContent = `${d.profit_margin.toFixed(1)}%`;
-            document.getElementById('kpi-margin-detail').textContent = `活跃 Token: ${d.total_tokens_count || 0}`;
-            
-            // 模型成本图表
-            renderModelChart(d.by_model || []);
-            
-            // 套餐利润图表
-            renderPlanChart(d.by_plan || []);
+            document.getElementById('kpi-margin').textContent = (m.profit_margin || 0).toFixed(1) + '%';
+            document.getElementById('kpi-margin-detail').textContent = (m.total_tokens || 0).toLocaleString() + ' tokens';
+
+            // 上游大模型成本分布
+            renderUpstreamChart(data.upstream_distribution || []);
+
+            // 成本趋势
+            renderTrendChart(data.daily_trend || []);
+
+            // Token 排行
+            const ranking = data.token_ranking || {};
+            renderProfitRanking(ranking.profitable || []);
+            renderLossRanking(ranking.loss || []);
+
+            // 预警
+            const alerts = data.alerts || [];
+            renderAlerts(alerts);
+            document.getElementById('kpi-alerts').textContent = alerts.length;
+            document.getElementById('kpi-alerts-detail').textContent = alerts.length > 0 ? '需要关注' : '一切正常';
         }
         
-        // 加载 Token 排行
-        async function loadTokenRanking() {
-            const data = await apiRequest(`/api/v1/token-ranking?period=${currentPeriod}&limit=10`);
-            
-            renderProfitRanking(data.profitable || []);
-            renderLossRanking(data.loss || []);
-            
-            // 更新预警数
-            const alertCount = (data.loss || []).length;
-            document.getElementById('kpi-alerts').textContent = alertCount;
-            document.getElementById('kpi-alerts-detail').textContent = alertCount > 0 ? '需要关注' : '一切正常';
-        }
-        
-        // 加载预警
-        async function loadAlerts() {
-            const data = await apiRequest('/api/v1/alerts');
-            renderAlerts(data.alerts || []);
-        }
-        
-        // 渲染模型成本图表
-        function renderModelChart(models) {
-            const colors = ['#00d4ff', '#7b2ff7', '#ff006e', '#4ecdc4', '#ffd93d'];
-            
+        // 渲染上游大模型成本分布饼图
+        function renderUpstreamChart(models) {
+            const colors = ['#00d4ff', '#7b2ff7', '#ff006e', '#4ecdc4', '#ffd93d', '#ff8c42'];
             const option = {
                 tooltip: {
                     trigger: 'item',
-                    formatter: '{b}: ¥{c} ({d}%)'
+                    formatter: function(p) {
+                        return p.name + '<br/>成本: ¥' + p.value.toFixed(4) + ' (' + p.percent + '%)';
+                    }
                 },
                 legend: {
                     orient: 'vertical',
@@ -624,46 +670,45 @@
                     radius: ['40%', '70%'],
                     center: ['35%', '50%'],
                     avoidLabelOverlap: false,
-                    itemStyle: {
-                        borderRadius: 10,
-                        borderColor: '#0a0e27',
-                        borderWidth: 2
-                    },
+                    itemStyle: { borderRadius: 10, borderColor: '#0a0e27', borderWidth: 2 },
                     label: { show: false },
                     emphasis: {
                         label: { show: true, fontSize: 14, fontWeight: 'bold' }
                     },
                     data: models.map((m, i) => ({
-                        value: +m.cost.toFixed(2),
-                        name: m.model_name,
+                        value: +m.cost.toFixed(6),
+                        name: m.model,
                         itemStyle: { color: colors[i % colors.length] }
                     }))
                 }]
             };
-            
-            charts.model.setOption(option);
+            if (models.length === 0) {
+                option.title = { text: '暂无数据', left: 'center', top: 'center', textStyle: { color: '#8b95a8', fontSize: 14 } };
+            }
+            charts.upstream.setOption(option, true);
         }
-        
-        // 渲染套餐利润图表
-        function renderPlanChart(plans) {
+
+        // 渲染成本趋势折线图
+        function renderTrendChart(trend) {
             const option = {
                 tooltip: {
                     trigger: 'axis',
-                    axisPointer: { type: 'shadow' }
+                    formatter: function(params) {
+                        let s = params[0].axisValue + '<br/>';
+                        params.forEach(p => {
+                            s += p.marker + p.seriesName + ': ¥' + p.value.toFixed(4) + '<br/>';
+                        });
+                        return s;
+                    }
                 },
                 legend: {
                     data: ['收入', '成本', '利润'],
                     textStyle: { color: '#8b95a8' }
                 },
-                grid: {
-                    left: '3%',
-                    right: '4%',
-                    bottom: '3%',
-                    containLabel: true
-                },
+                grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
                 xAxis: {
                     type: 'category',
-                    data: plans.map(p => p.plan_name || '未分类'),
+                    data: trend.map(t => t.date),
                     axisLabel: { color: '#8b95a8' }
                 },
                 yAxis: {
@@ -672,40 +717,35 @@
                 },
                 series: [
                     {
-                        name: '收入',
-                        type: 'bar',
-                        data: plans.map(p => +p.revenue.toFixed(2)),
-                        itemStyle: { color: '#00d4ff' }
+                        name: '收入', type: 'line', smooth: true,
+                        data: trend.map(t => +t.revenue.toFixed(4)),
+                        itemStyle: { color: '#00d4ff' },
+                        areaStyle: { color: 'rgba(0,212,255,0.1)' }
                     },
                     {
-                        name: '成本',
-                        type: 'bar',
-                        data: plans.map(p => +p.cost.toFixed(2)),
-                        itemStyle: { color: '#ff6b6b' }
+                        name: '成本', type: 'line', smooth: true,
+                        data: trend.map(t => +t.cost.toFixed(4)),
+                        itemStyle: { color: '#ff6b6b' },
+                        areaStyle: { color: 'rgba(255,107,107,0.1)' }
                     },
                     {
-                        name: '利润',
-                        type: 'bar',
-                        data: plans.map(p => +p.profit.toFixed(2)),
-                        itemStyle: { 
-                            color: (params) => params.value >= 0 ? '#4ecdc4' : '#ff6b6b'
-                        }
+                        name: '利润', type: 'line', smooth: true,
+                        data: trend.map(t => +t.profit.toFixed(4)),
+                        itemStyle: { color: '#4ecdc4' },
+                        areaStyle: { color: 'rgba(78,205,196,0.1)' }
                     }
                 ]
             };
-            
-            charts.plan.setOption(option);
+            charts.trend.setOption(option, true);
         }
         
         // 渲染赚钱排行
         function renderProfitRanking(items) {
             const container = document.getElementById('ranking-profit');
-            
             if (items.length === 0) {
                 container.innerHTML = '<div class="empty-state"><div class="icon">📊</div>暂无数据</div>';
                 return;
             }
-            
             container.innerHTML = items.slice(0, 10).map((item, i) => {
                 const posClass = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : 'normal';
                 return `
@@ -727,12 +767,10 @@
         // 渲染赔钱排行
         function renderLossRanking(items) {
             const container = document.getElementById('ranking-loss');
-            
             if (items.length === 0) {
                 container.innerHTML = '<div class="empty-state"><div class="icon">✅</div>暂无亏损 Token</div>';
                 return;
             }
-            
             container.innerHTML = items.slice(0, 10).map((item, i) => {
                 const posClass = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : 'normal';
                 return `
@@ -754,12 +792,10 @@
         // 渲染预警列表
         function renderAlerts(alerts) {
             const container = document.getElementById('alert-list');
-            
             if (alerts.length === 0) {
                 container.innerHTML = '<div class="empty-state"><div class="icon">✅</div>暂无预警，一切正常</div>';
                 return;
             }
-            
             container.innerHTML = alerts.map(alert => `
                 <div class="alert-item ${alert.risk_level}">
                     <div class="alert-icon">${alert.risk_level === 'high' ? '🔴' : '🟡'}</div>
