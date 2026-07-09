@@ -753,6 +753,7 @@
           '<td>' + ch.weight + '</td>' +
           '<td><code>' + (ch.base_url || '') + '</code></td>' +
           '<td>' + (ch.models || '') + '</td>' +
+          '<td>' + (ch.atm_model || '-') + '</td>' +
           '<td style="white-space:nowrap">' +
             '<button class="btn btn-primary btn-sm" onclick="testChannelById(' + ch.id + ')">测试</button> ' +
             '<button class="btn btn-secondary btn-sm" onclick="editChannel(' + ch.id + ')">编辑</button> ' +
@@ -760,7 +761,7 @@
           '</td>' +
         '</tr>';
       }).join('');
-      document.getElementById('channelsTableWrap').innerHTML = '<table><thead><tr><th>ID</th><th>名称</th><th>状态</th><th>优先级</th><th>权重</th><th>Base URL</th><th>模型</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="8">暂无数据</td></tr>') + '</tbody></table>';
+      document.getElementById('channelsTableWrap').innerHTML = '<table><thead><tr><th>ID</th><th>名称</th><th>状态</th><th>优先级</th><th>权重</th><th>Base URL</th><th>大模型</th><th>atm模型</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">暂无数据</td></tr>') + '</tbody></table>';
     }
 
     async function editChannel(id) {
