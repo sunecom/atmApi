@@ -700,6 +700,21 @@ func chatCompletions(c *gin.Context) {
 	}
 	log.Printf("[路由] 最后3条: %s", lastRoles)
 	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey)
+
+	// ===== 任务模式路由（Phase 2C） =====
+	taskModeResult := service.ClassifyTaskMode(req.Messages)
+	if taskModeResult.Model != "" && taskModeResult.Mode != service.TaskModeUnknown {
+		// 任务模式覆盖路由结果（调试→pro，咨询→flash，闲聊→flash）
+		if actualModel != taskModeResult.Model {
+			log.Printf("[模式路由] 覆盖模型: %s → %s (mode=%s)", actualModel, taskModeResult.Model, taskModeResult.Mode)
+			actualModel = taskModeResult.Model
+		}
+	}
+	// 注入任务模式 hint
+	if taskModeResult.Hint != "" {
+		req.Messages = service.ApplyTaskModeHint(req.Messages, taskModeResult)
+	}
+
 	if actualModel != req.Model {
 		// 替换请求体中的 model
 		var reqMap map[string]interface{}
