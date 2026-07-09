@@ -996,20 +996,21 @@ processResult:
 					planName = apiToken.RateLimitGroup
 				}
 				usageLog := model.UsageLog{
-					TokenID:      apiToken.ID,
-					TokenName:    apiToken.Name,
-					PlanName:     planName,
-					ChannelName:  result.ChannelName,
-					Model:        actualModel,
-					InputTokens:  lastResp.Usage.PromptTokens,
-					OutputTokens: lastResp.Usage.CompletionTokens,
-					TotalTokens:  lastResp.Usage.TotalTokens,
-					StatusCode:   result.Response.StatusCode,
-					DurationMs:   duration,
+					TokenID:       apiToken.ID,
+					TokenName:     apiToken.Name,
+					PlanName:      planName,
+					ChannelName:   result.ChannelName,
+					Model:         actualModel,
+					InputTokens:   lastResp.Usage.PromptTokens,
+					OutputTokens:  lastResp.Usage.CompletionTokens,
+					TotalTokens:   lastResp.Usage.TotalTokens,
+					EstimatedCost: model.CalculateCost(lastResp.Usage.PromptTokens, lastResp.Usage.CompletionTokens, actualModel),
+					StatusCode:    result.Response.StatusCode,
+					DurationMs:    duration,
 				}
 				model.DB.Create(&usageLog)
-				log.Printf("[流式usage] token=%s model=%s tokens=%d",
-					apiToken.Name, actualModel, lastResp.Usage.TotalTokens)
+				log.Printf("[流式usage] token=%s model=%s tokens=%d cost=%.6f",
+					apiToken.Name, actualModel, lastResp.Usage.TotalTokens, usageLog.EstimatedCost)
 			}
 		}
 		
@@ -1062,19 +1063,22 @@ processResult:
 				planName = apiToken.RateLimitGroup
 			}
 			usageLog := model.UsageLog{
-				TokenID:      apiToken.ID,
-				TokenName:      apiToken.Name,
-				PlanName:       planName,
-				ChannelID:      channel.ID,
-				ChannelName:    result.ChannelName,
-				Model:          actualModel,
-				InputTokens:    upstreamResp.Usage.PromptTokens,
-				OutputTokens:   upstreamResp.Usage.CompletionTokens,
-				TotalTokens:    upstreamResp.Usage.TotalTokens,
-				StatusCode:     result.Response.StatusCode,
-				DurationMs:     duration,
+				TokenID:       apiToken.ID,
+				TokenName:     apiToken.Name,
+				PlanName:      planName,
+				ChannelID:     channel.ID,
+				ChannelName:   result.ChannelName,
+				Model:         actualModel,
+				InputTokens:   upstreamResp.Usage.PromptTokens,
+				OutputTokens:  upstreamResp.Usage.CompletionTokens,
+				TotalTokens:   upstreamResp.Usage.TotalTokens,
+				EstimatedCost: model.CalculateCost(upstreamResp.Usage.PromptTokens, upstreamResp.Usage.CompletionTokens, actualModel),
+				StatusCode:    result.Response.StatusCode,
+				DurationMs:    duration,
 			}
 			model.DB.Create(&usageLog)
+			log.Printf("[usage] token=%s model=%s tokens=%d cost=%.6f",
+				apiToken.Name, actualModel, upstreamResp.Usage.TotalTokens, usageLog.EstimatedCost)
 		}
 	}
 	// 写入缓存（非流式且成功）
