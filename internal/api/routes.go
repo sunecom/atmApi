@@ -1771,11 +1771,29 @@ func extractUserQuestion(messages []map[string]interface{}) string {
 		content := messages[i]["content"]
 		switch c := content.(type) {
 		case string:
-			if strings.Contains(c, "[media attached:") || strings.Contains(c, "- Images:") {
-				continue
-			}
 			if strings.HasPrefix(c, "data:image") {
 				continue
+			}
+			// 如果包含图片元数据，尝试提取文字部分
+			if strings.Contains(c, "[media attached:") || strings.Contains(c, "- Images:") {
+				// 去掉元数据行，提取用户文字
+				lines := strings.Split(c, "\n")
+				var textLines []string
+				for _, line := range lines {
+					l := strings.TrimSpace(line)
+					if l == "" {
+						continue
+					}
+					if strings.HasPrefix(l, "[media attached:") || strings.HasPrefix(l, "- Images:") {
+						continue
+					}
+					textLines = append(textLines, line)
+				}
+				text := strings.TrimSpace(strings.Join(textLines, "\n"))
+				if text != "" {
+					return text
+				}
+				continue // 没有文字，跳过这条消息
 			}
 			return strings.TrimSpace(c)
 		case []interface{}:
