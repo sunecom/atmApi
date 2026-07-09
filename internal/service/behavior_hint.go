@@ -75,7 +75,7 @@ func DetectAndFixBehavior(messages []map[string]interface{}, estTokens int) *Beh
 	if confCount > ConfirmationCountMax {
 		hints = append(hints, &BehaviorHint{
 			Pattern:  "confirmation_loop",
-			Hint:     "注意：检测到多轮确认模式。接下来的回复请一次性给出完整方案，不需要逐项确认。如果方案有多个步骤，用编号列表形式一次输出。",
+			Hint:     "当前上下文成本较高。除非缺少阻塞信息，否则请直接完成任务；减少确认式提问；压缩中间解释；最终给出结果、验证和风险。",
 			Priority: 10,
 		})
 		log.Printf("[行为修正] confirmation_loop: %d 次确认请求", confCount)
@@ -97,7 +97,7 @@ func DetectAndFixBehavior(messages []map[string]interface{}, estTokens int) *Beh
 	if shortCount > FragmentedCountMax {
 		hints = append(hints, &BehaviorHint{
 			Pattern:  "fragmented",
-			Hint:     "注意：检测到碎片化回复模式。请对当前问题给出完整、详细的回复，将相关信息整合在一条消息中，避免分多条发送。",
+			Hint:     "当前上下文成本较高。除非缺少阻塞信息，否则请直接完成任务；减少确认式提问；压缩中间解释；最终给出结果、验证和风险。",
 			Priority: 8,
 		})
 		log.Printf("[行为修正] fragmented_output: %d/%d 次短轮", shortCount, len(recentReplies))
@@ -216,6 +216,117 @@ func FormatBehaviorStats(messages []map[string]interface{}) string {
 		len(messages), systemCount, userCount, assistantCount, shortReplies, avgReplyLen)
 }
 
+// ===== 工具输出压缩（Phase 2A+ 第二道防线） =====
+// 压缩 role=tool 的消息，减少 token 大户
+
+// CompressToolOutput 压缩工具输出
+// 策略：保留最后 50 行 + 错误信息 + 文件路径 + 退出码
+func CompressToolOutput(messages []map[string]interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(messages))
+	compressedCount := 0
+
+	for _, msg := range messages {
+		role, _ := msg["role"].(string)
+		if role != "tool" {
+			result = append(result, msg)
+			continue
+		}
+
+		content := getUserText(msg)
+		if content == "" || len(content) <= 2000 {
+			result = append(result, msg)
+			continue
+		}
+
+		// 压缩
+		compressed := compressToolOutputContent(content)
+		newMsg := make(map[string]interface{})
+		for k, v := range msg {
+			newMsg[k] = v
+		}
+		newMsg["content"] = compressed
+		result = append(result, newMsg)
+		compressedCount++
+	}
+
+	if compressedCount > 0 {
+		log.Printf("[工具压缩] 压缩了 %d 条工具输出", compressedCount)
+	}
+	return result
+}
+
+// compressToolOutputContent 压缩单条工具输出内容
+func compressToolOutputContent(content string) string {
+	lines := strings.Split(content, "\n")
+
+	// 1. 提取关键信息
+	var keyInfo []string
+
+	// 错误信息（包含 error/fail/exception）
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") ||
+			strings.Contains(lower, "fail") ||
+			strings.Contains(lower, "exception") {
+			keyInfo = append(keyInfo, line)
+		}
+	}
+
+	// 文件路径（/path/to/file 格式）
+	pathRegex := regexp.MustCompile(`/[\w./\-]+`)
+	paths := pathRegex.FindAllString(content, -1)
+	if len(paths) > 0 {
+		uniquePaths := unique(paths)
+		if len(uniquePaths) > 5 {
+			uniquePaths = uniquePaths[:5] // 最多 5 个路径
+		}
+		keyInfo = append(keyInfo, "文件: "+strings.Join(uniquePaths, ", "))
+	}
+
+	// 退出码（exit code: X 或 exit=X）
+	exitRegex := regexp.MustCompile(`(?i)(exit\s*(code)?[=:]\s*(\d+)|返回码[=:]\s*(\d+))`)
+	if matches := exitRegex.FindStringSubmatch(content); len(matches) > 1 {
+		for _, m := range matches[1:] {
+			if m != "" {
+				keyInfo = append(keyInfo, "退出码: "+m)
+				break
+			}
+		}
+	}
+
+	// 2. 保留最后 50 行
+	if len(lines) > 50 {
+		lines = lines[len(lines)-50:]
+	}
+
+	// 3. 组合
+	result := strings.Join(keyInfo, "\n")
+	if result != "" {
+		result += "\n\n--- 最后 50 行 ---\n"
+	}
+	result += strings.Join(lines, "\n")
+
+	// 4. 截断到 2000 字
+	if len(result) > 2000 {
+		result = result[:2000] + "\n... [已截断]"
+	}
+
+	return result
+}
+
+// unique 去重字符串切片
+func unique(strs []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(strs))
+	for _, s := range strs {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
 // stripMarkdown 简单去除 markdown 标记，用于更准确的长度判断
 func stripMarkdown(s string) string {
 	s = strings.ReplaceAll(s, "**", "")
@@ -224,4 +335,94 @@ func stripMarkdown(s string) string {
 	s = strings.ReplaceAll(s, "-", "")
 	s = strings.ReplaceAll(s, "*", "")
 	return s
+}
+
+// ===== 默认行为策略（Phase 2A+ 第一道防线） =====
+// 对开发类任务，从源头注入默认策略，减少确认轮次
+
+// 开发类关键词
+var devKeywords = []string{
+	"写", "实现", "修复", "开发", "代码", "函数", "bug", "调试",
+	"编写", "重构", "优化", "部署", "配置", "安装", "搭建",
+}
+
+// 咨询类关键词（排除）
+var consultKeywords = []string{
+	"解释", "什么是", "为什么", "帮我理解", "原理", "概念",
+	"区别", "差异", "对比", "介绍", "说明",
+}
+
+// IsDevelopmentTask 判断最后一条用户消息是否为开发类任务
+func IsDevelopmentTask(messages []map[string]interface{}) bool {
+	// 从后往前找最后一条 user 消息
+	for i := len(messages) - 1; i >= 0; i-- {
+		role, _ := messages[i]["role"].(string)
+		if role != "user" {
+			continue
+		}
+		text := getUserText(messages[i])
+		if text == "" {
+			continue
+		}
+
+		// 检查是否命中咨询类（优先排除）
+		for _, kw := range consultKeywords {
+			if strings.Contains(text, kw) {
+				return false
+			}
+		}
+
+		// 检查是否命中开发类
+		for _, kw := range devKeywords {
+			if strings.Contains(text, kw) {
+				return true
+			}
+		}
+
+		// 都没命中，不算开发类
+		return false
+	}
+	return false
+}
+
+// DefaultBehaviorHint 默认行为策略 hint
+const DefaultBehaviorHint = "能直接做就直接做；只有遇到阻塞性信息缺失才提问；中间状态简短汇报；最终一次性总结结果。"
+
+// ApplyDefaultBehaviorStrategy 对开发类任务注入默认行为策略
+// 返回注入后的 messages 和是否注入的标记
+func ApplyDefaultBehaviorStrategy(messages []map[string]interface{}) ([]map[string]interface{}, bool) {
+	if !IsDevelopmentTask(messages) {
+		return messages, false
+	}
+
+	hintMsg := map[string]interface{}{
+		"role":    "system",
+		"content": DefaultBehaviorHint,
+	}
+
+	// 在 system 块末尾插入（和 ApplyBehaviorHint 逻辑一致）
+	insertAt := 0
+	for i, msg := range messages {
+		role, _ := msg["role"].(string)
+		if role == "system" {
+			insertAt = i + 1
+		} else {
+			break
+		}
+	}
+
+	if insertAt == 0 {
+		result := make([]map[string]interface{}, 0, len(messages)+1)
+		result = append(result, hintMsg)
+		result = append(result, messages...)
+		log.Printf("[默认策略] 开发类任务，注入默认行为策略（prepend）")
+		return result, true
+	}
+
+	result := make([]map[string]interface{}, 0, len(messages)+1)
+	result = append(result, messages[:insertAt]...)
+	result = append(result, hintMsg)
+	result = append(result, messages[insertAt:]...)
+	log.Printf("[默认策略] 开发类任务，注入默认行为策略 at position=%d", insertAt)
+	return result, true
 }

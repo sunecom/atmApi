@@ -757,6 +757,43 @@ modelAllowed:
 			return
 		}
 	}
+	// ===== 工具输出压缩（Phase 2A+ 第二道防线） =====
+	// 压缩 role=tool 的消息，减少 token 大户（命令输出/日志/diff）
+	{
+		compressedTool := service.CompressToolOutput(req.Messages)
+		if len(compressedTool) != len(req.Messages) {
+			// 长度变了不应该发生，但防御性检查
+			log.Printf("[工具压缩] 警告: 消息数量变化 %d → %d", len(req.Messages), len(compressedTool))
+		}
+		// 即使长度不变，内容可能被压缩了，需要同步
+		req.Messages = compressedTool
+		var reqMapTC map[string]interface{}
+		json.Unmarshal(body, &reqMapTC)
+		newMsgs := make([]interface{}, len(req.Messages))
+		for i, m := range req.Messages {
+			newMsgs[i] = m
+		}
+		reqMapTC["messages"] = newMsgs
+		body, _ = json.Marshal(reqMapTC)
+	}
+
+	// ===== 默认行为策略（Phase 2A+ 第一道防线） =====
+	// 对开发类任务，从源头注入默认策略，减少确认轮次
+	{
+		newMsgs, applied := service.ApplyDefaultBehaviorStrategy(req.Messages)
+		if applied {
+			req.Messages = newMsgs
+			var reqMapDB map[string]interface{}
+			json.Unmarshal(body, &reqMapDB)
+			msgs := make([]interface{}, len(req.Messages))
+			for i, m := range req.Messages {
+				msgs[i] = m
+			}
+			reqMapDB["messages"] = msgs
+			body, _ = json.Marshal(reqMapDB)
+		}
+	}
+
 	// ===== 上下文压缩引擎 v2 =====
 	// 两级策略：> 100K 无损截断，> 200K 摘要替换
 	{
