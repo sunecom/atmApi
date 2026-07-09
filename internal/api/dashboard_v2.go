@@ -132,7 +132,9 @@ func getDashboardV2(c *gin.Context) {
 	var totalCost float64
 	var totalTokens int64
 	for _, log := range filteredLogs {
-		totalCost += log.EstimatedCost
+		// 实时计算成本
+		cost := model.CalculateCost(log.InputTokens, log.OutputTokens, log.CachedTokens, log.Model)
+		totalCost += cost
 		totalTokens += log.TotalTokens
 	}
 
@@ -162,7 +164,7 @@ func getDashboardV2(c *gin.Context) {
 		}
 		upstreamMap[m].Requests++
 		upstreamMap[m].Tokens += log.TotalTokens
-		upstreamMap[m].Cost += log.EstimatedCost
+		upstreamMap[m].Cost += model.CalculateCost(log.InputTokens, log.OutputTokens, log.CachedTokens, log.Model)
 	}
 	var upstreamDist []UpstreamDistItem
 	for _, item := range upstreamMap {
@@ -187,7 +189,7 @@ func getDashboardV2(c *gin.Context) {
 		item := tokenStats[log.TokenID]
 		item.TotalCalls++
 		item.TotalTokens += log.TotalTokens
-		item.TotalCost += log.EstimatedCost
+		item.TotalCost += model.CalculateCost(log.InputTokens, log.OutputTokens, log.CachedTokens, log.Model)
 	}
 	// 计算每个 token 的收入
 	for _, item := range tokenStats {
@@ -222,7 +224,7 @@ func getDashboardV2(c *gin.Context) {
 		if _, ok := dailyMap[date]; !ok {
 			dailyMap[date] = &DailyTrendItem{Date: date}
 		}
-		dailyMap[date].Cost += log.EstimatedCost
+		dailyMap[date].Cost += model.CalculateCost(log.InputTokens, log.OutputTokens, log.CachedTokens, log.Model)
 	}
 	// 为每天计算收入（简化：按 token 日均分摊）
 	for _, item := range dailyMap {
