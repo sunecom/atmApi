@@ -193,7 +193,7 @@ func getDashboardV2(c *gin.Context) {
 	}
 	// 计算每个 token 的收入
 	for _, item := range tokenStats {
-		item.Revenue = calculateTokenRevenue(item.PlanName, item.TotalCalls)
+		item.Revenue = calculateTokenRevenue(item.PlanName)
 		item.Profit = item.Revenue - item.TotalCost
 		if item.Revenue > 0 {
 			item.ProfitMargin = (item.Profit / item.Revenue) * 100
@@ -293,13 +293,14 @@ func calculateRevenue(logs []model.UsageLog) float64 {
 
 	var total float64
 	for _, tc := range tokenCalls {
-		total += calculateTokenRevenue(tc.PlanName, tc.Calls)
+		total += calculateTokenRevenue(tc.PlanName)
 	}
 	return total
 }
 
 // calculateTokenRevenue 计算单个 token 的收入
-func calculateTokenRevenue(planName string, calls int64) float64 {
+// 用户购买套餐时一次性付月服务费（= 套餐售价），收入立即确认
+func calculateTokenRevenue(planName string) float64 {
 	if planName == "" {
 		return 0
 	}
@@ -309,9 +310,5 @@ func calculateTokenRevenue(planName string, calls int64) float64 {
 	}
 	var price float64
 	fmt.Sscanf(plan.Price, "%f", &price)
-	if plan.MonthlyMax > 0 {
-		return price * float64(calls) / float64(plan.MonthlyMax)
-	}
-	// 不限套餐，按天分摊
-	return price / 30.0
+	return price // 一次性确认收入
 }
