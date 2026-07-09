@@ -742,21 +742,39 @@ modelAllowed:
 	
 	var cacheKey string
 	if !isStream && service.GlobalCache != nil {
-		cacheKey = service.GlobalCache.GenerateKey(tokenKey, actualModel, req.Messages)
-		if cached, found := service.GlobalCache.Get(cacheKey); found {
-			duration := time.Since(startTime).Milliseconds()
-			c.Header("X-Actual-Model", actualModel)
-			c.Header("X-Requested-Model", req.Model)
-			model.DB.Create(&model.RequestLog{
-				TokenName: apiToken.Name, ChannelName: "缓存命中",
-				Model: actualModel, RoutedModel: actualModel, StatusCode: 200, DurationMs: duration,
-			})
-			// 缓存命中也记录限流（防止通过重复请求绕过限流）
-			service.RecordRequest(apiToken.ID)
-			c.Data(200, "application/json", cached)
-			return
+		// 从 reqMap 中提取 temperature 和 max_tokens
+		temperature := 0.0
+		maxTokens := 0
+		if t, ok := reqMap["temperature"].(float64); ok {
+			temperature = t
+		}
+		if m, ok := reqMap["max_tokens"].(float64); ok {
+			maxTokens = int(m)
+		}
+		
+		// 只对 temperature=0 的请求启用缓存
+		log.Printf("[缓存检查] temperature=%v, shouldCache=%v", temperature, service.ShouldCache(temperature))
+		if service.ShouldCache(temperature) {
+			cacheKey = service.GlobalCache.GenerateKey(tokenKey, actualModel, req.Messages, temperature, maxTokens)
+			log.Printf("[缓存检查] 生成 cacheKey=%s", cacheKey[:16])
+			if cached, found := service.GlobalCache.Get(cacheKey); found {
+				log.Printf("[缓存命中] cacheKey=%s", cacheKey[:16])
+				duration := time.Since(startTime).Milliseconds()
+				c.Header("X-Actual-Model", actualModel)
+				c.Header("X-Requested-Model", req.Model)
+				c.Header("X-Cache-Hit", "true")
+				model.DB.Create(&model.RequestLog{
+					TokenName: apiToken.Name, ChannelName: "缓存命中",
+					Model: actualModel, RoutedModel: actualModel, StatusCode: 200, DurationMs: duration,
+				})
+				// 缓存命中也记录限流（防止通过重复请求绕过限流）
+				service.RecordRequest(apiToken.ID)
+				c.Data(200, "application/json", cached)
+				return
+			}
 		}
 	}
+
 	// ===== 工具输出压缩（Phase 2A+ 第二道防线） =====
 	// 压缩 role=tool 的消息，减少 token 大户（命令输出/日志/diff）
 	{
