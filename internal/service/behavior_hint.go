@@ -130,6 +130,7 @@ func DetectAndFixBehavior(messages []map[string]interface{}, estTokens int) *Beh
 }
 
 // ApplyBehaviorHint 将 hint 注入到 messages 中（追加为 system 消息）
+// 使用 InsertAfterSystemBlock 保证前缀稳定
 func ApplyBehaviorHint(messages []map[string]interface{}, hint *BehaviorHint) []map[string]interface{} {
 	if hint == nil {
 		return messages
@@ -140,32 +141,18 @@ func ApplyBehaviorHint(messages []map[string]interface{}, hint *BehaviorHint) []
 		"content": hint.Hint,
 	}
 
-	// 找到最后一条 system 消息的位置，在其后插入
-	// 这样 hint 不会打断 system → user → assistant 的结构
+	result := InsertAfterSystemBlock(messages, hintMsg)
+
+	// 计算插入位置用于日志
 	insertAt := 0
-	for i, msg := range messages {
-		role, _ := msg["role"].(string)
+	for i, m := range messages {
+		role, _ := m["role"].(string)
 		if role == "system" {
 			insertAt = i + 1
 		} else {
 			break
 		}
 	}
-
-	// 如果开头没有 system（不太可能），直接 prepend
-	if insertAt == 0 {
-		result := make([]map[string]interface{}, 0, len(messages)+1)
-		result = append(result, hintMsg)
-		result = append(result, messages...)
-		return result
-	}
-
-	// 在 system 块末尾插入
-	result := make([]map[string]interface{}, 0, len(messages)+1)
-	result = append(result, messages[:insertAt]...)
-	result = append(result, hintMsg)
-	result = append(result, messages[insertAt:]...)
-
 	log.Printf("[行为修正] 已注入 hint: pattern=%s at position=%d", hint.Pattern, insertAt)
 	return result
 }
@@ -214,6 +201,36 @@ func FormatBehaviorStats(messages []map[string]interface{}) string {
 
 	return fmt.Sprintf("msg=%d (sys=%d usr=%d ast=%d) shortReplies=%d avgReplyLen=%d",
 		len(messages), systemCount, userCount, assistantCount, shortReplies, avgReplyLen)
+}
+
+// ===== Prompt Cache 前缀稳定化（Phase 2B） =====
+// 所有 system message 注入都应使用 InsertAfterSystemBlock
+// 这样 messages[0] 永远是客户端原始 system prompt，上游模型可稳定缓存前缀
+
+// InsertAfterSystemBlock 将一条 system message 插入到 messages 中连续 system block 的末尾
+// 如果 messages 开头没有 system，则 prepend
+// 这保证了 messages[0] 的稳定性，让上游模型（DeepSeek/OpenAI/Anthropic）的 prompt cache 能命中
+func InsertAfterSystemBlock(messages []map[string]interface{}, msg map[string]interface{}) []map[string]interface{} {
+	insertAt := 0
+	for i, m := range messages {
+		role, _ := m["role"].(string)
+		if role == "system" {
+			insertAt = i + 1
+		} else {
+			break
+		}
+	}
+
+	result := make([]map[string]interface{}, 0, len(messages)+1)
+	if insertAt == 0 {
+		result = append(result, msg)
+		result = append(result, messages...)
+	} else {
+		result = append(result, messages[:insertAt]...)
+		result = append(result, msg)
+		result = append(result, messages[insertAt:]...)
+	}
+	return result
 }
 
 // ===== 工具输出压缩（Phase 2A+ 第二道防线） =====
@@ -389,7 +406,7 @@ func IsDevelopmentTask(messages []map[string]interface{}) bool {
 const DefaultBehaviorHint = "能直接做就直接做；只有遇到阻塞性信息缺失才提问；中间状态简短汇报；最终一次性总结结果。"
 
 // ApplyDefaultBehaviorStrategy 对开发类任务注入默认行为策略
-// 返回注入后的 messages 和是否注入的标记
+// 使用 InsertAfterSystemBlock 保证前缀稳定
 func ApplyDefaultBehaviorStrategy(messages []map[string]interface{}) ([]map[string]interface{}, bool) {
 	if !IsDevelopmentTask(messages) {
 		return messages, false
@@ -400,29 +417,7 @@ func ApplyDefaultBehaviorStrategy(messages []map[string]interface{}) ([]map[stri
 		"content": DefaultBehaviorHint,
 	}
 
-	// 在 system 块末尾插入（和 ApplyBehaviorHint 逻辑一致）
-	insertAt := 0
-	for i, msg := range messages {
-		role, _ := msg["role"].(string)
-		if role == "system" {
-			insertAt = i + 1
-		} else {
-			break
-		}
-	}
-
-	if insertAt == 0 {
-		result := make([]map[string]interface{}, 0, len(messages)+1)
-		result = append(result, hintMsg)
-		result = append(result, messages...)
-		log.Printf("[默认策略] 开发类任务，注入默认行为策略（prepend）")
-		return result, true
-	}
-
-	result := make([]map[string]interface{}, 0, len(messages)+1)
-	result = append(result, messages[:insertAt]...)
-	result = append(result, hintMsg)
-	result = append(result, messages[insertAt:]...)
-	log.Printf("[默认策略] 开发类任务，注入默认行为策略 at position=%d", insertAt)
+	result := InsertAfterSystemBlock(messages, hintMsg)
+	log.Printf("[默认策略] 开发类任务，注入默认行为策略")
 	return result, true
 }

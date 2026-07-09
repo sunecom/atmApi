@@ -519,13 +519,13 @@ func chatCompletions(c *gin.Context) {
 						time.Unix(apiToken.ExpiredTime, 0).Format("2006-01-02"),
 					),
 				}
-				req.Messages = append([]map[string]interface{}{warningMsg}, req.Messages...)
+				req.Messages = service.InsertAfterSystemBlock(req.Messages, warningMsg)
 				var reqMap map[string]interface{}
 				json.Unmarshal(body, &reqMap)
 				reqMap["messages"] = req.Messages
 				body, _ = json.Marshal(reqMap)
 				service.GlobalExpiryWarnCache.MarkWarned(apiToken.ID)
-				log.Printf("[到期预警] Token=%s 距到期%d天，已注入提醒消息", apiToken.Name, remainingDays)
+				log.Printf("[到期预警] Token=%s 距到期%d天，已注入提醒消息（insertAfterSystemBlock）", apiToken.Name, remainingDays)
 			}
 		}
 	}
@@ -626,22 +626,23 @@ func chatCompletions(c *gin.Context) {
 			}
 		}
 		if !needLongForm {
-			// 注入简洁约束 system message（短指令，避免被模型误当对话内容）
+			// 注入简洁约束 system message（使用 InsertAfterSystemBlock 保证前缀稳定）
 			conciseMsg := map[string]interface{}{
 				"role":    "system",
 				"content": "指令：请始终用最简洁的方式回复，避免任何多余解释和长篇背景介绍。回复总字数控制在300字以内，除非用户明确要求详细说明。",
 			}
+			// 使用 InsertAfterSystemBlock 而非 prepend，保证 messages[0] 稳定
+			req.Messages = service.InsertAfterSystemBlock(req.Messages, conciseMsg)
+			// 同步更新 body
 			var reqMapNew map[string]interface{}
 			json.Unmarshal(body, &reqMapNew)
-			msgs, _ := reqMapNew["messages"].([]interface{})
-			newMsgs := append([]interface{}{conciseMsg}, msgs...)
+			newMsgs := make([]interface{}, len(req.Messages))
+			for i, m := range req.Messages {
+				newMsgs[i] = m
+			}
 			reqMapNew["messages"] = newMsgs
 			body, _ = json.Marshal(reqMapNew)
-			// 同步更新 req.Messages（类型转换）
-			newReqMsgs := []map[string]interface{}{conciseMsg}
-			newReqMsgs = append(newReqMsgs, req.Messages...)
-			req.Messages = newReqMsgs
-			log.Printf("[输出控制] token=%s 注入简洁回复约束", apiToken.Name)
+			log.Printf("[输出控制] token=%s 注入简洁回复约束（insertAfterSystemBlock）", apiToken.Name)
 		} else {
 			log.Printf("[输出控制] token=%s 用户要求长文，跳过简洁约束", apiToken.Name)
 		}
