@@ -1,12 +1,109 @@
 package api
 
 import (
+	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"atmapi/internal/model"
 	"atmapi/internal/service"
 )
+
+// StartCostAlerter 启动成本告警定时任务
+// 每小时检查一次，当 token 成本超过收入时发送飞书告警
+func StartCostAlerter() {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+
+		// 启动时立即执行一次
+		checkCostAlerts()
+
+		for range ticker.C {
+			checkCostAlerts()
+		}
+	}()
+	log.Println("[成本告警] 定时任务已启动（每小时检查一次）")
+}
+
+// checkCostAlerts 检查成本告警
+func checkCostAlerts() {
+	// 获取当前月份的时间范围
+	now := time.Now()
+	startTime := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	endTime := now
+
+	// 查询所有有套餐的活跃 token
+	var tokens []model.Token
+	model.DB.Where("status = 1 AND rate_limit_group != ''").Find(&tokens)
+
+	for _, token := range tokens {
+		// 获取该 token 的成本汇总
+		summary, err := service.GetTokenCostSummary(token.ID, startTime, endTime)
+		if err != nil {
+			log.Printf("[成本告警] Token %s 查询失败: %v", token.Name, err)
+			continue
+		}
+
+		// 检查是否亏损（成本 > 收入）
+		isLoss, profit, _ := service.CheckTokenLoss(token.ID)
+		if isLoss {
+			log.Printf("[成本告警] Token %s 本月亏损: %.2f 元 (成本: %.2f, 收入: %.2f)",
+				token.Name, -profit, summary.TotalCost, summary.Revenue)
+
+			// 发送飞书告警
+			sendCostAlert(token, summary, profit)
+		}
+	}
+}
+
+// sendCostAlert 发送成本告警到飞书
+func sendCostAlert(token model.Token, summary *service.TokenCostSummary, profit float64) {
+	// 检查今天是否已经告警过（避免重复告警）
+	alertKey := fmt.Sprintf("cost_alert_%d_%s", token.ID, time.Now().Format("2006-01-02"))
+	var count int64
+	model.DB.Model(&model.RequestLog{}).
+		Where("token_name = ? AND channel_name = ? AND created_at >= ?",
+			token.Name, alertKey, time.Now().Format("2006-01-02")).
+		Count(&count)
+
+	if count > 0 {
+		return // 今天已告警过
+	}
+
+	// 记录告警日志（用 RequestLog 标记，避免重复）
+	model.DB.Create(&model.RequestLog{
+		TokenName:   token.Name,
+		ChannelName: alertKey,
+		Model:       "cost_alert",
+		StatusCode:  0,
+		DurationMs:  0,
+	})
+
+	// 构建告警消息
+	msg := fmt.Sprintf("⚠️ **成本告警**\n\n"+
+		"Token: %s\n"+
+		"套餐: %s\n"+
+		"本月成本: ¥%.2f\n"+
+		"本月收入: ¥%.2f\n"+
+		"亏损: ¥%.2f\n"+
+		"利润率: %.1f%%\n\n"+
+		"建议：检查该 token 的使用情况，考虑调整套餐或限制用量。",
+		token.Name, summary.PlanName, summary.TotalCost, summary.Revenue, -profit, summary.ProfitMargin)
+
+	// 写入告警文件（由外部脚本读取并发送到飞书）
+	alertFile := "/tmp/atmapi-cost-alert"
+	f, err := os.OpenFile(alertFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("[成本告警] 写入告警文件失败: %v", err)
+		return
+	}
+	defer f.Close()
+
+	f.WriteString(fmt.Sprintf("[%s] %s\n", time.Now().Format("2006-01-02 15:04:05"), msg))
+	log.Printf("[成本告警] 已写入告警文件: %s", alertFile)
+}
 
 // StartExpiryChecker 启动过期 Token 自动禁用定时任务
 // 每 10 分钟扫描一次，将过期的 token 状态设为 3（过期）

@@ -71,6 +71,7 @@ func main() {
 	// 启动定时任务
 	api.StartExpiryChecker() // 过期 token 自动禁用
 	api.StartUsageAlerter()  // 用量告警
+	api.StartCostAlerter()   // 成本告警（亏损检测）
 
 	// 启动服务
 	addr := fmt.Sprintf(":%s", cfg.Port)
