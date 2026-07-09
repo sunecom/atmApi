@@ -407,8 +407,13 @@
         <div class="grid">
           <div class="card span-9">
             <div class="card-title">渠道列表</div>
-            <button class="btn btn-primary mb-4" onclick="loadChannels()">刷新列表</button> <button class="btn btn-success mb-4" onclick="batchActionChannels("enable")">✅ 批量启用</button> <button class="btn btn-danger mb-4" onclick="batchActionChannels("disable")">❌ 批量禁用</button> <button class="btn btn-secondary mb-4" onclick="batchActionChannels("delete")">🗑️ 批量删除</button>
-            <select id="channelFilter" class="mb-4" style="margin-left:10px;padding:6px 12px;border-radius:4px;border:1px solid #ccc;" onchange="loadChannels()"></select>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">
+              <button class="btn btn-primary" onclick="loadChannels()">刷新列表</button>
+              <button class="btn btn-success" onclick="batchActionChannels('enable')">✅ 批量启用</button>
+              <button class="btn btn-danger" onclick="batchActionChannels('disable')">❌ 批量禁用</button>
+              <button class="btn btn-secondary" onclick="batchActionChannels('delete')">🗑️ 批量删除</button>
+              <select id="channelFilter" style="padding:6px 12px;border-radius:4px;border:1px solid #ccc;" onchange="loadChannels()"></select>
+            </div>
             <div id="channelsTableWrap" class="muted">等待加载…</div>
           </div>
           <div class="card span-3">
