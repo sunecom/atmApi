@@ -15,6 +15,7 @@ type UsageLog struct {
 	InputTokens    int64     `json:"input_tokens"`                                      // 输入 token 数
 	OutputTokens   int64     `json:"output_tokens"`                                     // 输出 token 数
 	TotalTokens    int64     `json:"total_tokens"`                                      // 总计 token 数
+	EstimatedCost  float64   `json:"estimated_cost"`                                    // 估算成本（元）
 	StatusCode     int       `json:"status_code"`                                       // HTTP 状态码
 	DurationMs     int64     `json:"duration_ms"`                                       // 耗时（毫秒）
 	CreatedAt      time.Time `json:"created_at"`

@@ -152,6 +152,9 @@ func RegisterRoutes(r *gin.Engine) {
 			managed.GET("/cost-summary", getCostSummary)
 			managed.GET("/cost-by-plan", getCostByPlan)
 			managed.GET("/cost-trend", getCostTrend)
+			// Phase 2C 成本仪表盘 API
+			managed.GET("/dashboard", getDashboard)
+			managed.GET("/token/:id/cost", getTokenCost)
 			// 套餐管理
 			managed.GET("/plans", getPlans)
 			managed.POST("/plans/sync", syncPlans)
@@ -1873,4 +1876,84 @@ func extractUserQuestion(messages []map[string]interface{}) string {
 		}
 	}
 	return ""
+}
+
+// ===== Phase 2C 成本仪表盘 API =====
+func getDashboard(c *gin.Context) {
+	period := c.DefaultQuery("period", "today")
+	var startTime, endTime time.Time
+
+	now := time.Now()
+	switch period {
+	case "today":
+		startTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		endTime = now
+	case "7d":
+		startTime = now.AddDate(0, 0, -7)
+		endTime = now
+	case "30d":
+		startTime = now.AddDate(0, 0, -30)
+		endTime = now
+	case "month":
+		startTime = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		endTime = now
+	default:
+		startTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		endTime = now
+	}
+
+	summary, err := service.GetDashboardSummary(startTime, endTime)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, ErrInternal, "获取仪表盘数据失败: "+err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": summary, "period": period})
+}
+
+func getTokenCost(c *gin.Context) {
+	idStr := c.Param("id")
+	tokenID, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, ErrInvalidRequest, "无效的 token ID")
+		return
+	}
+
+	period := c.DefaultQuery("period", "today")
+	var startTime, endTime time.Time
+
+	now := time.Now()
+	switch period {
+	case "today":
+		startTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		endTime = now
+	case "7d":
+		startTime = now.AddDate(0, 0, -7)
+		endTime = now
+	case "30d":
+		startTime = now.AddDate(0, 0, -30)
+		endTime = now
+	case "month":
+		startTime = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		endTime = now
+	default:
+		startTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		endTime = now
+	}
+
+	summary, err := service.GetTokenCostSummary(uint(tokenID), startTime, endTime)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, ErrInternal, "获取 token 成本失败: "+err.Error())
+		return
+	}
+
+	// 检查是否亏损
+	isLoss, profit, _ := service.CheckTokenLoss(uint(tokenID))
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":       summary,
+		"period":     period,
+		"is_loss":    isLoss,
+		"profit":     profit,
+	})
 }
