@@ -110,6 +110,7 @@ func RegisterRoutes(r *gin.Engine) {
 		c.Redirect(http.StatusFound, order.PayURL)
 	})
 	r.GET("/dashboard", func(c *gin.Context) { c.Redirect(301, "/static/dashboard.html") })
+	r.GET("/cost-dashboard", func(c *gin.Context) { c.Redirect(301, "/static/cost-dashboard.html") })
 	r.GET("/monitor", func(c *gin.Context) { c.Redirect(301, "/static/monitor.html") })
 	// MCP 端点（Model Context Protocol）
 	r.GET("/mcp", mcpHandle)
@@ -155,6 +156,9 @@ func RegisterRoutes(r *gin.Engine) {
 			// Phase 2C 成本仪表盘 API
 			managed.GET("/dashboard", getDashboard)
 			managed.GET("/token/:id/cost", getTokenCost)
+			managed.GET("/cost-dashboard/enhanced", getDashboardEnhanced)
+			managed.GET("/token-ranking", getTokenRanking)
+			managed.GET("/alerts", getAlerts)
 			// 套餐管理
 			managed.GET("/plans", getPlans)
 			managed.POST("/plans/sync", syncPlans)

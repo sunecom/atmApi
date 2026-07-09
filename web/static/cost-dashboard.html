@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>atmApi 成本监控预警中心</title>
+    <link rel="icon" href="logo.png"/>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg-primary: #0a0e27;
+            --bg-secondary: #1a1f3a;
+            --bg-card: linear-gradient(135deg, rgba(26, 31, 58, 0.9), rgba(15, 20, 40, 0.95));
+            --border: rgba(255, 255, 255, 0.1);
+            --text-primary: #e0e6ed;
+            --text-secondary: #8b95a8;
+            --accent-blue: #00d4ff;
+            --accent-purple: #7b2ff7;
+            --accent-green: #4ecdc4;
+            --accent-red: #ff6b6b;
+            --accent-yellow: #ffd93d;
+            --accent-orange: #ff8c42;
+        }
+        
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        /* 头部 */
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple), var(--accent-green));
+        }
+        
+        .header h1 {
+            font-size: 2.2em;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 2px;
+        }
+        
+        .header .subtitle {
+            color: var(--text-secondary);
+            margin-top: 8px;
+            font-size: 0.9em;
+        }
+        
+        /* 时间选择器 */
+        .period-selector {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin: 20px 0;
+        }
+        
+        .period-btn {
+            padding: 10px 24px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 25px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 0.95em;
+        }
+        
+        .period-btn:hover {
+            background: rgba(0, 212, 255, 0.1);
+            border-color: var(--accent-blue);
+        }
+        
+        .period-btn.active {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            color: white;
+            border-color: transparent;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
+        }
+        
+        /* 核心指标卡片 */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .kpi-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .kpi-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+        }
+        
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--card-accent, var(--accent-blue));
+        }
+        
+        .kpi-card.revenue { --card-accent: var(--accent-blue); }
+        .kpi-card.cost { --card-accent: var(--accent-red); }
+        .kpi-card.profit { --card-accent: var(--accent-green); }
+        .kpi-card.margin { --card-accent: var(--accent-yellow); }
+        .kpi-card.alert { --card-accent: var(--accent-orange); }
+        
+        .kpi-label {
+            font-size: 0.85em;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        
+        .kpi-value {
+            font-size: 2em;
+            font-weight: 700;
+            color: var(--card-accent, var(--accent-blue));
+            margin-bottom: 8px;
+        }
+        
+        .kpi-detail {
+            font-size: 0.85em;
+            color: var(--text-secondary);
+        }
+        
+        /* 内容网格 */
+        .content-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .content-grid.full {
+            grid-template-columns: 1fr;
+        }
+        
+        @media (max-width: 1200px) {
+            .content-grid { grid-template-columns: 1fr; }
+        }
+        
+        .panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+        }
+        
+        .panel-title {
+            font-size: 1.1em;
+            color: var(--accent-blue);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .panel-title::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: linear-gradient(180deg, var(--accent-blue), var(--accent-purple));
+            border-radius: 2px;
+        }
+        
+        /* 排行榜 */
+        .ranking-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .ranking-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 14px 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            transition: all 0.3s;
+        }
+        
+        .ranking-item:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(0, 212, 255, 0.3);
+        }
+        
+        .ranking-pos {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 0.9em;
+        }
+        
+        .ranking-pos.top1 { background: linear-gradient(135deg, #ffd700, #ff8c00); color: #000; }
+        .ranking-pos.top2 { background: linear-gradient(135deg, #c0c0c0, #808080); color: #000; }
+        .ranking-pos.top3 { background: linear-gradient(135deg, #cd7f32, #8b4513); color: #fff; }
+        .ranking-pos.normal { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
+        
+        .ranking-info {
+            flex: 1;
+        }
+        
+        .ranking-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .ranking-meta {
+            font-size: 0.8em;
+            color: var(--text-secondary);
+        }
+        
+        .ranking-value {
+            text-align: right;
+        }
+        
+        .ranking-profit {
+            font-size: 1.1em;
+            font-weight: 700;
+        }
+        
+        .ranking-profit.positive { color: var(--accent-green); }
+        .ranking-profit.negative { color: var(--accent-red); }
+        
+        .ranking-calls {
+            font-size: 0.8em;
+            color: var(--text-secondary);
+        }
+        
+        /* 预警列表 */
+        .alert-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .alert-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 16px;
+            background: rgba(255, 107, 107, 0.05);
+            border: 1px solid rgba(255, 107, 107, 0.2);
+            border-radius: 12px;
+        }
+        
+        .alert-item.high {
+            background: rgba(255, 107, 107, 0.1);
+            border-color: rgba(255, 107, 107, 0.4);
+        }
+        
+        .alert-icon {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            font-size: 1.3em;
+            background: rgba(255, 107, 107, 0.2);
+        }
+        
+        .alert-info {
+            flex: 1;
+        }
+        
+        .alert-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .alert-desc {
+            font-size: 0.85em;
+            color: var(--text-secondary);
+        }
+        
+        .alert-loss {
+            font-size: 1.2em;
+            font-weight: 700;
+            color: var(--accent-red);
+        }
+        
+        /* 图表容器 */
+        .chart-container {
+            width: 100%;
+            height: 300px;
+        }
+        
+        /* 加载状态 */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+        
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(0, 212, 255, 0.1);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+        
+        .empty-state .icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+            opacity: 0.5;
+        }
+        
+        /* 刷新按钮 */
+        .refresh-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border: none;
+            color: white;
+            font-size: 1.3em;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.4);
+            transition: transform 0.3s;
+            z-index: 100;
+        }
+        
+        .refresh-btn:hover {
+            transform: scale(1.1);
+        }
+        
+        .refresh-btn.spinning {
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>💰 atmApi 成本监控预警中心</h1>
+        <div class="subtitle">实时监控 · 盈亏分析 · 智能预警</div>
+    </div>
+    
+    <div class="period-selector">
+        <button class="period-btn active" data-period="today">📅 今日</button>
+        <button class="period-btn" data-period="7d">📊 近7天</button>
+        <button class="period-btn" data-period="30d">📈 近30天</button>
+        <button class="period-btn" data-period="month">🗓️ 本月</button>
+    </div>
+    
+    <!-- 核心指标 -->
+    <div class="kpi-grid">
+        <div class="kpi-card revenue">
+            <div class="kpi-label">总收入</div>
+            <div class="kpi-value" id="kpi-revenue">¥0.00</div>
+            <div class="kpi-detail" id="kpi-revenue-detail">加载中...</div>
+        </div>
+        <div class="kpi-card cost">
+            <div class="kpi-label">总成本</div>
+            <div class="kpi-value" id="kpi-cost">¥0.00</div>
+            <div class="kpi-detail" id="kpi-cost-detail">加载中...</div>
+        </div>
+        <div class="kpi-card profit">
+            <div class="kpi-label">总利润</div>
+            <div class="kpi-value" id="kpi-profit">¥0.00</div>
+            <div class="kpi-detail" id="kpi-profit-detail">加载中...</div>
+        </div>
+        <div class="kpi-card margin">
+            <div class="kpi-label">利润率</div>
+            <div class="kpi-value" id="kpi-margin">0%</div>
+            <div class="kpi-detail" id="kpi-margin-detail">加载中...</div>
+        </div>
+        <div class="kpi-card alert">
+            <div class="kpi-label">预警 Token</div>
+            <div class="kpi-value" id="kpi-alerts">0</div>
+            <div class="kpi-detail" id="kpi-alerts-detail">加载中...</div>
+        </div>
+    </div>
+    
+    <!-- 图表区域 -->
+    <div class="content-grid">
+        <div class="panel">
+            <div class="panel-title">模型成本分布</div>
+            <div class="chart-container" id="chart-model"></div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">套餐利润对比</div>
+            <div class="chart-container" id="chart-plan"></div>
+        </div>
+    </div>
+    
+    <!-- 排行榜 -->
+    <div class="content-grid">
+        <div class="panel">
+            <div class="panel-title">🏆 赚钱 Top 10</div>
+            <div class="ranking-list" id="ranking-profit">
+                <div class="loading"><div class="loading-spinner"></div>加载中...</div>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">⚠️ 赔钱 Top 10</div>
+            <div class="ranking-list" id="ranking-loss">
+                <div class="loading"><div class="loading-spinner"></div>加载中...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 预警列表 -->
+    <div class="content-grid full">
+        <div class="panel">
+            <div class="panel-title">🚨 实时预警</div>
+            <div class="alert-list" id="alert-list">
+                <div class="loading"><div class="loading-spinner"></div>加载中...</div>
+            </div>
+        </div>
+    </div>
+    
+    <button class="refresh-btn" onclick="refreshAll()" title="刷新数据">🔄</button>
+    
+    <script>
+        let currentPeriod = 'today';
+        let jwtToken = '';
+        let charts = {};
+        
+        // 初始化
+        async function init() {
+            await login();
+            setupPeriodSelector();
+            initCharts();
+            await refreshAll();
+            // 自动刷新
+            setInterval(refreshAll, 60000);
+        }
+        
+        // 登录获取 JWT
+        async function login() {
+            // 尝试从 localStorage 获取
+            jwtToken = localStorage.getItem('atmapi_jwt');
+            if (jwtToken) return;
+            
+            // 需要登录
+            const key = prompt('请输入管理员密钥:');
+            if (!key) return;
+            
+            try {
+                const resp = await fetch('/api/v1/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key })
+                });
+                const data = await resp.json();
+                if (data.token) {
+                    jwtToken = data.token;
+                    localStorage.setItem('atmapi_jwt', jwtToken);
+                }
+            } catch (e) {
+                console.error('登录失败:', e);
+            }
+        }
+        
+        // API 请求
+        async function apiRequest(url) {
+            const resp = await fetch(url, {
+                headers: { 'Authorization': 'Bearer ' + jwtToken }
+            });
+            return resp.json();
+        }
+        
+        // 时间选择器
+        function setupPeriodSelector() {
+            document.querySelectorAll('.period-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentPeriod = btn.dataset.period;
+                    refreshAll();
+                });
+            });
+        }
+        
+        // 初始化图表
+        function initCharts() {
+            charts.model = echarts.init(document.getElementById('chart-model'));
+            charts.plan = echarts.init(document.getElementById('chart-plan'));
+            
+            window.addEventListener('resize', () => {
+                Object.values(charts).forEach(c => c.resize());
+            });
+        }
+        
+        // 刷新所有数据
+        async function refreshAll() {
+            const btn = document.querySelector('.refresh-btn');
+            btn.classList.add('spinning');
+            
+            try {
+                await Promise.all([
+                    loadDashboard(),
+                    loadTokenRanking(),
+                    loadAlerts()
+                ]);
+            } catch (e) {
+                console.error('刷新失败:', e);
+            }
+            
+            setTimeout(() => btn.classList.remove('spinning'), 1000);
+        }
+        
+        // 加载仪表盘数据
+        async function loadDashboard() {
+            const data = await apiRequest(`/api/v1/dashboard?period=${currentPeriod}`);
+            if (!data.data) return;
+            
+            const d = data.data;
+            
+            // KPI 卡片
+            document.getElementById('kpi-revenue').textContent = `¥${d.total_revenue.toFixed(2)}`;
+            document.getElementById('kpi-revenue-detail').textContent = `${d.total_tokens.toLocaleString()} tokens`;
+            
+            document.getElementById('kpi-cost').textContent = `¥${d.total_cost.toFixed(2)}`;
+            document.getElementById('kpi-cost-detail').textContent = `${d.total_requests} 次调用`;
+            
+            document.getElementById('kpi-profit').textContent = `¥${d.total_profit.toFixed(2)}`;
+            document.getElementById('kpi-profit-detail').textContent = d.total_profit >= 0 ? '盈利中' : '亏损中';
+            
+            document.getElementById('kpi-margin').textContent = `${d.profit_margin.toFixed(1)}%`;
+            document.getElementById('kpi-margin-detail').textContent = `活跃 Token: ${d.total_tokens_count || 0}`;
+            
+            // 模型成本图表
+            renderModelChart(d.by_model || []);
+            
+            // 套餐利润图表
+            renderPlanChart(d.by_plan || []);
+        }
+        
+        // 加载 Token 排行
+        async function loadTokenRanking() {
+            const data = await apiRequest(`/api/v1/token-ranking?period=${currentPeriod}&limit=10`);
+            
+            renderProfitRanking(data.profitable || []);
+            renderLossRanking(data.loss || []);
+            
+            // 更新预警数
+            const alertCount = (data.loss || []).length;
+            document.getElementById('kpi-alerts').textContent = alertCount;
+            document.getElementById('kpi-alerts-detail').textContent = alertCount > 0 ? '需要关注' : '一切正常';
+        }
+        
+        // 加载预警
+        async function loadAlerts() {
+            const data = await apiRequest('/api/v1/alerts');
+            renderAlerts(data.alerts || []);
+        }
+        
+        // 渲染模型成本图表
+        function renderModelChart(models) {
+            const colors = ['#00d4ff', '#7b2ff7', '#ff006e', '#4ecdc4', '#ffd93d'];
+            
+            const option = {
+                tooltip: {
+                    trigger: 'item',
+                    formatter: '{b}: ¥{c} ({d}%)'
+                },
+                legend: {
+                    orient: 'vertical',
+                    right: 10,
+                    top: 'center',
+                    textStyle: { color: '#8b95a8' }
+                },
+                series: [{
+                    type: 'pie',
+                    radius: ['40%', '70%'],
+                    center: ['35%', '50%'],
+                    avoidLabelOverlap: false,
+                    itemStyle: {
+                        borderRadius: 10,
+                        borderColor: '#0a0e27',
+                        borderWidth: 2
+                    },
+                    label: { show: false },
+                    emphasis: {
+                        label: { show: true, fontSize: 14, fontWeight: 'bold' }
+                    },
+                    data: models.map((m, i) => ({
+                        value: +m.cost.toFixed(2),
+                        name: m.model_name,
+                        itemStyle: { color: colors[i % colors.length] }
+                    }))
+                }]
+            };
+            
+            charts.model.setOption(option);
+        }
+        
+        // 渲染套餐利润图表
+        function renderPlanChart(plans) {
+            const option = {
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'shadow' }
+                },
+                legend: {
+                    data: ['收入', '成本', '利润'],
+                    textStyle: { color: '#8b95a8' }
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    data: plans.map(p => p.plan_name || '未分类'),
+                    axisLabel: { color: '#8b95a8' }
+                },
+                yAxis: {
+                    type: 'value',
+                    axisLabel: { color: '#8b95a8', formatter: '¥{value}' }
+                },
+                series: [
+                    {
+                        name: '收入',
+                        type: 'bar',
+                        data: plans.map(p => +p.revenue.toFixed(2)),
+                        itemStyle: { color: '#00d4ff' }
+                    },
+                    {
+                        name: '成本',
+                        type: 'bar',
+                        data: plans.map(p => +p.cost.toFixed(2)),
+                        itemStyle: { color: '#ff6b6b' }
+                    },
+                    {
+                        name: '利润',
+                        type: 'bar',
+                        data: plans.map(p => +p.profit.toFixed(2)),
+                        itemStyle: { 
+                            color: (params) => params.value >= 0 ? '#4ecdc4' : '#ff6b6b'
+                        }
+                    }
+                ]
+            };
+            
+            charts.plan.setOption(option);
+        }
+        
+        // 渲染赚钱排行
+        function renderProfitRanking(items) {
+            const container = document.getElementById('ranking-profit');
+            
+            if (items.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="icon">📊</div>暂无数据</div>';
+                return;
+            }
+            
+            container.innerHTML = items.slice(0, 10).map((item, i) => {
+                const posClass = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : 'normal';
+                return `
+                    <div class="ranking-item">
+                        <div class="ranking-pos ${posClass}">${i + 1}</div>
+                        <div class="ranking-info">
+                            <div class="ranking-name">${item.token_name}</div>
+                            <div class="ranking-meta">${item.plan_name || '未分类'} · ${item.total_calls} 次调用</div>
+                        </div>
+                        <div class="ranking-value">
+                            <div class="ranking-profit positive">+¥${item.profit.toFixed(2)}</div>
+                            <div class="ranking-calls">利润率 ${item.profit_margin.toFixed(1)}%</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // 渲染赔钱排行
+        function renderLossRanking(items) {
+            const container = document.getElementById('ranking-loss');
+            
+            if (items.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="icon">✅</div>暂无亏损 Token</div>';
+                return;
+            }
+            
+            container.innerHTML = items.slice(0, 10).map((item, i) => {
+                const posClass = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : 'normal';
+                return `
+                    <div class="ranking-item">
+                        <div class="ranking-pos ${posClass}">${i + 1}</div>
+                        <div class="ranking-info">
+                            <div class="ranking-name">${item.token_name}</div>
+                            <div class="ranking-meta">${item.plan_name || '未分类'} · ${item.total_calls} 次调用</div>
+                        </div>
+                        <div class="ranking-value">
+                            <div class="ranking-profit negative">-¥${Math.abs(item.profit).toFixed(2)}</div>
+                            <div class="ranking-calls">利润率 ${item.profit_margin.toFixed(1)}%</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // 渲染预警列表
+        function renderAlerts(alerts) {
+            const container = document.getElementById('alert-list');
+            
+            if (alerts.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="icon">✅</div>暂无预警，一切正常</div>';
+                return;
+            }
+            
+            container.innerHTML = alerts.map(alert => `
+                <div class="alert-item ${alert.risk_level}">
+                    <div class="alert-icon">${alert.risk_level === 'high' ? '🔴' : '🟡'}</div>
+                    <div class="alert-info">
+                        <div class="alert-title">${alert.token_name}</div>
+                        <div class="alert-desc">${alert.plan_name || '未分类'} · ${alert.suggestion}</div>
+                    </div>
+                    <div class="alert-loss">-¥${alert.current_loss.toFixed(2)}</div>
+                </div>
+            `).join('');
+        }
+        
+        // 启动
+        init();
+    </script>
+</body>
+</html>
