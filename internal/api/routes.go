@@ -562,7 +562,12 @@ func chatCompletions(c *gin.Context) {
 				role, _ := msg["role"].(string)
 				if role != "user" { continue }
 				contentBytes, _ := json.Marshal(msg["content"])
-				dbgLog("[DUMP] msg[%d] role=%s content=%s", i, role, string(contentBytes)[:min(500, len(string(contentBytes)))])
+				contentStr := string(contentBytes)
+				if len(contentStr) > 2000 {
+					dbgLog("[DUMP] msg[%d] role=%s content=%s...[truncated, total=%d]", i, role, contentStr[:2000], len(contentStr))
+				} else {
+					dbgLog("[DUMP] msg[%d] role=%s content=%s", i, role, contentStr)
+				}
 			}
 		}
 		dbgLog("[IMG] model=deepseek-a4 hasImage=%v msgs=%d", hasImage, len(req.Messages))
@@ -621,6 +626,52 @@ func chatCompletions(c *gin.Context) {
 			}
 		}
 	}
+	// ===== 元数据清理：剥离 OpenClaw 注入的 Conversation info / Sender 元数据 =====
+	// 2026-07-10：修复图片+文字路径跳过 analyzeComplexityV2 导致元数据泄漏到上游模型
+	// 图片路径直接路由到 qwen3.7-plus，不走复杂度分析，因此之前的元数据剥离逻辑被跳过
+	// 这里对所有 user 消息的 text content 统一做 stripMetadata
+	{
+		cleaned := false
+		for i := range req.Messages {
+			role, _ := req.Messages[i]["role"].(string)
+			if role != "user" {
+				continue
+			}
+			content := req.Messages[i]["content"]
+			switch c := content.(type) {
+			case string:
+				if strings.Contains(c, "untrusted metadata") || strings.Contains(c, "Conversation info") {
+					req.Messages[i]["content"] = stripMetadata(c)
+					cleaned = true
+				}
+			case []interface{}:
+				for _, part := range c {
+					if pm, ok := part.(map[string]interface{}); ok {
+						if typ, _ := pm["type"].(string); typ == "text" {
+							if text, ok := pm["text"].(string); ok {
+								if strings.Contains(text, "untrusted metadata") || strings.Contains(text, "Conversation info") {
+									pm["text"] = stripMetadata(text)
+									cleaned = true
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if cleaned {
+			var reqMapClean map[string]interface{}
+			json.Unmarshal(body, &reqMapClean)
+			cleanMsgs := make([]interface{}, len(req.Messages))
+			for i, m := range req.Messages {
+				cleanMsgs[i] = m
+			}
+			reqMapClean["messages"] = cleanMsgs
+			body, _ = json.Marshal(reqMapClean)
+			log.Printf("[元数据清理] 已剥离 OpenClaw 注入的 Conversation info / Sender 元数据")
+		}
+	}
+
 	// ===== 输出控制：简洁回复约束（替代硬截断）=====
 	// 2026-07-08：用 system message 约束输出长度，而不是 max_tokens 硬截断
 	// 用户明确要求"详细/完整/长文"时不注入，尊重用户意图
@@ -734,6 +785,17 @@ func chatCompletions(c *gin.Context) {
 		body, _ = json.Marshal(reqMap)
 	}
 
+	// qwen3.7-plus max_tokens 上限为 65536，强制截断
+	if actualModel == "qwen3.7-plus" {
+		var reqMapCheck map[string]interface{}
+		json.Unmarshal(body, &reqMapCheck)
+		if mt, ok := reqMapCheck["max_tokens"].(float64); ok && mt > 65536 {
+			reqMapCheck["max_tokens"] = 65536
+			body, _ = json.Marshal(reqMapCheck)
+			log.Printf("[输出控制] qwen3.7-plus max_tokens 截断至 65536 (原值: %.0f)", mt)
+		}
+	}
+
 	// ===== 模型权限校验：token 的套餐必须允许此模型 =====
 	apiPlanName := apiToken.PlanName
 	if apiPlanName == "" {
@@ -752,7 +814,7 @@ func chatCompletions(c *gin.Context) {
 				if containsString(allowedModels, "deepseek-a4") {
 					goto modelAllowed
 				}
-				log.Printf("[鉴权] token=*** 套餐=%s 不允许模型=%s, allowed=%v",
+				log.Printf("[鉴权] token=%s 套餐=%s 不允许模型=%s, allowed=%v",
 					apiToken.Name, apiPlanName, actualModel, allowedModels)
 				respondError(c, http.StatusForbidden, "MODEL_NOT_ALLOWED",
 					fmt.Sprintf("当前套餐「%s」不支持模型「%s」，可用模型: %s",
@@ -889,6 +951,10 @@ modelAllowed:
 				var qwenReqMap map[string]interface{}
 				json.Unmarshal(body, &qwenReqMap)
 				qwenReqMap["model"] = "qwen3.7-plus"
+				// qwen3.7-plus max_tokens 上限 65536
+				if mt, ok := qwenReqMap["max_tokens"].(float64); ok && mt > 65536 {
+					qwenReqMap["max_tokens"] = 65536
+				}
 				qwenBody, _ := json.Marshal(qwenReqMap)
 				result, err = service.RouteRequest("qwen3.7-plus", qwenBody, tokenKey)
 			}
@@ -974,7 +1040,7 @@ processResult:
 		duration := time.Since(startTime).Milliseconds()
 		model.DB.Create(&model.RequestLog{
 			TokenName: apiToken.Name, ChannelName: result.ChannelName, AtmModel: result.AtmModel,
-			Model: req.Model, RoutedModel: actualModel, StatusCode: result.Response.StatusCode, DurationMs: duration,
+			Model: actualModel, RoutedModel: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
 		})
 		c.Header("X-Actual-Model", actualModel)
 		c.Header("X-Requested-Model", req.Model)
@@ -1054,7 +1120,7 @@ processResult:
 	duration := time.Since(startTime).Milliseconds()
 	model.DB.Create(&model.RequestLog{
 		TokenName: apiToken.Name, ChannelName: result.ChannelName, AtmModel: result.AtmModel,
-		Model: req.Model, RoutedModel: actualModel, StatusCode: result.Response.StatusCode, DurationMs: duration,
+		Model: actualModel, RoutedModel: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
 	})
 	// 设置响应头：返回实际路由的模型名
 	c.Header("X-Actual-Model", actualModel)
@@ -1903,7 +1969,57 @@ func extractUserQuestion(messages []map[string]interface{}) string {
 				if pm, ok := part.(map[string]interface{}); ok {
 					if typ, _ := pm["type"].(string); typ == "text" {
 						if text, ok := pm["text"].(string); ok {
-							if !strings.Contains(text, "[media attached:") && !strings.Contains(text, "- Images:") {
+							log.Printf("[extractUserQuestion] processing text part, len=%d", len(text))
+							// 如果包含媒体标记或元数据，提取用户文字
+							if strings.Contains(text, "[media attached:") || strings.Contains(text, "- Images:") ||
+								strings.Contains(text, "Conversation info") || strings.Contains(text, "Sender (untrusted") {
+								lines := strings.Split(text, "\n")
+								var textLines []string
+								skipBlock := false
+								for _, line := range lines {
+									l := strings.TrimSpace(line)
+									if l == "" {
+										continue
+									}
+									// 跳过媒体标记行
+									if strings.HasPrefix(l, "[media attached:") || strings.HasPrefix(l, "- Images:") {
+										continue
+									}
+									// 跳过 Conversation info 块
+									if strings.HasPrefix(l, "Conversation info") {
+										skipBlock = true
+										continue
+									}
+									// 跳过 Sender 块
+									if strings.HasPrefix(l, "Sender (untrusted") {
+										skipBlock = true
+										continue
+									}
+									// 跳过 JSON 代码块
+									if strings.HasPrefix(l, "```json") || strings.HasPrefix(l, "```") {
+										continue
+									}
+									// 跳过 JSON 对象行（以 { 或 } 开头）
+									if strings.HasPrefix(l, "{") || strings.HasPrefix(l, "}") || strings.HasPrefix(l, "\"") {
+										continue
+									}
+									// 如果在跳过块模式，继续跳过
+									if skipBlock {
+										// 检查是否块结束（遇到非 JSON 行）
+										if !strings.HasPrefix(l, "{") && !strings.HasPrefix(l, "}") && !strings.HasPrefix(l, "\"") {
+											skipBlock = false
+										} else {
+											continue
+										}
+									}
+									textLines = append(textLines, line)
+								}
+								extracted := strings.TrimSpace(strings.Join(textLines, "\n"))
+								log.Printf("[extractUserQuestion] extracted text: %q", extracted[:min(100, len(extracted))])
+								if extracted != "" {
+									lastText = extracted
+								}
+							} else {
 								lastText = text
 							}
 						}
