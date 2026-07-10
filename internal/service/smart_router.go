@@ -67,21 +67,22 @@ func hasToolCalls(messages []map[string]interface{}) bool {
 }
 
 func HasImageContent(messages []map[string]interface{}) bool {
+	// 只检查最后一条 user 消息，不扫描历史
+	// 历史中的图片会导致路由永久锁定在 qwen3.7-plus
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
 		role, _ := msg["role"].(string)
 		if role != "user" {
 			continue
 		}
+		// 找到最后一条 user 消息后，检查是否有图片
 		content, ok := msg["content"]
 		if !ok {
 			return false
 		}
 		switch c := content.(type) {
 		case string:
-			if strings.Contains(c, "data:image") || hasImageURL(c) {
-				return true
-			}
+			return strings.Contains(c, "data:image") || hasImageURL(c)
 		case []interface{}:
 			for _, part := range c {
 				if partMap, ok := part.(map[string]interface{}); ok {
@@ -96,6 +97,7 @@ func HasImageContent(messages []map[string]interface{}) bool {
 				}
 			}
 		}
+		// 找到最后一条 user 消息后，无论是否有图片都返回
 		return false
 	}
 	return false

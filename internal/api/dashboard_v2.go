@@ -90,6 +90,14 @@ func getDashboardV2(c *gin.Context) {
 	case "month":
 		startTime = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		endTime = now
+	case "quarter":
+		quarter := (int(now.Month()) - 1) / 3
+		qStart := time.Month(quarter*3 + 1)
+		startTime = time.Date(now.Year(), qStart, 1, 0, 0, 0, 0, now.Location())
+		endTime = now
+	case "year":
+		startTime = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, now.Location())
+		endTime = now
 	default:
 		startTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 		endTime = now

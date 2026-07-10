@@ -49,6 +49,16 @@ func main() {
 	// 初始化图片分析缓存
 	service.InitImageAnalysisCache()
 
+	// 初始化飞书通知器
+	feishuAppID := os.Getenv("FEISHU_APP_ID")
+	feishuAppSecret := os.Getenv("FEISHU_APP_SECRET")
+	if feishuAppID != "" && feishuAppSecret != "" {
+		service.InitFeishuNotifier(feishuAppID, feishuAppSecret)
+		log.Printf("[飞书通知] 飞书通知器已初始化")
+	} else {
+		log.Printf("[警告] 飞书通知器未初始化：缺少 FEISHU_APP_ID 或 FEISHU_APP_SECRET")
+	}
+
 	// 启动定时清理 rate_limits 过期记录（每天凌晨 3 点清理 7 天前的数据）
 	go func() {
 		for {

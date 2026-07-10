@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"atmapi/internal/model"
@@ -81,28 +80,24 @@ func sendCostAlert(token model.Token, summary *service.TokenCostSummary, profit 
 		DurationMs:  0,
 	})
 
-	// 构建告警消息
-	msg := fmt.Sprintf("⚠️ **成本告警**\n\n"+
-		"Token: %s\n"+
-		"套餐: %s\n"+
-		"本月成本: ¥%.2f\n"+
-		"本月收入: ¥%.2f\n"+
-		"亏损: ¥%.2f\n"+
-		"利润率: %.1f%%\n\n"+
-		"建议：检查该 token 的使用情况，考虑调整套餐或限制用量。",
-		token.Name, summary.PlanName, summary.TotalCost, summary.Revenue, -profit, summary.ProfitMargin)
-
-	// 写入告警文件（由外部脚本读取并发送到飞书）
-	alertFile := "/tmp/atmapi-cost-alert"
-	f, err := os.OpenFile(alertFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Printf("[成本告警] 写入告警文件失败: %v", err)
-		return
+	// 发送飞书告警
+	if service.GlobalFeishuNotifier != nil {
+		err := service.GlobalFeishuNotifier.SendCostAlert(
+			token.Name,
+			summary.PlanName,
+			summary.TotalCost,
+			summary.Revenue,
+			profit,
+			summary.ProfitMargin,
+		)
+		if err != nil {
+			log.Printf("[成本告警] 发送飞书告警失败: %v", err)
+		} else {
+			log.Printf("[成本告警] 已发送飞书告警: Token %s 本月亏损 ¥%.2f", token.Name, -profit)
+		}
+	} else {
+		log.Printf("[成本告警] 飞书通知器未初始化，跳过发送")
 	}
-	defer f.Close()
-
-	f.WriteString(fmt.Sprintf("[%s] %s\n", time.Now().Format("2006-01-02 15:04:05"), msg))
-	log.Printf("[成本告警] 已写入告警文件: %s", alertFile)
 }
 
 // StartExpiryChecker 启动过期 Token 自动禁用定时任务
