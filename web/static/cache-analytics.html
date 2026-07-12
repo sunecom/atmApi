@@ -522,8 +522,12 @@
         return labels[type] || type;
     }
 
-    function renderVectorChart(data) {
+    function renderVectorChart(resp) {
         if (!vectorChart) initVectorChart();
+        let data = resp.data || resp;
+        const totalCount = resp.total_count || (Array.isArray(data) ? data.length : 0);
+        const shownCount = resp.shown_count || (Array.isArray(data) ? data.length : 0);
+
         if (!data || data.length === 0) {
             vectorChart.setOption({
                 title: { text: '暂无分段数据', left: 'center', top: 'center', textStyle: { color: '#8b95a8', fontSize: 14 } },
@@ -532,8 +536,30 @@
             return;
         }
 
+        // 前端兜底：最多 10 个
+        if (data.length > 10) {
+            data.sort((a, b) => b.avg_tokens - a.avg_tokens);
+            data = data.slice(0, 10);
+        }
+
         // 按位置排序
         data.sort((a, b) => a.position - b.position);
+
+        // 截断提示
+        if (totalCount > shownCount) {
+            const chartEl = document.getElementById('vector-chart');
+            let hint = chartEl.querySelector('.vector-truncation-hint');
+            if (!hint) {
+                hint = document.createElement('div');
+                hint.className = 'vector-truncation-hint';
+                hint.style.cssText = 'text-align:center;font-size:11px;color:#8b95a8;padding:4px 0;';
+                chartEl.parentNode.insertBefore(hint, chartEl);
+            }
+            hint.textContent = `显示 ${shownCount} / ${totalCount} 个分段（按 tokens 数降序截取前 ${shownCount}）`;
+        } else {
+            const hint = document.querySelector('.vector-truncation-hint');
+            if (hint) hint.remove();
+        }
 
         // 计算累计命中率（基于稳定率）
         let cumulativeRate = 100;

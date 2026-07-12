@@ -529,6 +529,15 @@ func chatCompletions(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, ErrInvalidRequest, "请求格式错误")
 		return
 	}
+	// 保存原始 messages（用于 Prompt 分析）
+	originalMessages := make([]map[string]interface{}, len(req.Messages))
+	for i, m := range req.Messages {
+		cp := make(map[string]interface{}, len(m))
+		for k, v := range m {
+			cp[k] = v
+		}
+		originalMessages[i] = cp
+	}
 	// ===== 套餐到期预警（每天每token只提醒一次）=====
 	if apiToken.ExpiredTime > 0 {
 		remainingDays := (apiToken.ExpiredTime - time.Now().Unix()) / 86400
@@ -1122,6 +1131,8 @@ processResult:
 					service.GlobalAnalytics.RecordRequest(apiToken.ID, apiToken.Name,
 						lastResp.Usage.PromptTokens, cachedTokens, cachedTokens > 0, 0)
 				}
+				// Prompt 分析埋点（异步保存）
+				go SavePromptAnalysis(originalMessages, apiToken.ID, apiToken.Name, actualModel, lastResp.Usage.PromptTokens, cachedTokens)
 				log.Printf("[流式usage] token=%s model=%s tokens=%d cached=%d cost=%.6f",
 					apiToken.Name, actualModel, lastResp.Usage.TotalTokens, cachedTokens, usageLog.EstimatedCost)
 			}
@@ -1200,6 +1211,8 @@ processResult:
 				service.GlobalAnalytics.RecordRequest(apiToken.ID, apiToken.Name,
 					upstreamResp.Usage.PromptTokens, cachedTokens, cachedTokens > 0, 0)
 			}
+			// Prompt 分析埋点（异步保存）
+			go SavePromptAnalysis(originalMessages, apiToken.ID, apiToken.Name, actualModel, upstreamResp.Usage.PromptTokens, cachedTokens)
 			log.Printf("[usage] token=%s model=%s tokens=%d cached=%d cost=%.6f",
 				apiToken.Name, actualModel, upstreamResp.Usage.TotalTokens, cachedTokens, usageLog.EstimatedCost)
 		}
