@@ -43,3 +43,8 @@ alipay.env
 backups/
 atmapi-test
 main
+*.bak*
+*.fullbak
+atmapi_test
+atmapi.db
+data/

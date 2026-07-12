@@ -105,7 +105,7 @@ func getDashboardV2(c *gin.Context) {
 
 	// 获取所有 atm_model 列表（用于轮播）
 	var atmModels []string
-	model.DB.Raw(`SELECT DISTINCT COALESCE(NULLIF(atm_model,''), '未分类') FROM channels ORDER BY atm_model`).Scan(&atmModels)
+	model.DB.Raw(`SELECT DISTINCT COALESCE(NULLIF(atm_model,''), '未分类') as atm_model FROM channels WHERE deleted_at IS NULL ORDER BY atm_model`).Scan(&atmModels)
 
 	// 构建 channel_name -> atm_model 映射
 	type chMapping struct {
@@ -113,7 +113,7 @@ func getDashboardV2(c *gin.Context) {
 		AtmModel string
 	}
 	var channelMappings []chMapping
-	model.DB.Raw(`SELECT name, COALESCE(NULLIF(atm_model,''), '未分类') as atm_model FROM channels`).Scan(&channelMappings)
+	model.DB.Raw(`SELECT name, COALESCE(NULLIF(atm_model,''), '未分类') as atm_model FROM channels WHERE deleted_at IS NULL`).Scan(&channelMappings)
 	chToAtm := make(map[string]string)
 	for _, m := range channelMappings {
 		chToAtm[m.Name] = m.AtmModel
@@ -163,10 +163,13 @@ func getDashboardV2(c *gin.Context) {
 		TotalTokens:   totalTokens,
 	}
 
-	// 2. 上游大模型成本分布
+	// 2. 上游大模型成本分布（按实际调用模型分类）
 	upstreamMap := make(map[string]*UpstreamDistItem)
 	for _, log := range filteredLogs {
 		m := log.Model
+		if m == "" {
+			m = "未知"
+		}
 		if _, ok := upstreamMap[m]; !ok {
 			upstreamMap[m] = &UpstreamDistItem{Model: m}
 		}

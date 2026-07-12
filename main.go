@@ -40,6 +40,9 @@ func main() {
 	// 初始化响应缓存（TTL 10分钟，最大 1000 条）
 	service.InitCache(10*time.Minute, 1000)
 
+	// 初始化缓存分析器（企业级缓存优化）
+	service.InitCacheAnalytics()
+
 	// 初始化图片缓存（TTL 5分钟）
 	service.InitImageCache(5)
 

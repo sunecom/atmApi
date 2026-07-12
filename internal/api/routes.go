@@ -94,6 +94,13 @@ func RegisterRoutes(r *gin.Engine) {
 	r.GET("/account", func(c *gin.Context) { c.Redirect(301, "/static/pay.html?"+c.Request.URL.RawQuery) })
 	r.GET("/health", healthCheck)
 	r.GET("/cache/stats", cacheStats)
+	r.GET("/cache/analytics", getCacheAnalytics)
+	r.GET("/cache/token-analysis", getCacheAutoAnalysis)
+	r.GET("/cache/token-detail", getCacheTokenDetail)
+	r.POST("/cache/analyze-prompt", analyzePrompt)
+	r.GET("/prompt/summary", getPromptSummary)
+	r.GET("/prompt/vector-data", getPromptVectorData)
+	r.GET("/prompt/breakpoints", getPromptBreakpoints)
 	r.GET("/token-info", func(c *gin.Context) { c.File("./web/static/token-info.html") })
 	// 短链接跳转：/go/<orderNo> → 302 到支付宝长链接
 	r.GET("/go/:orderNo", func(c *gin.Context) {
@@ -111,6 +118,7 @@ func RegisterRoutes(r *gin.Engine) {
 	})
 	r.GET("/dashboard", func(c *gin.Context) { c.Redirect(301, "/static/dashboard.html") })
 	r.GET("/cost-dashboard", func(c *gin.Context) { c.Redirect(301, "/static/cost-dashboard.html") })
+	r.GET("/cache-analytics", func(c *gin.Context) { c.Redirect(301, "/static/cache-analytics.html") })
 	r.GET("/monitor", func(c *gin.Context) { c.Redirect(301, "/static/monitor.html") })
 	// MCP 端点（Model Context Protocol）
 	r.GET("/mcp", mcpHandle)
@@ -166,6 +174,9 @@ func RegisterRoutes(r *gin.Engine) {
 			managed.GET("/dashboard/v2", getDashboardV2)
 			managed.GET("/token-ranking", getTokenRanking)
 			managed.GET("/alerts", getAlerts)
+			// 缓存优化分析 API
+			// 缓存分析路由注册在 r 层级（前端不带 /api/v1 前缀）
+			// 见下方 r.GET 注册
 			// 套餐管理
 			managed.GET("/plans", getPlans)
 			managed.POST("/plans/sync", syncPlans)
@@ -1040,7 +1051,7 @@ processResult:
 		duration := time.Since(startTime).Milliseconds()
 		model.DB.Create(&model.RequestLog{
 			TokenName: apiToken.Name, ChannelName: result.ChannelName, AtmModel: result.AtmModel,
-			Model: actualModel, RoutedModel: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
+			Model: actualModelForLog(result, actualModel), RoutedModel: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
 		})
 		c.Header("X-Actual-Model", actualModel)
 		c.Header("X-Requested-Model", req.Model)
@@ -1106,6 +1117,11 @@ processResult:
 					DurationMs:    duration,
 				}
 				model.DB.Create(&usageLog)
+				// 缓存分析埋点
+				if service.GlobalAnalytics != nil {
+					service.GlobalAnalytics.RecordRequest(apiToken.ID, apiToken.Name,
+						lastResp.Usage.PromptTokens, cachedTokens, cachedTokens > 0, 0)
+				}
 				log.Printf("[流式usage] token=%s model=%s tokens=%d cached=%d cost=%.6f",
 					apiToken.Name, actualModel, lastResp.Usage.TotalTokens, cachedTokens, usageLog.EstimatedCost)
 			}
@@ -1120,7 +1136,7 @@ processResult:
 	duration := time.Since(startTime).Milliseconds()
 	model.DB.Create(&model.RequestLog{
 		TokenName: apiToken.Name, ChannelName: result.ChannelName, AtmModel: result.AtmModel,
-		Model: actualModel, RoutedModel: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
+		Model: actualModelForLog(result, actualModel), RoutedModel: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
 	})
 	// 设置响应头：返回实际路由的模型名
 	c.Header("X-Actual-Model", actualModel)
@@ -1179,6 +1195,11 @@ processResult:
 				DurationMs:    duration,
 			}
 			model.DB.Create(&usageLog)
+			// 缓存分析埋点
+			if service.GlobalAnalytics != nil {
+				service.GlobalAnalytics.RecordRequest(apiToken.ID, apiToken.Name,
+					upstreamResp.Usage.PromptTokens, cachedTokens, cachedTokens > 0, 0)
+			}
 			log.Printf("[usage] token=%s model=%s tokens=%d cached=%d cost=%.6f",
 				apiToken.Name, actualModel, upstreamResp.Usage.TotalTokens, cachedTokens, usageLog.EstimatedCost)
 		}
@@ -1236,11 +1257,11 @@ func getCostSummary(c *gin.Context) {
 	var todayCost, weekCost, monthCost float64
 	var todayTokens, weekTokens, monthTokens int64
 	model.DB.Raw(`SELECT coalesce(sum(input_tokens+output_tokens),0) FROM usage_logs
-		WHERE date(created_at)=date('now','localtime')`).Scan(&todayTokens)
+		WHERE DATE(created_at)=CURDATE()`).Scan(&todayTokens)
 	model.DB.Raw(`SELECT coalesce(sum(input_tokens+output_tokens),0) FROM usage_logs
-		WHERE created_at >= datetime('now', '-7 days', 'localtime')`).Scan(&weekTokens)
+		WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`).Scan(&weekTokens)
 	model.DB.Raw(`SELECT coalesce(sum(input_tokens+output_tokens),0) FROM usage_logs
-		WHERE created_at >= datetime('now', '-30 days', 'localtime')`).Scan(&monthTokens)
+		WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`).Scan(&monthTokens)
 	// 用默认模型估算成本（可以用 qwen3.7-plus 作为参考成本）
 	// 更准确：重新计算
 	type AllRow struct {
@@ -1250,19 +1271,19 @@ func getCostSummary(c *gin.Context) {
 	}
 	var todayRows []AllRow
 	model.DB.Raw(`SELECT input_tokens as input, output_tokens as output, model FROM usage_logs
-		WHERE date(created_at)=date('now','localtime')`).Scan(&todayRows)
+		WHERE DATE(created_at)=CURDATE()`).Scan(&todayRows)
 	for _, r := range todayRows {
 		todayCost += model.CalculateCost(r.Input, r.Output, 0, r.Model)
 	}
 	var weekRows []AllRow
 	model.DB.Raw(`SELECT input_tokens as input, output_tokens as output, model FROM usage_logs
-		WHERE created_at >= datetime('now', '-7 days', 'localtime')`).Scan(&weekRows)
+		WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`).Scan(&weekRows)
 	for _, r := range weekRows {
 		weekCost += model.CalculateCost(r.Input, r.Output, 0, r.Model)
 	}
 	var monthRows []AllRow
 	model.DB.Raw(`SELECT input_tokens as input, output_tokens as output, model FROM usage_logs
-		WHERE created_at >= datetime('now', '-30 days', 'localtime')`).Scan(&monthRows)
+		WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`).Scan(&monthRows)
 	for _, r := range monthRows {
 		monthCost += model.CalculateCost(r.Input, r.Output, 0, r.Model)
 	}
@@ -1324,7 +1345,7 @@ func getCostTrend(c *gin.Context) {
 		sum(output_tokens) as output_tokens,
 		count(*) as count
 		FROM usage_logs
-		WHERE created_at >= datetime('now', '-7 days', 'localtime')
+		WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
 		GROUP BY date(created_at)
 		ORDER BY date ASC`).Scan(&rows)
 	type TrendItem struct {
@@ -1398,7 +1419,7 @@ func getUsageStats(c *gin.Context) {
 	model.DB.Raw(`SELECT date(created_at) as date, count(*) as count,
 		CAST(AVG(duration_ms) AS INTEGER) as avg_ms,
 		SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as errors
-		FROM request_logs WHERE created_at > datetime('now', '-7 days')
+		FROM request_logs WHERE created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
 		GROUP BY date(created_at) ORDER BY date DESC`).Scan(&dailyStats)
 	var totalCount, totalErrors int64
 	var avgDuration int64
@@ -1429,7 +1450,7 @@ func publicStats(c *gin.Context) {
 	var dailyStats []DailyStat
 	model.DB.Raw(`SELECT date(created_at) as date, count(*) as count,
 		SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as errors
-		FROM request_logs WHERE created_at > datetime('now', '-7 days')
+		FROM request_logs WHERE created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
 		GROUP BY date(created_at) ORDER BY date DESC`).Scan(&dailyStats)
 	var totalCount, totalErrors int64
 	model.DB.Model(&model.RequestLog{}).Count(&totalCount)
@@ -1438,8 +1459,8 @@ func publicStats(c *gin.Context) {
 	model.DB.Raw("SELECT CAST(AVG(duration_ms) AS INTEGER) FROM request_logs").Scan(&avgDuration)
 	// 今日统计
 	var todayCount, todayErrors int64
-	model.DB.Model(&model.RequestLog{}).Where("date(created_at)=date('now','localtime')").Count(&todayCount)
-	model.DB.Model(&model.RequestLog{}).Where("date(created_at)=date('now','localtime') AND status_code >= 400").Count(&todayErrors)
+	model.DB.Model(&model.RequestLog{}).Where("DATE(created_at)=CURDATE()").Count(&todayCount)
+	model.DB.Model(&model.RequestLog{}).Where("DATE(created_at)=CURDATE() AND status_code >= 400").Count(&todayErrors)
 	// 活跃 token 数
 	var activeTokens, totalTokens int64
 	model.DB.Model(&model.Token{}).Where("status = 1").Count(&activeTokens)
@@ -1575,7 +1596,7 @@ func tokenInfo(c *gin.Context) {
 	model.DB.Raw(`SELECT count(*) as calls, coalesce(sum(total_tokens),0) as toks FROM usage_logs WHERE token_id = ?`, token.ID).Scan(&total)
 	// 本周累计
 	var week TokenUsage
-	model.DB.Raw(`SELECT count(*) as calls, coalesce(sum(total_tokens),0) as toks FROM usage_logs WHERE token_id = ? AND created_at >= datetime('now', '-7 days', 'localtime')`, token.ID).Scan(&week)
+	model.DB.Raw(`SELECT count(*) as calls, coalesce(sum(total_tokens),0) as toks FROM usage_logs WHERE token_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`, token.ID).Scan(&week)
 	// 套餐信息
 	var planDisplayName, planDesc string
 	var limit5h, dailyMax, weeklyMax, monthlyMax, maxQPS int64
@@ -2112,4 +2133,12 @@ func getTokenCost(c *gin.Context) {
 		"is_loss":    isLoss,
 		"profit":     profit,
 	})
+}
+
+// actualModelForLog 返回实际发给渠道的模型名（如果可用），否则回退到路由决策的模型名
+func actualModelForLog(result *service.RouteRequestResult, fallback string) string {
+	if result.ActualModel != "" {
+		return result.ActualModel
+	}
+	return fallback
 }

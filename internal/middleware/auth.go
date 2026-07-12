@@ -26,7 +26,7 @@ func GenerateToken(userID uint, username string, role int) (string, error) {
 		Username: username,
 		Role:     role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)), // 7天有效期
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}

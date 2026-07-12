@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>atmApi 缓存优化中心</title>
+    <link rel="icon" href="logo.png"/>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-primary: #0a0e27;
+            --bg-card: rgba(26, 31, 58, 0.6);
+            --border: rgba(255, 255, 255, 0.08);
+            --text-primary: #e0e6ed;
+            --text-secondary: #8b95a8;
+            --accent-blue: #00d4ff;
+            --accent-purple: #7b2ff7;
+            --accent-green: #4ecdc4;
+            --accent-red: #ff6b6b;
+            --accent-yellow: #ffd93d;
+            --accent-orange: #ff8c42;
+        }
+        html, body {
+            min-height: 100vh;
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+        .dashboard {
+            display: grid;
+            grid-template-rows: 50px auto 1fr;
+            gap: 10px;
+            padding: 10px;
+            min-height: 100vh;
+        }
+        .header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 16px;
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+        }
+        .header h1 { font-size: 1.1em; background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header-right { display: flex; align-items: center; gap: 10px; }
+        .refresh-btn { padding: 4px 14px; background: rgba(0,212,255,0.1); border: 1px solid var(--accent-blue); border-radius: 14px; color: var(--accent-blue); cursor: pointer; font-size: 0.75em; }
+        .refresh-btn:hover { background: rgba(0,212,255,0.2); }
+
+        /* KPI */
+        .kpi-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+        .kpi-card {
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+            padding: 10px 14px; display: flex; align-items: center; gap: 10px; position: relative; overflow: hidden;
+        }
+        .kpi-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+        .kpi-card.hit::before { background: var(--accent-green); }
+        .kpi-card.miss::before { background: var(--accent-red); }
+        .kpi-card.rate::before { background: var(--accent-blue); }
+        .kpi-card.tokens::before { background: var(--accent-yellow); }
+        .kpi-card.cost::before { background: var(--accent-orange); }
+        .kpi-icon { font-size: 1.3em; }
+        .kpi-body { flex: 1; }
+        .kpi-label { font-size: 0.65em; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+        .kpi-value { font-size: 1.4em; font-weight: 700; line-height: 1.2; }
+        .kpi-card.hit .kpi-value { color: var(--accent-green); }
+        .kpi-card.miss .kpi-value { color: var(--accent-red); }
+        .kpi-card.rate .kpi-value { color: var(--accent-blue); }
+        .kpi-card.tokens .kpi-value { color: var(--accent-yellow); }
+        .kpi-card.cost .kpi-value { color: var(--accent-orange); }
+        .kpi-detail { font-size: 0.6em; color: var(--text-secondary); }
+
+        /* 内容区 */
+        .content-row { display: grid; gap: 10px; min-height: 0; }
+        .row-2 { grid-template-columns: 1fr 1fr; }
+        .row-3 { grid-template-columns: 1fr 1fr 1fr; }
+        .panel {
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+            padding: 12px; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+        }
+        .panel-title {
+            font-size: 0.8em; color: var(--accent-blue); margin-bottom: 8px; display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+        }
+        .panel-title::before { content: ''; width: 3px; height: 14px; background: linear-gradient(180deg, var(--accent-blue), var(--accent-purple)); border-radius: 2px; }
+        .chart-wrap { flex: 1; min-height: 200px; }
+
+        /* Token 表 */
+        .token-table { flex: 1; overflow-y: auto; }
+        .token-table::-webkit-scrollbar { width: 3px; }
+        .token-table::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.72em; }
+        th { text-align: left; padding: 6px 8px; color: var(--text-secondary); font-weight: 600; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: #1a1f3a; z-index: 1; }
+        td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.03); }
+        tr:hover td { background: rgba(0,212,255,0.03); }
+        .bar-bg { display: inline-block; width: 60px; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; vertical-align: middle; margin-right: 4px; }
+        .bar-fill { height: 100%; border-radius: 3px; }
+        .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.85em; }
+        .tag.good { background: rgba(78,205,196,0.15); color: var(--accent-green); }
+        .tag.warn { background: rgba(255,217,61,0.15); color: var(--accent-yellow); }
+        .tag.bad { background: rgba(255,107,107,0.15); color: var(--accent-red); }
+
+        /* Prompt 分析 */
+        .prompt-input { width: 100%; min-height: 80px; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); padding: 8px; font-size: 0.75em; font-family: monospace; resize: vertical; }
+        .prompt-input:focus { outline: none; border-color: var(--accent-blue); }
+        .analyze-btn { margin-top: 8px; padding: 5px 16px; background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); border: none; border-radius: 6px; color: white; cursor: pointer; font-size: 0.75em; }
+        .score-circle { display: flex; align-items: center; justify-content: center; margin: 10px 0; }
+        .score-num { font-size: 2.5em; font-weight: 700; }
+        .suggestion-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+        .suggestion-list::-webkit-scrollbar { width: 3px; }
+        .suggestion-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+        .suggestion-item { padding: 6px 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; font-size: 0.72em; }
+        .empty { text-align: center; padding: 30px; color: var(--text-secondary); font-size: 0.8em; }
+
+        /* 矢量图 */
+        .vector-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+        .vector-select { flex: 1; padding: 6px 10px; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.75em; }
+        .vector-select:focus { outline: none; border-color: var(--accent-blue); }
+        .vector-select option { background: #1a1f3a; color: #e0e6ed; }
+        .vector-chart { width: 100%; height: 300px; }
+        .breakpoint-list { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+        .breakpoint-item { padding: 8px 12px; background: rgba(255,107,107,0.05); border: 1px solid rgba(255,107,107,0.15); border-radius: 6px; font-size: 0.72em; }
+        .breakpoint-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+        .breakpoint-title { color: var(--accent-red); font-weight: 600; }
+        .breakpoint-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.85em; }
+        .breakpoint-badge.high { background: rgba(255,107,107,0.15); color: var(--accent-red); }
+        .breakpoint-badge.medium { background: rgba(255,217,61,0.15); color: var(--accent-yellow); }
+        .breakpoint-badge.low { background: rgba(139,149,168,0.15); color: var(--text-secondary); }
+        .breakpoint-info { color: var(--text-secondary); font-size: 0.9em; margin-bottom: 4px; }
+        .breakpoint-suggestion { color: var(--accent-green); font-size: 0.9em; padding: 4px 8px; background: rgba(78,205,196,0.05); border-radius: 4px; }
+    </style>
+</head>
+<body>
+<div class="dashboard">
+    <!-- 标题栏 -->
+    <div class="header">
+        <h1>⚡ atmApi 缓存优化中心</h1>
+        <div class="header-right">
+            <span style="font-size:0.7em;color:var(--text-secondary);" id="lastUpdate">-</span>
+            <button class="refresh-btn" onclick="refreshAll()">🔄 刷新</button>
+        </div>
+    </div>
+
+    <!-- KPI -->
+    <div class="kpi-row">
+        <div class="kpi-card hit">
+            <div class="kpi-icon">✅</div>
+            <div class="kpi-body"><div class="kpi-label">缓存命中</div><div class="kpi-value" id="kpi-hits">0</div><div class="kpi-detail" id="kpi-hits-detail">-</div></div>
+        </div>
+        <div class="kpi-card miss">
+            <div class="kpi-icon">❌</div>
+            <div class="kpi-body"><div class="kpi-label">缓存未中</div><div class="kpi-value" id="kpi-misses">0</div><div class="kpi-detail" id="kpi-misses-detail">-</div></div>
+        </div>
+        <div class="kpi-card rate">
+            <div class="kpi-icon">📊</div>
+            <div class="kpi-body"><div class="kpi-label">命中率</div><div class="kpi-value" id="kpi-rate">0%</div><div class="kpi-detail" id="kpi-rate-detail">-</div></div>
+        </div>
+        <div class="kpi-card tokens">
+            <div class="kpi-icon">🪙</div>
+            <div class="kpi-body"><div class="kpi-label">节省 Tokens</div><div class="kpi-value" id="kpi-tokens">0</div><div class="kpi-detail" id="kpi-tokens-detail">-</div></div>
+        </div>
+        <div class="kpi-card cost">
+            <div class="kpi-icon">💰</div>
+            <div class="kpi-body"><div class="kpi-label">节省成本</div><div class="kpi-value" id="kpi-cost">$0</div><div class="kpi-detail" id="kpi-cost-detail">-</div></div>
+        </div>
+    </div>
+
+    <!-- 内容区 -->
+    <div class="content-row row-2">
+        <!-- 左：Token 缓存排行 -->
+        <div class="panel">
+            <div class="panel-title">📋 Token 缓存详情</div>
+            <div class="token-table">
+                <table>
+                    <thead><tr><th>Token 名称</th><th>请求数</th><th>命中</th><th>命中率</th><th>节省 Token</th><th>评级</th></tr></thead>
+                    <tbody id="token-tbody"><tr><td colspan="6" class="empty">暂无数据</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 右：自动分析报告（从数据库抓取低命中 Token） -->
+        <div class="panel">
+            <div class="panel-title">📊 Token 缓存优化建议</div>
+            <div class="token-table" style="flex:1;overflow-y:auto;">
+                <table>
+                    <thead><tr><th>Token 名称</th><th>请求数</th><th>未命中</th><th>命中率</th><th>浪费 Token</th><th>浪费金额</th><th>问题诊断</th></tr></thead>
+                    <tbody id="analysis-tbody"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prompt 结构分析 -->
+    <div class="content-row" style="grid-template-columns:1fr;">
+        <div class="panel">
+            <div class="panel-title">🔬 Prompt 结构分析（基于近期请求）</div>
+            <div class="token-table" style="flex:1;overflow-y:auto;">
+                <table>
+                    <thead><tr><th>Token</th><th>样本</th><th>消息数</th><th>缓存评分</th><th>system首位</th><th>图片%</th><th>工具%</th><th>诊断</th></tr></thead>
+                    <tbody id="prompt-summary-tbody"><tr><td colspan="8" class="empty">加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prompt 缓存贡献矢量图 -->
+    <div class="content-row row-2">
+        <div class="panel">
+            <div class="panel-title">📈 Prompt 缓存贡献矢量图</div>
+            <div class="vector-controls">
+                <select id="vector-token-select" class="vector-select" onchange="loadVectorData()">
+                    <option value="">选择 Token 查看矢量图...</option>
+                </select>
+            </div>
+            <div id="vector-chart" class="vector-chart"></div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">🔴 缓存断点分析</div>
+            <div id="breakpoint-list" class="breakpoint-list">
+                <div class="empty">选择 Token 后查看断点分析</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let jwtToken = '';
+    let loginPrompted = false;
+    let charts = {};
+
+    async function init() {
+        jwtToken = localStorage.getItem('atmapi_jwt') || '';
+        initVectorChart();
+        await refreshAll();
+        setInterval(refreshAll, 30000);
+        window.addEventListener('resize', function() {
+            if (vectorChart) vectorChart.resize();
+        });
+    }
+
+    async function ensureLogin() {
+        if (jwtToken) return;
+        if (loginPrompted) return;
+        loginPrompted = true;
+        const key = prompt('请输入管理员密钥:');
+        if (!key) return;
+        try {
+            const resp = await fetch('/api/v1/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+            const data = await resp.json();
+            if (data.token) { jwtToken = data.token; localStorage.setItem('atmapi_jwt', jwtToken); loginPrompted = false; }
+        } catch (e) { console.error('登录失败:', e); }
+    }
+
+    async function apiRequest(url) {
+        const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + jwtToken } });
+        if (resp.status === 401) {
+            jwtToken = ''; localStorage.removeItem('atmapi_jwt');
+            await ensureLogin();
+            if (jwtToken) { const r2 = await fetch(url, { headers: { 'Authorization': 'Bearer ' + jwtToken } }); return r2.json(); }
+            return null;
+        }
+        return resp.json();
+    }
+
+    async function refreshAll() {
+        try {
+            const [analyticsData, analysisData, promptData] = await Promise.all([
+                apiRequest('/cache/analytics'),
+                apiRequest('/cache/token-analysis'),
+                apiRequest('/prompt/summary')
+            ]);
+            if (analyticsData && !analyticsData.error) {
+                renderKPI(analyticsData.global || {});
+                renderTokens(analyticsData.tokens || []);
+            }
+            if (analysisData && analysisData.data) {
+                renderAnalysis(analysisData.data);
+            }
+            if (promptData && promptData.data) {
+                renderPromptSummary(promptData.data);
+                loadVectorTokenList(promptData.data);
+            }
+            document.getElementById('lastUpdate').textContent = '更新: ' + new Date().toLocaleTimeString();
+        } catch (e) { console.error('刷新失败:', e); }
+    }
+
+    function renderKPI(g) {
+        document.getElementById('kpi-hits').textContent = (g.cache_hits || 0).toLocaleString();
+        document.getElementById('kpi-hits-detail').textContent = '总请求 ' + (g.total_requests || 0);
+        document.getElementById('kpi-misses').textContent = (g.cache_misses || 0).toLocaleString();
+        document.getElementById('kpi-misses-detail').textContent = g.total_requests ? ((g.cache_misses / g.total_requests * 100).toFixed(1) + '% 未中') : '-';
+        const rate = g.hit_rate || 0;
+        document.getElementById('kpi-rate').textContent = (rate * 100).toFixed(1) + '%';
+        document.getElementById('kpi-rate-detail').textContent = rate >= 0.8 ? '🟢 优秀' : rate >= 0.5 ? '🟡 一般' : rate > 0 ? '🔴 需优化' : '—';
+        document.getElementById('kpi-tokens').textContent = (g.total_saved_tokens || 0).toLocaleString();
+        document.getElementById('kpi-tokens-detail').textContent = (g.total_saved_tokens || 0) > 1000 ? ((g.total_saved_tokens / 1000).toFixed(1) + 'K') : '-';
+        document.getElementById('kpi-cost').textContent = '$' + (g.total_saved_cost || 0).toFixed(4);
+        document.getElementById('kpi-cost-detail').textContent = (g.total_saved_cost || 0) > 0 ? '已节省' : '-';
+    }
+
+    function renderTokens(tokens) {
+        const tbody = document.getElementById('token-tbody');
+        if (!tokens || tokens.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无数据，等待请求积累...</td></tr>'; return; }
+        tokens.sort(function(a, b) { return (b.total_requests || 0) - (a.total_requests || 0); });
+        tbody.innerHTML = tokens.map(function(t) {
+            var rate = t.hit_rate || 0;
+            var rateColor = rate >= 0.8 ? 'var(--accent-green)' : rate >= 0.5 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+            var rateClass = rate >= 0.8 ? 'good' : rate >= 0.5 ? 'warn' : 'bad';
+            var rateText = rate >= 0.8 ? '优秀' : rate >= 0.5 ? '一般' : '需优化';
+            return '<tr><td>' + (t.token_name || '-') + '</td>' +
+                '<td>' + (t.total_requests || 0) + '</td>' +
+                '<td>' + (t.cache_hits || 0) + '</td>' +
+                '<td><span class="bar-bg"><span class="bar-fill" style="width:' + (rate * 100) + '%;background:' + rateColor + ';"></span></span>' + (rate * 100).toFixed(1) + '%</td>' +
+                '<td>' + (t.saved_tokens || 0).toLocaleString() + '</td>' +
+                '<td><span class="tag ' + rateClass + '">' + rateText + '</span></td></tr>';
+        }).join('');
+    }
+
+    function renderAnalysis(items) {
+        const tbody = document.getElementById('analysis-tbody');
+        if (!items || items.length === 0) { tbody.innerHTML = '<tr><td colspan="7" class="empty">暂无数据，等待请求积累...</td></tr>'; return; }
+        tbody.innerHTML = items.map(function(t) {
+            var rate = t.hit_rate || 0;
+            var issueClass = rate < 10 ? 'bad' : rate < 50 ? 'warn' : 'good';
+            var issueIcon = rate < 10 ? '🔴' : rate < 50 ? '🟡' : '🟢';
+            var rateColor = rate >= 50 ? 'var(--accent-green)' : rate >= 10 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+            return '<tr onclick="showTokenDetail(\'' + (t.token_name || '') + '\')" style="cursor:pointer;">' +
+                '<td>' + (t.token_name || '-') + '</td>' +
+                '<td>' + (t.total_requests || 0) + '</td>' +
+                '<td>' + (t.cache_misses || 0) + '</td>' +
+                '<td><span class="bar-bg"><span class="bar-fill" style="width:' + (rate) + '%;background:' + rateColor + ';"></span></span>' + rate.toFixed(1) + '%</td>' +
+                '<td>' + (t.miss_tokens || 0).toLocaleString() + '</td>' +
+                '<td>$' + (t.wasted_cost || 0).toFixed(2) + '</td>' +
+                '<td title="' + (t.suggestion || '') + '">' + issueIcon + ' ' + (t.issue || '-') + '</td></tr>';
+        }).join('');
+    }
+
+    init();
+
+    // Token 深度分析弹窗
+    var detailOverlay = null;
+
+    async function showTokenDetail(tokenName) {
+        if (detailOverlay) { document.body.removeChild(detailOverlay); detailOverlay = null; }
+        detailOverlay = document.createElement('div');
+        detailOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;overflow:auto;padding:20px;';
+        detailOverlay.innerHTML = '<div style="background:#1a1f3a;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px;max-width:800px;width:100%;max-height:80vh;overflow-y:auto;position:relative;">' +
+            '<button onclick="closeDetail()" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#999;font-size:20px;cursor:pointer;">✕</button>' +
+            '<div id="detailContent" style="color:#e0e6ed;">加载中...</div></div>';
+        document.body.appendChild(detailOverlay);
+
+        try {
+            var resp = await fetch('/cache/token-detail?token=' + encodeURIComponent(tokenName));
+            var data = await resp.json();
+            renderDetail(data);
+        } catch(e) {
+            document.getElementById('detailContent').innerHTML = '<p style="color:var(--accent-red);">加载失败: ' + e.message + '</p>';
+        }
+    }
+
+    function renderPromptSummary(items) {
+        const tbody = document.getElementById('prompt-summary-tbody');
+        if (!items || items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="empty">等待数据积累中...</td></tr>'; return; }
+        tbody.innerHTML = items.map(function(s) {
+            var scoreColor = s.avg_cache_score >= 70 ? 'var(--accent-green)' : s.avg_cache_score >= 50 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+            return '<tr>' +
+                '<td>' + (s.token_name || '-') + '</td>' +
+                '<td>' + (s.sample_count || 0) + '</td>' +
+                '<td>' + (s.avg_msg_count || 0) + '</td>' +
+                '<td><span style="color:' + scoreColor + ';font-weight:700;">' + (s.avg_cache_score || 0) + '</span>/100</td>' +
+                '<td>' + (s.system_first_pct || 0) + '%</td>' +
+                '<td>' + (s.has_image_pct || 0) + '%</td>' +
+                '<td>' + (s.has_tool_pct || 0) + '%</td>' +
+                '<td style="font-size:0.65em;max-width:200px;">' + (s.diagnosis || '-') + '</td></tr>';
+        }).join('');
+    }
+
+    function closeDetail() {
+        if (detailOverlay) { document.body.removeChild(detailOverlay); detailOverlay = null; }
+    }
+
+    function renderDetail(d) {
+        var html = '<h3 style="color:var(--accent-blue);margin-bottom:12px;">📋 ' + d.token_name + ' 缓存深度分析</h3>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:16px;">';
+        html += '<div style="padding:8px;background:rgba(0,0,0,0.15);border-radius:6px;"><div style="font-size:0.65em;color:#8b95a8;">总请求</div><div style="font-size:1.2em;font-weight:700;">' + (d.total||0) + '</div></div>';
+        html += '<div style="padding:8px;background:rgba(0,0,0,0.15);border-radius:6px;"><div style="font-size:0.65em;color:#8b95a8;">未命中</div><div style="font-size:1.2em;font-weight:700;color:var(--accent-red);">' + (d.miss||0) + '</div></div>';
+        html += '<div style="padding:8px;background:rgba(0,0,0,0.15);border-radius:6px;"><div style="font-size:0.65em;color:#8b95a8;">平均输入</div><div style="font-size:1.2em;font-weight:700;">' + Math.round((d.avg_input||0)/1000) + 'K</div></div>';
+        html += '<div style="padding:8px;background:rgba(0,0,0,0.15);border-radius:6px;"><div style="font-size:0.65em;color:#8b95a8;">平均缓存</div><div style="font-size:1.2em;font-weight:700;color:var(--accent-green);">' + Math.round((d.avg_cached||0)/1000) + 'K</div></div>';
+        html += '</div>';
+
+        // 诊断
+        var diags = d.diagnosis || [];
+        if (diags.length > 0) {
+            html += '<div style="margin-bottom:16px;"><div style="font-size:0.75em;color:var(--accent-yellow);margin-bottom:4px;">🔍 诊断分析</div>';
+            diags.forEach(function(diag) {
+                html += '<div style="padding:6px 10px;background:rgba(255,217,61,0.05);border-left:2px solid var(--accent-yellow);border-radius:4px;margin-bottom:4px;font-size:0.7em;">' + diag + '</div>';
+            });
+            html += '</div>';
+        }
+
+        // 输入分布
+        var sizes = d.size_dist || [];
+        if (sizes.length > 0) {
+            html += '<div style="margin-bottom:16px;"><div style="font-size:0.75em;color:var(--accent-blue);margin-bottom:4px;">📊 输入 token 分布（未命中请求）</div>';
+            html += '<table style="width:100%;font-size:0.7em;"><tr><th>大小段</th><th>数量</th><th>占比</th><th>可视化</th></tr>';
+            var total = sizes.reduce(function(s, sz) { return s + sz.count; }, 0);
+            sizes.forEach(function(sz) {
+                var pct = total > 0 ? (sz.count / total * 100).toFixed(0) : 0;
+                html += '<tr><td>' + sz.label + '</td><td>' + sz.count + '</td><td>' + pct + '%</td><td><span class="bar-bg"><span class="bar-fill" style="width:' + pct + '%;background:var(--accent-blue);"></span></span></td></tr>';
+            });
+            html += '</table></div>';
+        }
+
+        document.getElementById('detailContent').innerHTML = html;
+    }
+
+    // ===== 矢量图功能 =====
+    let vectorChart = null;
+
+    function initVectorChart() {
+        const container = document.getElementById('vector-chart');
+        vectorChart = echarts.init(container, 'dark');
+        vectorChart.setOption({
+            backgroundColor: 'transparent',
+            title: { text: '选择 Token 查看缓存贡献矢量图', left: 'center', top: 'center', textStyle: { color: '#8b95a8', fontSize: 14 } },
+            tooltip: {
+                trigger: 'item',
+                formatter: function(params) {
+                    if (!params || !params.data) return '';
+                    const data = params.data;
+                    return `<strong>${data.segmentType || ''}</strong><br/>位置: ${data.position || ''}<br/>Token数: ${data.avgTokens || 0}<br/>稳定率: ${((data.stableRate || 0) * 100).toFixed(1)}%<br/>${data.breakpoint ? '<span style="color:#ff6b6b">⚠ 缓存断点</span>' : ''}`;
+                }
+            },
+            grid: { left: '10%', right: '10%', top: '15%', bottom: '20%' },
+            xAxis: {
+                type: 'category',
+                name: 'Prompt 分段顺序',
+                nameLocation: 'center',
+                nameGap: 35,
+                nameTextStyle: { color: '#8b95a8', fontSize: 12 },
+                data: [],
+                axisLabel: { color: '#8b95a8', rotate: 30 },
+                axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } }
+            },
+            yAxis: {
+                type: 'value',
+                name: '累计缓存命中率',
+                nameTextStyle: { color: '#8b95a8', fontSize: 12 },
+                min: 0,
+                max: 100,
+                axisLabel: { color: '#8b95a8', formatter: '{value}%' },
+                splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
+                axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } }
+            },
+            series: [
+                {
+                    name: '累计命中率',
+                    type: 'line',
+                    smooth: true,
+                    lineStyle: { color: '#00d4ff', width: 3 },
+                    areaStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: 'rgba(0, 212, 255, 0.3)' },
+                            { offset: 1, color: 'rgba(0, 212, 255, 0.05)' }
+                        ])
+                    },
+                    symbol: 'circle',
+                    symbolSize: 8,
+                    data: []
+                },
+                {
+                    name: '分段节点',
+                    type: 'scatter',
+                    symbolSize: 20,
+                    data: []
+                }
+            ]
+        });
+    }
+
+    function loadVectorTokenList(tokens) {
+        const select = document.getElementById('vector-token-select');
+        // 保留第一个 option
+        select.innerHTML = '<option value="">选择 Token 查看矢量图...</option>';
+        tokens.forEach(function(t) {
+            const opt = document.createElement('option');
+            opt.value = t.token_name;
+            opt.textContent = t.token_name + ' (' + t.sample_count + ' 样本)';
+            select.appendChild(opt);
+        });
+    }
+
+    async function loadVectorData() {
+        const tokenName = document.getElementById('vector-token-select').value;
+        if (!tokenName) return;
+
+        try {
+            const [vectorResp, breakpointResp] = await Promise.all([
+                apiRequest('/prompt/vector-data?token=' + encodeURIComponent(tokenName)),
+                apiRequest('/prompt/breakpoints?token=' + encodeURIComponent(tokenName))
+            ]);
+
+            if (vectorResp && vectorResp.data) {
+                renderVectorChart(vectorResp.data);
+            }
+            if (breakpointResp && breakpointResp.data) {
+                renderBreakpoints(breakpointResp.data);
+            }
+        } catch (e) {
+            console.error('加载矢量图数据失败:', e);
+        }
+    }
+
+    function getSegmentLabel(type) {
+        const labels = {
+            'system_identity': '身份指令',
+            'system_rules': '系统规则',
+            'tool_schema': '工具定义',
+            'knowledge': '知识资料',
+            'conversation_history': '历史对话',
+            'current_input': '当前输入',
+            'runtime_data': '运行时数据',
+            'output_constraint': '输出约束',
+            'image_data': '图片数据'
+        };
+        return labels[type] || type;
+    }
+
+    function renderVectorChart(data) {
+        if (!vectorChart) initVectorChart();
+        if (!data || data.length === 0) {
+            vectorChart.setOption({
+                title: { text: '暂无分段数据', left: 'center', top: 'center', textStyle: { color: '#8b95a8', fontSize: 14 } },
+                series: [{ data: [] }, { data: [] }]
+            });
+            return;
+        }
+
+        // 按位置排序
+        data.sort((a, b) => a.position - b.position);
+
+        // 计算累计命中率（基于稳定率）
+        let cumulativeRate = 100;
+        const categories = [];
+        const lineData = [];
+        const scatterData = [];
+
+        data.forEach((item, index) => {
+            const label = getSegmentLabel(item.segment_type);
+            categories.push(label);
+
+            // 累计命中率 = 前一个位置的命中率 * 当前稳定率
+            if (index > 0) {
+                cumulativeRate *= item.stable_rate;
+            }
+            const rate = Math.round(cumulativeRate);
+
+            lineData.push(rate);
+
+            // scatter 数据格式: [xIndex, yValue]，附加属性放 itemStyle
+            scatterData.push({
+                value: [index, rate],
+                position: item.position,
+                segmentType: label,
+                avgTokens: item.avg_tokens,
+                stableRate: item.stable_rate,
+                breakpoint: item.breakpoint,
+                itemStyle: {
+                    color: item.breakpoint ? '#ff6b6b' : '#4ecdc4',
+                    borderColor: item.breakpoint ? '#ff6b6b' : '#4ecdc4',
+                    borderWidth: 2,
+                    shadowBlur: item.breakpoint ? 10 : 0,
+                    shadowColor: item.breakpoint ? 'rgba(255,107,107,0.5)' : 'transparent'
+                }
+            });
+        });
+
+        vectorChart.setOption({
+            title: null,
+            xAxis: { data: categories },
+            series: [
+                { data: lineData },
+                { data: scatterData }
+            ]
+        });
+    }
+
+    function renderBreakpoints(breakpoints) {
+        const container = document.getElementById('breakpoint-list');
+        if (!breakpoints || breakpoints.length === 0) {
+            container.innerHTML = '<div class="empty">✅ 未发现明显缓存断点</div>';
+            return;
+        }
+
+        container.innerHTML = breakpoints.map(bp => {
+            const riskClass = bp.risk_level === '高' ? 'high' : bp.risk_level === '中' ? 'medium' : 'low';
+            return `
+                <div class="breakpoint-item">
+                    <div class="breakpoint-header">
+                        <span class="breakpoint-title">位置 ${bp.position}: ${getSegmentLabel(bp.segment_type)}</span>
+                        <span class="breakpoint-badge ${riskClass}">风险: ${bp.risk_level}</span>
+                    </div>
+                    <div class="breakpoint-info">稳定率: ${(bp.stable_rate * 100).toFixed(1)}% | ${bp.impact}</div>
+                    <div class="breakpoint-suggestion">💡 ${bp.suggestion}</div>
+                </div>
+            `;
+        }).join('');
+    }
+</script>
+<div style="text-align:center;padding:16px 0;font-size:12px;color:#666;">
+    <span>atmApi 缓存优化中心 · AiToMoney</span>
+</div>
+</body>
+</html>

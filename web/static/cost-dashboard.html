@@ -313,6 +313,7 @@
                 <button class="period-btn" data-period="month">本月</button>
                 <button class="period-btn" data-period="quarter">本季度</button>
                 <button class="period-btn" data-period="year">本年度</button>
+                <div id="timeRange" style="font-size:13px;color:#4d9fff;font-weight:600;white-space:nowrap;padding:3px 14px;"></div>
             </div>
             <div class="header-right">
                 <select class="model-select" id="atmModelSelect" onchange="switchModel()">
@@ -420,9 +421,14 @@
             jwtToken = localStorage.getItem('atmapi_jwt') || '';
         }
 
+        let loginPrompted = false; // 防止重复弹框
+
         async function ensureLogin() {
             // 如果已有 token，先试一下能不能用
             if (jwtToken) return;
+            // 已经弹过一次了，不再弹
+            if (loginPrompted) return;
+            loginPrompted = true;
             // 没有 token，弹框输入
             const key = prompt('请输入管理员密钥:');
             if (!key) return;
@@ -430,12 +436,13 @@
                 const resp = await fetch('/api/v1/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ key })
+                    body: JSON.stringify({ key: key })
                 });
                 const data = await resp.json();
                 if (data.token) {
                     jwtToken = data.token;
                     localStorage.setItem('atmapi_jwt', jwtToken);
+                    loginPrompted = false; // 登录成功，重置标记
                 }
             } catch (e) { console.error('登录失败:', e); }
         }
@@ -526,6 +533,26 @@
             var data = await apiRequest('/api/v1/dashboard/v2?period=' + currentPeriod + modelParam);
 
             if (data.atm_models) updateModelSelect(data.atm_models);
+
+            // 更新时间范围显示
+            var timeEl = document.getElementById('timeRange');
+            if (timeEl && data.core_metrics) {
+                var now = new Date();
+                var hh = ('0'+now.getHours()).slice(-2);
+                var mm = ('0'+now.getMinutes()).slice(-2);
+                var labels = {'today':'今日','7d':'近7天','30d':'近30天','month':'本月','quarter':'本季度','year':'本年度'};
+                var label = labels[currentPeriod] || currentPeriod;
+                if (currentPeriod === 'today') {
+                    timeEl.innerHTML = label + ' 00:00 ~ ' + hh + ':' + mm;
+                } else if (currentPeriod === 'month' || currentPeriod === 'quarter' || currentPeriod === 'year') {
+                    timeEl.innerHTML = label + ' ' + now.getFullYear() + '/' + (now.getMonth()+1) + '/1 ~ ' + hh + ':' + mm;
+                } else {
+                    var d = new Date(now);
+                    var days = currentPeriod === '7d' ? 7 : 30;
+                    d.setDate(d.getDate() - days);
+                    timeEl.innerHTML = label + ' ' + (d.getMonth()+1) + '/' + d.getDate() + ' ~ ' + (now.getMonth()+1) + '/' + now.getDate() + ' ' + hh + ':' + mm;
+                }
+            }
 
             var m = data.core_metrics || {};
             document.getElementById('kpi-revenue').textContent = '¥' + (m.total_revenue || 0).toFixed(2);
@@ -647,5 +674,6 @@
 
         init();
     </script>
+<div style="text-align:center;margin-top:24px;padding:20px 0;font-size:12px;color:#666;"><span>上海新智国艳科技服务有限公司 运营维护</span><span style="margin-left:10px;"><a href="https://beian.miit.gov.cn/" target="_blank" style="color:#666;text-decoration:none;">沪ICP备2026016770号-2</a></span></div>
 </body>
 </html>

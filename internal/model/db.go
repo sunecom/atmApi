@@ -24,7 +24,15 @@ func InitDB(cfg *config.Config) {
 
 	switch cfg.DBType {
 	case "mysql":
-		dialector = mysql.Open(cfg.DBPath)
+		dsn := cfg.DBPath
+		if !strings.Contains(dsn, "charset=") {
+			sep := "&"
+			if !strings.Contains(dsn, "?") {
+				sep = "?"
+			}
+			dsn += sep + "charset=utf8mb4&parseTime=True&loc=Local"
+		}
+		dialector = mysql.Open(dsn)
 	case "sqlite":
 		// 确保数据目录存在
 		dir := filepath.Dir(cfg.DBPath)
@@ -44,7 +52,7 @@ func InitDB(cfg *config.Config) {
 	}
 
 	// 自动迁移（容错模式：失败只警告不退出）
-	err = DB.AutoMigrate(&User{}, &Token{}, &Channel{}, &RequestLog{}, &RateLimit{}, &Plan{}, &UsageLog{}, &Order{}, &ImageUsage{}, &ModelPricing{})
+	err = DB.AutoMigrate(&User{}, &Token{}, &Channel{}, &RequestLog{}, &RateLimit{}, &Plan{}, &UsageLog{}, &Order{}, &ImageUsage{}, &ModelPricing{}, &PromptProfile{}, &PromptSegment{})
 	if err != nil {
 		log.Printf("[警告] 数据库迁移部分失败：%v（继续启动）", err)
 		// 尝试手动添加缺失字段
@@ -82,7 +90,7 @@ func migrateMissingFields() {
 		sql := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", f.table, f.col, f.typ)
 		if err := DB.Exec(sql).Error; err != nil {
 			// 忽略 "duplicate column" 错误
-			if !containsString(err.Error(), "duplicate column") {
+			if !containsString(err.Error(), "duplicate column") && !containsString(err.Error(), "Duplicate column") {
 				log.Printf("[迁移] 添加字段 %s.%s 失败: %v", f.table, f.col, err)
 			}
 		} else {

@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prompt 缓存贡献矢量图</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #00d4ff;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        label {
+            color: #aaa;
+            font-size: 14px;
+        }
+        select, input {
+            background: #16213e;
+            border: 1px solid #0f3460;
+            color: #eee;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        select:focus, input:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+        button {
+            background: linear-gradient(135deg, #00d4ff, #0f3460);
+            border: none;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: scale(1.05);
+        }
+        #chart-container {
+            width: 100%;
+            height: 500px;
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .breakpoints-panel {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .breakpoints-panel h3 {
+            color: #ff6b6b;
+            margin-bottom: 15px;
+        }
+        .breakpoint-item {
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #ff6b6b;
+        }
+        .breakpoint-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .breakpoint-title {
+            font-weight: bold;
+            color: #ff6b6b;
+        }
+        .confidence-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+        .confidence-high { background: #ff6b6b33; color: #ff6b6b; }
+        .confidence-medium { background: #ffa50033; color: #ffa500; }
+        .confidence-low { background: #88888833; color: #888; }
+        .breakpoint-info {
+            color: #aaa;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .breakpoint-suggestion {
+            color: #4ecdc4;
+            font-size: 14px;
+            padding: 10px;
+            background: #4ecdc411;
+            border-radius: 6px;
+        }
+        .risk-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .risk-high { background: #ff6b6b33; color: #ff6b6b; }
+        .risk-medium { background: #ffa50033; color: #ffa500; }
+        .risk-low { background: #4ecdc433; color: #4ecdc4; }
+        .empty-state {
+            text-align: center;
+            color: #666;
+            padding: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Prompt 缓存贡献矢量图</h1>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label>Token:</label>
+                <select id="token-select">
+                    <option value="">选择 Token...</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>时间范围:</label>
+                <select id="time-range">
+                    <option value="1h">最近 1 小时</option>
+                    <option value="24h" selected>最近 24 小时</option>
+                    <option value="7d">最近 7 天</option>
+                    <option value="30d">最近 30 天</option>
+                </select>
+            </div>
+            <button onclick="loadData()">刷新</button>
+        </div>
+
+        <div id="chart-container"></div>
+
+        <div class="breakpoints-panel">
+            <h3>🔴 缓存断点分析</h3>
+            <div id="breakpoints-list">
+                <div class="empty-state">选择 Token 后查看断点分析</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chart = null;
+
+        // 初始化图表
+        function initChart() {
+            const container = document.getElementById('chart-container');
+            chart = echarts.init(container, 'dark');
+            
+            const option = {
+                backgroundColor: 'transparent',
+                title: {
+                    text: '缓存贡献矢量图',
+                    left: 'center',
+                    textStyle: { color: '#00d4ff' }
+                },
+                tooltip: {
+                    trigger: 'item',
+                    formatter: function(params) {
+                        if (params.seriesType === 'scatter') {
+                            const data = params.data;
+                            return `
+                                <div style="padding: 5px;">
+                                    <strong>${data.segmentType}</strong><br/>
+                                    位置: ${data.position}<br/>
+                                    Token 数: ${data.avgTokens}<br/>
+                                    稳定率: ${(data.stableRate * 100).toFixed(1)}%<br/>
+                                    ${data.breakpoint ? '<span style="color: #ff6b6b;">⚠️ 缓存断点</span>' : ''}
+                                </div>
+                            `;
+                        }
+                        return params.seriesName;
+                    }
+                },
+                legend: {
+                    data: ['累计命中率', '分段节点'],
+                    textStyle: { color: '#aaa' },
+                    top: 30
+                },
+                grid: {
+                    left: '10%',
+                    right: '10%',
+                    bottom: '15%',
+                    top: '15%'
+                },
+                xAxis: {
+                    type: 'category',
+                    name: 'Prompt 分段顺序',
+                    nameLocation: 'center',
+                    nameGap: 30,
+                    nameTextStyle: { color: '#aaa', fontSize: 14 },
+                    data: [],
+                    axisLabel: { 
+                        color: '#aaa',
+                        rotate: 30
+                    },
+                    axisLine: { lineStyle: { color: '#333' } }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: '累计缓存命中率',
+                    nameTextStyle: { color: '#aaa', fontSize: 14 },
+                    min: 0,
+                    max: 100,
+                    axisLabel: { 
+                        color: '#aaa',
+                        formatter: '{value}%'
+                    },
+                    splitLine: { lineStyle: { color: '#333' } },
+                    axisLine: { lineStyle: { color: '#333' } }
+                },
+                series: [
+                    {
+                        name: '累计命中率',
+                        type: 'line',
+                        smooth: true,
+                        lineStyle: { color: '#00d4ff', width: 3 },
+                        areaStyle: {
+                            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                { offset: 0, color: 'rgba(0, 212, 255, 0.3)' },
+                                { offset: 1, color: 'rgba(0, 212, 255, 0.05)' }
+                            ])
+                        },
+                        data: []
+                    },
+                    {
+                        name: '分段节点',
+                        type: 'scatter',
+                        symbolSize: function(data) {
+                            return Math.max(10, Math.min(40, data.avgTokens / 100));
+                        },
+                        itemStyle: {
+                            color: function(params) {
+                                return params.data.breakpoint ? '#ff6b6b' : '#4ecdc4';
+                            }
+                        },
+                        data: []
+                    }
+                ]
+            };
+            
+            chart.setOption(option);
+        }
+
+        // 加载 Token 列表
+        async function loadTokens() {
+            try {
+                const resp = await fetch('/prompt/summary');
+                const data = await resp.json();
+                const select = document.getElementById('token-select');
+                
+                if (data.data) {
+                    data.data.forEach(item => {
+                        const option = document.createElement('option');
+                        option.value = item.token_name;
+                        option.textContent = `${item.token_name} (${item.sample_count} 样本)`;
+                        select.appendChild(option);
+                    });
+                }
+            } catch (e) {
+                console.error('加载 Token 列表失败:', e);
+            }
+        }
+
+        // 加载数据
+        async function loadData() {
+            const tokenName = document.getElementById('token-select').value;
+            if (!tokenName) {
+                alert('请先选择 Token');
+                return;
+            }
+
+            try {
+                // 并行请求矢量图数据和断点数据
+                const [vectorResp, breakpointsResp] = await Promise.all([
+                    fetch(`/prompt/vector-data?token=${encodeURIComponent(tokenName)}`),
+                    fetch(`/prompt/breakpoints?token=${encodeURIComponent(tokenName)}`)
+                ]);
+
+                const vectorData = await vectorResp.json();
+                const breakpointsData = await breakpointsResp.json();
+
+                renderChart(vectorData.data || []);
+                renderBreakpoints(breakpointsData.data || []);
+            } catch (e) {
+                console.error('加载数据失败:', e);
+                alert('加载数据失败: ' + e.message);
+            }
+        }
+
+        // 渲染图表
+        function renderChart(data) {
+            if (!data || data.length === 0) {
+                chart.clear();
+                chart.setOption({
+                    title: {
+                        text: '暂无数据',
+                        left: 'center',
+                        top: 'center',
+                        textStyle: { color: '#666', fontSize: 16 }
+                    }
+                });
+                return;
+            }
+
+            // 按位置排序
+            data.sort((a, b) => a.position - b.position);
+
+            // 计算累计命中率（基于稳定率）
+            let cumulativeRate = 100;
+            const categories = [];
+            const lineData = [];
+            const scatterData = [];
+
+            data.forEach((item, index) => {
+                const label = getSegmentLabel(item.segment_type);
+                categories.push(label);
+                
+                // 累计命中率 = 前一个位置的命中率 * 当前稳定率
+                if (index > 0) {
+                    cumulativeRate *= item.stable_rate;
+                }
+                
+                lineData.push(Math.round(cumulativeRate));
+                
+                scatterData.push({
+                    value: [index, Math.round(cumulativeRate)],
+                    position: item.position,
+                    segmentType: item.segment_type,
+                    avgTokens: item.avg_tokens,
+                    stableRate: item.stable_rate,
+                    breakpoint: item.breakpoint
+                });
+            });
+
+            chart.setOption({
+                xAxis: { data: categories },
+                series: [
+                    { data: lineData },
+                    { data: scatterData }
+                ]
+            });
+        }
+
+        // 获取分段标签
+        function getSegmentLabel(type) {
+            const labels = {
+                'system_identity': '身份指令',
+                'system_rules': '系统规则',
+                'tool_schema': '工具定义',
+                'knowledge': '知识资料',
+                'conversation_history': '历史对话',
+                'current_input': '当前输入',
+                'runtime_data': '运行时数据',
+                'output_constraint': '输出约束',
+                'image_data': '图片数据'
+            };
+            return labels[type] || type;
+        }
+
+        // 渲染断点分析
+        function renderBreakpoints(breakpoints) {
+            const container = document.getElementById('breakpoints-list');
+            
+            if (!breakpoints || breakpoints.length === 0) {
+                container.innerHTML = '<div class="empty-state">✅ 未发现明显缓存断点</div>';
+                return;
+            }
+
+            container.innerHTML = breakpoints.map(bp => {
+                const confidenceClass = `confidence-${bp.confidence}`;
+                const riskClass = `risk-${bp.risk_level.toLowerCase()}`;
+                
+                return `
+                    <div class="breakpoint-item">
+                        <div class="breakpoint-header">
+                            <span class="breakpoint-title">
+                                位置 ${bp.position}: ${getSegmentLabel(bp.segment_type)}
+                                <span class="risk-badge ${riskClass}">风险: ${bp.risk_level}</span>
+                            </span>
+                            <span class="confidence-badge ${confidenceClass}">置信度: ${bp.confidence}</span>
+                        </div>
+                        <div class="breakpoint-info">
+                            稳定率: ${(bp.stable_rate * 100).toFixed(1)}% | ${bp.impact}
+                        </div>
+                        <div class="breakpoint-suggestion">
+                            💡 ${bp.suggestion}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 初始化
+        window.addEventListener('load', () => {
+            initChart();
+            loadTokens();
+        });
+
+        // 窗口大小变化时重新渲染
+        window.addEventListener('resize', () => {
+            if (chart) chart.resize();
+        });
+    </script>
+</body>
+</html>

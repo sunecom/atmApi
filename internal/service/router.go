@@ -49,6 +49,7 @@ type RouteRequestResult struct {
 	Response    *http.Response
 	ChannelName string
 	AtmModel    string
+	ActualModel string // 实际发给渠道的模型名
 }
 
 // ModelRoute 模型路由表
@@ -170,7 +171,7 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 			}
 		}
 
-		resp, err := trySingleChannel(channel, targetModel, requestBody)
+		resp, actualSentModel, err := trySingleChannel(channel, targetModel, requestBody)
 		if err != nil {
 			// 快速失败直接返回
 			if isFastFailError(err) {
@@ -186,7 +187,7 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 		GlobalRPMLimiter.RecordRPM(token.ID) // 记录 RPM
 		GlobalChannelLimiter.RecordChannelRPM(token.ID, channel.Name) // 记录渠道 RPM
 
-		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel}, nil
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel}, nil
 	}
 
 	return nil, fmt.Errorf("所有渠道均失败：%w", lastErr)
@@ -219,7 +220,7 @@ func routeToModelGroup(channels []model.Channel, requestBody []byte, token *mode
 
 		log.Printf("[路由] 聚合组尝试: %s (Priority=%d)", channel.Name, channel.Priority)
 		// BUG-002 修复：传 targetModel 而不是 channel.Models
-		resp, err := trySingleChannel(channel, targetModel, requestBody)
+		resp, actualSentModel, err := trySingleChannel(channel, targetModel, requestBody)
 		if err != nil {
 			// BUG-005 修复：失败时立即释放并发槽位
 			if acquired {
@@ -235,7 +236,7 @@ func routeToModelGroup(channels []model.Channel, requestBody []byte, token *mode
 		}
 		updateQuota(token, 1)
 		RecordRequest(token.ID) // 记录滑动窗口
-		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel}, nil
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel}, nil
 	}
 
 	// 聚合组全挂 → 直接报错（不偷偷换模型）
@@ -266,7 +267,7 @@ func routeToBestChannel(originalModel string, requestBody []byte, token *model.T
 		}
 
 		log.Printf("[路由] 尝试: %s → %s", entry.ChannelName, entry.ModelOverride)
-		resp, err := trySingleChannel(channel, entry.ModelOverride, requestBody)
+		resp, actualSentModel, err := trySingleChannel(channel, entry.ModelOverride, requestBody)
 		
 		if err != nil {
 			// BUG-005 修复：失败时立即释放并发槽位
@@ -283,7 +284,7 @@ func routeToBestChannel(originalModel string, requestBody []byte, token *model.T
 		}
 		updateQuota(token, 1)
 		RecordRequest(token.ID) // 记录滑动窗口
-		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel}, nil
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel}, nil
 	}
 
 	return nil, fmt.Errorf("路由策略无可用渠道：%w", lastErr)
@@ -306,9 +307,9 @@ func shouldFastFail(statusCode int) bool {
 	return false
 }
 
-func trySingleChannel(channel model.Channel, targetModel string, originalBody []byte) (*http.Response, error) {
+func trySingleChannel(channel model.Channel, targetModel string, originalBody []byte) (*http.Response, string, error) {
 	if channel.Status != 1 {
-		return nil, fmt.Errorf("渠道 %s 未启用", channel.Name)
+		return nil, "", fmt.Errorf("渠道 %s 未启用", channel.Name)
 	}
 
 	// 模型名替换：如果有 model_mapping 先用他，否则用目标模型名
@@ -321,7 +322,7 @@ func trySingleChannel(channel model.Channel, targetModel string, originalBody []
 	resp, err := sendToChannel(channel, modifiedBody)
 	if err != nil {
 		log.Printf("渠道 %s 失败：%v", channel.Name, err)
-		return nil, fmt.Errorf("渠道 %s 请求失败：%w", channel.Name, err)
+		return nil, mappedModel, fmt.Errorf("渠道 %s 请求失败：%w", channel.Name, err)
 	}
 
 	if resp.StatusCode >= 400 {
@@ -332,13 +333,13 @@ func trySingleChannel(channel model.Channel, targetModel string, originalBody []
 		if shouldFastFail(resp.StatusCode) {
 			// 4xx 客户端错误 → 快速失败，不继续 fallback
 			// 消息格式问题（如 tool_calls 不匹配）换个渠道也一样，不要浪费时间
-			return nil, fmt.Errorf("渠道 %s 返回 HTTP %d（快速失败）: %s",
+			return nil, mappedModel, fmt.Errorf("渠道 %s 返回 HTTP %d（快速失败）: %s",
 				channel.Name, resp.StatusCode, string(bodyBytes))
 		}
-		return nil, fmt.Errorf("渠道 %s 返回 HTTP %d", channel.Name, resp.StatusCode)
+		return nil, mappedModel, fmt.Errorf("渠道 %s 返回 HTTP %d", channel.Name, resp.StatusCode)
 	}
 
-	return resp, nil
+	return resp, mappedModel, nil
 }
 
 // TestChannel 测试单个渠道连通性
