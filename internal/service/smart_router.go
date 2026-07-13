@@ -18,9 +18,9 @@ func hasImageURL(text string) bool {
 // 套餐 Pro 调用比例上限
 var proRatioLimits = map[string]float64{
 	"basic":      0.00, // 0%，纯 Flash
-	"pro":        0.10, // ≤10%
-	"starter":    0.15, // ≤15%
-	"flagship":   0.25, // ≤25%
+	"pro":        1.00, // 不限制
+	"starter":    1.00, // 不限制
+	"flagship":   1.00, // 不限制
 	"advanced":   1.00, // 不限制
 	"enterprise": 1.00, // 不限制
 }
