@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"atmapi/internal/glmoptimizer"
 	"atmapi/internal/middleware"
 	"atmapi/internal/model"
 	"atmapi/internal/service"
@@ -529,6 +530,18 @@ func chatCompletions(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, ErrInvalidRequest, "请求格式错误")
 		return
 	}
+	preparedRequest, err := glmoptimizer.PrepareRequest(
+		body,
+		apiToken.PlanGroup,
+		apiToken.PlanName,
+		apiToken.RateLimitGroup,
+	)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, ErrInvalidRequest, err.Error())
+		return
+	}
+	body = preparedRequest.Body
+	isGLM52 := preparedRequest.IsGLM52
 	// 保存原始 messages（用于 Prompt 分析）
 	originalMessages := make([]map[string]interface{}, len(req.Messages))
 	for i, m := range req.Messages {
@@ -574,7 +587,7 @@ func chatCompletions(c *gin.Context) {
 	// 逻辑：纯图 → 后台分析 + 返回“图片已收到”
 	//       有图+文字 → 正常路由
 	//       纯文字 → 替换历史图片为文字描述
-	if strings.ToLower(req.Model) == "deepseek-a4" {
+	if !isGLM52 && strings.ToLower(req.Model) == "deepseek-a4" {
 		hasImage := service.HasImageContent(req.Messages)
 		// DUMP 完整消息结构（调试用）
 		if hasImage {
@@ -781,11 +794,11 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 	log.Printf("[路由] 最后3条: %s", lastRoles)
-	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey)
+	actualModel := preparedRequest.SelectModel(service.SmartRoute(req.Model, req.Messages, tokenKey))
 
 	// ===== 任务模式路由（Phase 2C） =====
 	taskModeResult := service.ClassifyTaskMode(req.Messages)
-	if taskModeResult.Model != "" && taskModeResult.Mode != service.TaskModeUnknown {
+	if !isGLM52 && taskModeResult.Model != "" && taskModeResult.Mode != service.TaskModeUnknown {
 		// 任务模式覆盖路由结果（调试→pro，咨询→flash，闲聊→flash）
 		if actualModel != taskModeResult.Model {
 			log.Printf("[模式路由] 覆盖模型: %s → %s (mode=%s)", actualModel, taskModeResult.Model, taskModeResult.Mode)
@@ -796,6 +809,7 @@ func chatCompletions(c *gin.Context) {
 	if taskModeResult.Hint != "" {
 		req.Messages = service.ApplyTaskModeHint(req.Messages, taskModeResult)
 	}
+	actualModel = preparedRequest.SelectModel(actualModel)
 
 	if actualModel != req.Model {
 		// 替换请求体中的 model
@@ -825,13 +839,13 @@ func chatCompletions(c *gin.Context) {
 		allowedModels := service.GetAllowedModels(apiPlanName)
 		if len(allowedModels) > 0 {
 			// 用户请求的模型名用于鉴权，deepseek-a4 是统一入口
-			if req.Model == "deepseek-a4" && containsString(allowedModels, "deepseek-a4") {
+			if !isGLM52 && req.Model == "deepseek-a4" && containsString(allowedModels, "deepseek-a4") {
 				// deepseek-a4 在允许列表中 → 其下游模型自动放行
 				goto modelAllowed
 			}
 			if !containsString(allowedModels, actualModel) {
 				// actualModel 不在允许列表 → 尝试用 deepseek-a4 作为入口（套餐允许 a4）
-				if containsString(allowedModels, "deepseek-a4") {
+				if !isGLM52 && containsString(allowedModels, "deepseek-a4") {
 					goto modelAllowed
 				}
 				log.Printf("[鉴权] token=%s 套餐=%s 不允许模型=%s, allowed=%v",
@@ -961,6 +975,24 @@ modelAllowed:
 
 	result, err := service.RouteRequest(actualModel, body, tokenKey)
 	if err != nil {
+		// GLM-5.2 是锁定模型产品。聚合组内的同模型渠道已经由
+		// RouteRequest 尝试；失败后禁止进入下面的 Qwen/DeepSeek 跨模型降级。
+		if isGLM52 {
+			duration := time.Since(startTime).Milliseconds()
+			status := http.StatusBadGateway
+			code := ErrChannelUnavail
+			if strings.Contains(err.Error(), "快速失败") || strings.Contains(err.Error(), "消息格式错误") {
+				status = http.StatusBadRequest
+				code = ErrInvalidRequest
+			}
+			model.DB.Create(&model.RequestLog{
+				TokenName: apiToken.Name, ChannelName: "无可用GLM-5.2渠道",
+				Model: glmoptimizer.ModelGLM52, RoutedModel: req.Model,
+				StatusCode: status, DurationMs: duration,
+			})
+			respondError(c, status, code, err.Error())
+			return
+		}
 		// 检查是否是 tool_calls 不兼容错误
 		isFastFail := strings.Contains(err.Error(), "快速失败") ||
 			strings.Contains(err.Error(), "消息格式错误")
