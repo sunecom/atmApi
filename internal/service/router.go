@@ -78,12 +78,20 @@ var modelRouter = map[string][]ModelRouteEntry{
 	// 注：smart_router.go 的 SmartRoute() 会先拦截 deepseek-a4
 	// 根据消息内容（图片/复杂度）转成具体模型名：qwen3.7-plus / deepseek-v4-flash / deepseek-v4-pro
 	// 这里的路由表是兜底，万一 SmartRoute 没有命中（不太可能）
-	"deepseek-a4": {
-		{ChannelID: 21, ModelOverride: "deepseek-a4", Priority: 120}, // OpenRouter DS-Pro
-		{ChannelID: 20, ModelOverride: "deepseek-a4", Priority: 110}, // OpenRouter DS-Flash
-		{ChannelID: 1, ModelOverride: "qwen3.7-plus", Priority: 100},    // 多模态
-		{ChannelID: 2, ModelOverride: "deepseek-v4-pro", Priority: 90}, // 深度推理（同 DeepSeek 渠道）
-		{ChannelID: 2, ModelOverride: "deepseek-v4-flash", Priority: 80}, // 默认
+	// SmartRoute 返回的实际模型名 → 渠道优先级表
+	// OpenRouter 优先（便宜+稳定），DeepSeek 官方兜底
+	"deepseek-v4-flash": {
+		{ChannelID: 20, ModelOverride: "deepseek/deepseek-v4-flash", Priority: 120}, // OpenRouter
+		{ChannelID: 14, ModelOverride: "", Priority: 100}, // DeepSeek [151]
+		{ChannelID: 2, ModelOverride: "", Priority: 80},  // DeepSeek [048]
+	},
+	"deepseek-v4-pro": {
+		{ChannelID: 21, ModelOverride: "deepseek/deepseek-v4-pro", Priority: 120}, // OpenRouter
+		{ChannelID: 17, ModelOverride: "", Priority: 100}, // DeepSeek [151]
+		{ChannelID: 16, ModelOverride: "", Priority: 80},  // DeepSeek [048]
+	},
+	"qwen3.7-plus": {
+		{ChannelID: 1, ModelOverride: "", Priority: 100}, // 通义千问
 	},
 }
 
