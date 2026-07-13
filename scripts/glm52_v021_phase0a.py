@@ -38,6 +38,8 @@ class MatrixCase:
     stream: bool = True
     scenario: str = "code"
     reasoning_max_tokens: int = 0
+    prompt_variant: str = "baseline"
+    session_mode: str = "stable"
 
 
 @dataclasses.dataclass
@@ -56,6 +58,8 @@ SUMMARY_FIELDS = [
     "case_id",
     "profile",
     "scenario",
+    "prompt_variant",
+    "session_mode",
     "stream",
     "status",
     "error",
@@ -74,7 +78,12 @@ SUMMARY_FIELDS = [
     "tool_calls",
     "refusal_chars",
     "observed_terminal_kind",
+    "terminal_valid",
     "finish_reason",
+    "saw_done",
+    "sse_event_count",
+    "stream_complete",
+    "last_event_ms",
     "ttft_ms",
     "ttft_kind",
     "first_reasoning_ms",
@@ -100,39 +109,53 @@ def matrix_cases(profile: str) -> List[MatrixCase]:
     if profile == "smoke":
         return controls[:3]
 
-    core = list(controls)
+    core_safe = [controls[3], controls[4]]
     for history in (50, 100, 200, 300):
         for output_cap in (8192, 16384, 32768):
-            core.append(
+            for effort in ("default", "high"):
+                core_safe.append(
+                    MatrixCase(
+                        "core_%s_h%d_m%dk_s" % (effort, history, output_cap // 1024),
+                        history,
+                        output_cap,
+                        effort,
+                    )
+                )
+
+    for arm, session_mode in (
+        ("shared", "shared"),
+        ("unique", "unique"),
+        ("omitted", "omitted"),
+    ):
+        for repeat in (1, 2):
+            core_safe.append(
                 MatrixCase(
-                    "core_high_h%d_m%dk_s" % (history, output_cap // 1024),
-                    history,
-                    output_cap,
+                    "cache_%s_r%d" % (arm, repeat),
+                    50,
+                    8192,
                     "high",
+                    scenario="cache",
+                    prompt_variant="cache-%s" % arm,
+                    session_mode=session_mode,
                 )
             )
-        core.append(
+
+    if profile in ("core", "core-safe"):
+        return core_safe
+
+    if profile != "extended":
+        raise ValueError("unknown profile: %s" % profile)
+
+    extended = list(core_safe)
+    for output_cap in (49152, 65536):
+        extended.append(
             MatrixCase(
-                "core_xhigh_h%d_m32k_s" % history,
-                history,
-                32768,
-                "xhigh",
+                "ext_high_h300_m%dk_s" % (output_cap // 1024),
+                300,
+                output_cap,
+                "high",
             )
         )
-    if profile == "core":
-        return core
-
-    extended = list(core)
-    for output_cap in (49152, 65536):
-        for effort in ("high", "xhigh"):
-            extended.append(
-                MatrixCase(
-                    "ext_%s_h300_m%dk_s" % (effort, output_cap // 1024),
-                    300,
-                    output_cap,
-                    effort,
-                )
-            )
     extended.extend(
         [
             MatrixCase("protocol_tool_high_m8k_s", 8, 8192, "high", scenario="tool"),
@@ -142,7 +165,7 @@ def matrix_cases(profile: str) -> List[MatrixCase]:
     return extended
 
 
-def build_history(history_messages: int, scenario: str) -> List[Dict[str, Any]]:
+def build_history(history_messages: int, scenario: str, prompt_variant: str = "baseline") -> List[Dict[str, Any]]:
     if scenario == "refusal":
         return [
             {
@@ -160,10 +183,12 @@ def build_history(history_messages: int, scenario: str) -> List[Dict[str, Any]]:
             "role": "system",
             "content": (
                 "Synthetic atmApi GLM-5.2 benchmark. Preserve numbered constraints, reason carefully, "
-                "and provide a concrete final answer. Do not claim to have executed external systems."
+                "and provide a concrete final answer. Do not claim to have executed external systems. "
+                "Synthetic prompt namespace: %s."
             ),
         }
     ]
+    messages[0]["content"] %= prompt_variant
     pair_count = history_messages // 2
     for index in range(pair_count):
         constraint = index + 1
@@ -232,7 +257,7 @@ def reasoning_payload(case: MatrixCase) -> Dict[str, Any]:
 
 
 def build_request(case: MatrixCase, model: str, session_prefix: str) -> Dict[str, Any]:
-    messages = build_history(case.history_messages, case.scenario)
+    messages = build_history(case.history_messages, case.scenario, case.prompt_variant)
     request: Dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -241,9 +266,16 @@ def build_request(case: MatrixCase, model: str, session_prefix: str) -> Dict[str
         "stream": case.stream,
         "reasoning": reasoning_payload(case),
         "usage": {"include": True},
-        # Synthetic and non-sensitive. Production session IDs will use HMAC.
-        "session_id": "%s-h%d-%s" % (session_prefix, case.history_messages, case.scenario),
     }
+    # Synthetic and non-sensitive. Production session IDs will use HMAC.
+    if case.session_mode == "stable":
+        request["session_id"] = "%s-h%d-%s" % (session_prefix, case.history_messages, case.scenario)
+    elif case.session_mode == "shared":
+        request["session_id"] = "%s-%s" % (session_prefix, case.prompt_variant)
+    elif case.session_mode == "unique":
+        request["session_id"] = "%s-%s" % (session_prefix, case.case_id)
+    elif case.session_mode != "omitted":
+        raise ValueError("unknown session mode: %s" % case.session_mode)
     if case.stream:
         request["stream_options"] = {"include_usage": True}
     if case.scenario == "tool":
@@ -348,6 +380,22 @@ def event_kinds(payload: Dict[str, Any]) -> Tuple[bool, bool]:
     return has_reasoning, has_visible
 
 
+def parse_sse_line(line: bytes) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Parse one SSE line as ignore, done, or a JSON event."""
+    stripped = line.strip()
+    if not stripped.startswith(b"data:"):
+        return "ignore", None
+    data = stripped[5:].strip()
+    if not data:
+        return "ignore", None
+    if data == b"[DONE]":
+        return "done", None
+    payload = json.loads(data.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("SSE data payload must be a JSON object")
+    return "event", payload
+
+
 def observed_terminal_kind(state: ResponseState) -> str:
     """Classify captured evidence for the report, not for production acceptance."""
     if state.content.strip():
@@ -359,6 +407,20 @@ def observed_terminal_kind(state: ResponseState) -> str:
     if state.reasoning_chars > 0:
         return "reasoning_only"
     return "empty"
+
+
+def terminal_kind_is_valid(kind: str) -> bool:
+    return kind in ("content", "tool_calls", "refusal")
+
+
+def result_is_success(result: Dict[str, Any]) -> bool:
+    status = as_int(result.get("status"))
+    return (
+        200 <= status < 300
+        and not result.get("error")
+        and bool(result.get("terminal_valid"))
+        and (not result.get("stream") or bool(result.get("stream_complete")))
+    )
 
 
 def as_int(value: Any) -> int:
@@ -429,6 +491,10 @@ def execute_case(
     ttft_kind = "first_sse_event" if case.stream else "full_response"
     first_reasoning_ms = 0
     first_visible_ms = 0
+    saw_done = False
+    sse_event_count = 0
+    stream_complete = False
+    last_event_ms = 0
     status = 0
     error = ""
 
@@ -442,23 +508,23 @@ def execute_case(
                         if not line:
                             break
                         raw_output.write(line)
-                        stripped = line.strip()
-                        if not stripped.startswith(b"data:"):
-                            continue
-                        data = stripped[5:].strip()
-                        if data == b"[DONE]":
-                            break
-                        if not data:
-                            continue
-                        if ttft_ms == 0:
-                            ttft_ms = int((time.perf_counter() - started) * 1000)
                         try:
-                            payload = json.loads(data.decode("utf-8"))
-                        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                            event_type, payload = parse_sse_line(line)
+                        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                             error = safe_error("SSE parse error: %s" % exc)
                             continue
-                        if isinstance(payload, dict):
-                            elapsed_ms = int((time.perf_counter() - started) * 1000)
+                        if event_type == "ignore":
+                            continue
+                        elapsed_ms = int((time.perf_counter() - started) * 1000)
+                        last_event_ms = elapsed_ms
+                        if event_type == "done":
+                            saw_done = True
+                            stream_complete = True
+                            break
+                        sse_event_count += 1
+                        if ttft_ms == 0:
+                            ttft_ms = elapsed_ms
+                        if payload is not None:
                             has_reasoning, has_visible = event_kinds(payload)
                             if has_reasoning and first_reasoning_ms == 0:
                                 first_reasoning_ms = elapsed_ms
@@ -472,6 +538,7 @@ def execute_case(
                 payload = json.loads(raw.decode("utf-8"))
                 if isinstance(payload, dict):
                     update_state(state, payload, streaming=False)
+                    stream_complete = True
                     if state.content.strip() or state.tool_call_indexes or state.refusal.strip():
                         first_visible_ms = ttft_ms
                     if state.reasoning_chars > 0:
@@ -488,10 +555,18 @@ def execute_case(
     total_ms = int((time.perf_counter() - started) * 1000)
     prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens, cost = usage_metrics(state.usage)
     visible_tokens = max(0, completion_tokens - reasoning_tokens)
+    terminal_kind = observed_terminal_kind(state)
+    terminal_valid = terminal_kind_is_valid(terminal_kind)
+    if case.stream and 200 <= status < 300 and not saw_done and not error:
+        error = "stream ended before [DONE]"
+    if 200 <= status < 300 and not terminal_valid and not error:
+        error = "non-consumable terminal: %s" % terminal_kind
     return {
         "case_id": case.case_id,
         "profile": profile,
         "scenario": case.scenario,
+        "prompt_variant": case.prompt_variant,
+        "session_mode": case.session_mode,
         "stream": case.stream,
         "status": status,
         "error": error,
@@ -509,8 +584,13 @@ def execute_case(
         "reasoning_chars": state.reasoning_chars,
         "tool_calls": len(state.tool_call_indexes),
         "refusal_chars": len(state.refusal),
-        "observed_terminal_kind": observed_terminal_kind(state),
+        "observed_terminal_kind": terminal_kind,
+        "terminal_valid": terminal_valid,
         "finish_reason": state.finish_reason,
+        "saw_done": saw_done,
+        "sse_event_count": sse_event_count,
+        "stream_complete": stream_complete,
+        "last_event_ms": last_event_ms,
         "ttft_ms": ttft_ms,
         "ttft_kind": ttft_kind,
         "first_reasoning_ms": first_reasoning_ms,
@@ -540,6 +620,9 @@ def write_preview(
                 "case_id",
                 "profile",
                 "scenario",
+                "prompt_variant",
+                "session_mode",
+                "session_id_present",
                 "stream",
                 "history_messages",
                 "approx_input_tokens",
@@ -556,6 +639,9 @@ def write_preview(
                     "case_id": case.case_id,
                     "profile": profile,
                     "scenario": case.scenario,
+                    "prompt_variant": case.prompt_variant,
+                    "session_mode": case.session_mode,
+                    "session_id_present": "session_id" in request_body,
                     "stream": case.stream,
                     "history_messages": case.history_messages,
                     "approx_input_tokens": approximate_input_tokens(request_body),
@@ -581,7 +667,11 @@ def write_results(results: Sequence[Dict[str, Any]], output_dir: pathlib.Path) -
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("smoke", "core", "extended"), default="smoke")
+    parser.add_argument(
+        "--profile",
+        choices=("smoke", "core", "core-safe", "extended"),
+        default="smoke",
+    )
     parser.add_argument("--execute", action="store_true", help="send real OpenRouter requests")
     parser.add_argument("--acknowledge-cost", default="", help="required exact phrase for --execute")
     parser.add_argument("--case-regex", default="", help="run/list only matching case IDs")
@@ -696,9 +786,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         committed_cost += actual_cost if actual_cost > 0 else estimate
         write_results(results, output_dir)
         print(
-            "  status=%s prompt=%s reasoning=%s visible=%s ttft_ms=%s cost=%s"
+            "  status=%s terminal=%s done=%s prompt=%s reasoning=%s visible=%s ttft_ms=%s cost=%s"
             % (
                 result["status"],
+                result["observed_terminal_kind"],
+                result["saw_done"],
                 result["prompt_tokens"],
                 result["reasoning_tokens"],
                 result["visible_tokens"],
@@ -709,7 +801,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if index < len(cases) and args.sleep_seconds > 0:
             time.sleep(args.sleep_seconds)
 
-    success_count = sum(1 for result in results if 200 <= as_int(result.get("status")) < 300)
+    success_count = sum(1 for result in results if result_is_success(result))
     print("completed=%d success=%d committed_cost_usd=%.6f" % (len(results), success_count, committed_cost))
     print("summary=%s" % (output_dir / "summary.csv"))
     return 0 if success_count > 0 else 1

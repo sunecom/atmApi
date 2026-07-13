@@ -2,7 +2,9 @@
 import importlib.util
 import pathlib
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = pathlib.Path(__file__).with_name("glm52_v021_phase0a.py")
@@ -13,12 +15,82 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
+class FakeHTTPResponse:
+    status = 200
+
+    def __init__(self, lines):
+        self.lines = iter(lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def readline(self):
+        return next(self.lines, b"")
+
+
 class Phase0ATest(unittest.TestCase):
     def test_profiles_have_unique_case_ids(self):
-        for profile, expected_count in (("smoke", 3), ("core", 21), ("extended", 27)):
+        for profile, expected_count in (
+            ("smoke", 3),
+            ("core", 32),
+            ("core-safe", 32),
+            ("extended", 36),
+        ):
             cases = MODULE.matrix_cases(profile)
             self.assertEqual(expected_count, len(cases))
             self.assertEqual(len(cases), len({case.case_id for case in cases}))
+
+    def test_core_safe_pairs_default_and_high_without_xhigh(self):
+        cases = MODULE.matrix_cases("core-safe")
+        self.assertEqual(cases, MODULE.matrix_cases("core"))
+        self.assertNotIn("xhigh", {case.reasoning_mode for case in cases})
+        self.assertNotIn(
+            "xhigh",
+            {case.reasoning_mode for case in MODULE.matrix_cases("extended")},
+        )
+        for history in (50, 100, 200, 300):
+            for output_cap in (8192, 16384, 32768):
+                efforts = {
+                    case.reasoning_mode
+                    for case in cases
+                    if case.history_messages == history
+                    and case.max_tokens == output_cap
+                    and case.prompt_variant == "baseline"
+                }
+                self.assertEqual({"default", "high"}, efforts)
+
+    def test_cache_ab_has_isolated_two_request_arms(self):
+        cases = [case for case in MODULE.matrix_cases("core-safe") if case.scenario == "cache"]
+        self.assertEqual(6, len(cases))
+        for mode in ("shared", "unique", "omitted"):
+            arm = [case for case in cases if case.session_mode == mode]
+            self.assertEqual(2, len(arm))
+            requests = [MODULE.build_request(case, MODULE.DEFAULT_MODEL, "ab") for case in arm]
+            self.assertEqual(requests[0]["messages"], requests[1]["messages"])
+            if mode == "shared":
+                self.assertEqual(requests[0]["session_id"], requests[1]["session_id"])
+            elif mode == "unique":
+                self.assertNotEqual(requests[0]["session_id"], requests[1]["session_id"])
+            else:
+                self.assertNotIn("session_id", requests[0])
+                self.assertNotIn("session_id", requests[1])
+
+        first_requests = {
+            case.session_mode: MODULE.build_request(case, MODULE.DEFAULT_MODEL, "ab")
+            for case in cases
+            if case.case_id.endswith("_r1")
+        }
+        self.assertNotEqual(
+            first_requests["shared"]["messages"],
+            first_requests["unique"]["messages"],
+        )
+        self.assertNotEqual(
+            first_requests["unique"]["messages"],
+            first_requests["omitted"]["messages"],
+        )
 
     def test_request_does_not_override_openrouter_provider_order(self):
         case = MODULE.MatrixCase("test", 12, 8192, "high")
@@ -61,6 +133,88 @@ class Phase0ATest(unittest.TestCase):
         self.assertEqual("tool_calls", MODULE.observed_terminal_kind(state))
         state.content = "final"
         self.assertEqual("content", MODULE.observed_terminal_kind(state))
+
+    def test_sse_parser_and_success_require_done_and_consumable_terminal(self):
+        self.assertEqual(("ignore", None), MODULE.parse_sse_line(b"event: ping\n"))
+        self.assertEqual(("done", None), MODULE.parse_sse_line(b"data: [DONE]\n"))
+        kind, payload = MODULE.parse_sse_line(b'data: {"choices":[]}\n')
+        self.assertEqual("event", kind)
+        self.assertEqual({"choices": []}, payload)
+
+        result = {
+            "status": 200,
+            "error": "",
+            "stream": True,
+            "stream_complete": True,
+            "terminal_valid": True,
+        }
+        self.assertTrue(MODULE.result_is_success(result))
+        result["stream_complete"] = False
+        self.assertFalse(MODULE.result_is_success(result))
+        result["stream_complete"] = True
+        result["terminal_valid"] = False
+        self.assertFalse(MODULE.result_is_success(result))
+
+    def test_execute_case_rejects_reasoning_only_stream_without_done(self):
+        response = FakeHTTPResponse(
+            [b'data: {"choices":[{"delta":{"reasoning":"think"}}]}\n']
+        )
+        with tempfile.TemporaryDirectory() as output_dir, mock.patch.object(
+            MODULE.urllib.request,
+            "urlopen",
+            return_value=response,
+        ):
+            case = MODULE.MatrixCase("incomplete", 2, 8192, "high")
+            result = MODULE.execute_case(
+                case,
+                "test",
+                MODULE.build_request(case, MODULE.DEFAULT_MODEL, "test"),
+                pathlib.Path(output_dir),
+                MODULE.DEFAULT_URL,
+                "test-key-never-sent",
+                1,
+                "",
+                "test",
+                0.01,
+            )
+        self.assertEqual("reasoning_only", result["observed_terminal_kind"])
+        self.assertFalse(result["saw_done"])
+        self.assertFalse(result["stream_complete"])
+        self.assertFalse(result["terminal_valid"])
+        self.assertIn("before [DONE]", result["error"])
+        self.assertFalse(MODULE.result_is_success(result))
+
+    def test_execute_case_accepts_content_stream_with_done(self):
+        response = FakeHTTPResponse(
+            [
+                b'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n',
+                b"data: [DONE]\n",
+            ]
+        )
+        with tempfile.TemporaryDirectory() as output_dir, mock.patch.object(
+            MODULE.urllib.request,
+            "urlopen",
+            return_value=response,
+        ):
+            case = MODULE.MatrixCase("complete", 2, 8192, "high")
+            result = MODULE.execute_case(
+                case,
+                "test",
+                MODULE.build_request(case, MODULE.DEFAULT_MODEL, "test"),
+                pathlib.Path(output_dir),
+                MODULE.DEFAULT_URL,
+                "test-key-never-sent",
+                1,
+                "",
+                "test",
+                0.01,
+            )
+        self.assertEqual("content", result["observed_terminal_kind"])
+        self.assertTrue(result["saw_done"])
+        self.assertTrue(result["stream_complete"])
+        self.assertTrue(result["terminal_valid"])
+        self.assertEqual("", result["error"])
+        self.assertTrue(MODULE.result_is_success(result))
 
 
 if __name__ == "__main__":
