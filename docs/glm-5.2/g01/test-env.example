@@ -1,0 +1,12 @@
+# G01 隔离环境标识，仅作说明；禁止在 S01 完成前启动应用。
+PORT=13300
+DB_TYPE=sqlite
+DB_PATH=./data/atmapi_glm_test.db
+GIN_MODE=debug
+LOG_LEVEL=debug
+
+# 必须替换为仅限测试环境的随机值，禁止用于生产。
+JWT_SECRET=replace-with-a-local-test-only-secret
+ADMIN_KEY=replace-with-a-local-test-only-admin-key
+
+# G01 不配置、不复制渠道 Key。
