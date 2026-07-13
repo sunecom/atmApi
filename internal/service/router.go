@@ -79,8 +79,8 @@ var modelRouter = map[string][]ModelRouteEntry{
 	// 根据消息内容（图片/复杂度）转成具体模型名：qwen3.7-plus / deepseek-v4-flash / deepseek-v4-pro
 	// 这里的路由表是兜底，万一 SmartRoute 没有命中（不太可能）
 	"deepseek-a4": {
-		{ChannelID: 21, ModelOverride: "deepseek/deepseek-v4-pro", Priority: 120}, // OpenRouter DS-Pro
-		{ChannelID: 20, ModelOverride: "deepseek/deepseek-v4-flash", Priority: 110}, // OpenRouter DS-Flash
+		{ChannelID: 21, ModelOverride: "deepseek-a4", Priority: 120}, // OpenRouter DS-Pro
+		{ChannelID: 20, ModelOverride: "deepseek-a4", Priority: 110}, // OpenRouter DS-Flash
 		{ChannelID: 1, ModelOverride: "qwen3.7-plus", Priority: 100},    // 多模态
 		{ChannelID: 2, ModelOverride: "deepseek-v4-pro", Priority: 90}, // 深度推理（同 DeepSeek 渠道）
 		{ChannelID: 2, ModelOverride: "deepseek-v4-flash", Priority: 80}, // 默认
