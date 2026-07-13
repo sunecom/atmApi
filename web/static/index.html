@@ -407,7 +407,7 @@
       <section id="tab-channels" class="tab hidden">
         <div class="grid">
           <div class="card span-9">
-            <div class="card-title">渠道列表</div>
+            <div class="card-title">实际渠道</div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">
               <button class="btn btn-primary" onclick="loadChannels()">刷新列表</button>
               <button class="btn btn-success" onclick="batchActionChannels('enable')">✅ 批量启用</button>
@@ -420,7 +420,7 @@
           <div class="card span-3">
             <div class="card-title">新建 / 编辑渠道</div>
             <div class="muted" style="font-size:11px;margin-bottom:8px;">编辑时自动填充表单，修改后点击创建保存。</div>
-            <input id="ch_name" placeholder="渠道名称" />
+            <input id="ch_name" placeholder="实际渠道" />
             <div class="row">
               <input id="ch_type" value="1" placeholder="类型" />
               <input id="ch_status" value="1" placeholder="状态（1启用）" />
@@ -941,7 +941,7 @@
           '</td>' +
         '</tr>';
       }).join('');
-      document.getElementById('channelsTableWrap').innerHTML = '<table><thead><tr><th>ID</th><th>名称</th><th>状态</th><th>优先级</th><th>权重</th><th>Base URL</th><th>大模型</th><th>atm模型</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">暂无数据</td></tr>') + '</tbody></table>';
+      document.getElementById('channelsTableWrap').innerHTML = '<table><thead><tr><th>ID</th><th>实际渠道</th><th>状态</th><th>优先级</th><th>权重</th><th>Base URL</th><th>大模型</th><th>atm模型</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">暂无数据</td></tr>') + '</tbody></table>';
     }
 
     async function editChannel(id) {
