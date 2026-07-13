@@ -1,0 +1,2 @@
+data: {"id":"chatcmpl-stream-interrupted","choices":[{"index":0,"delta":{"reasoning":"Partial reasoning before connection loss"},"finish_reason":null}]}
+

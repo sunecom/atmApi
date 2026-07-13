@@ -1,0 +1,11 @@
+{
+  "id": "chatcmpl-empty",
+  "object": "chat.completion",
+  "model": "z-ai/glm-5.2",
+  "choices": [],
+  "usage": {
+    "prompt_tokens": 64,
+    "completion_tokens": 0,
+    "total_tokens": 64
+  }
+}

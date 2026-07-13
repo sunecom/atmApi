@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-stream-reasoning","choices":[{"index":0,"delta":{"reasoning":"Thinking"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-stream-reasoning","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":54253,"completion_tokens":16384,"total_tokens":70637,"completion_tokens_details":{"reasoning_tokens":16384}}}
+
+data: [DONE]
+

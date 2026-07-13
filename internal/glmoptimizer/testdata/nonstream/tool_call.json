@@ -1,0 +1,30 @@
+{
+  "id": "chatcmpl-tool-call",
+  "object": "chat.completion",
+  "model": "z-ai/glm-5.2",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_weather_1",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Shanghai\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 200,
+    "completion_tokens": 31,
+    "total_tokens": 231
+  }
+}

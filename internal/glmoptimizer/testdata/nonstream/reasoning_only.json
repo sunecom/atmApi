@@ -1,0 +1,24 @@
+{
+  "id": "chatcmpl-reasoning-only",
+  "object": "chat.completion",
+  "model": "z-ai/glm-5.2",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "reasoning": "Internal reasoning consumed the output budget."
+      },
+      "finish_reason": "length"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 54253,
+    "completion_tokens": 16384,
+    "total_tokens": 70637,
+    "completion_tokens_details": {
+      "reasoning_tokens": 16384
+    }
+  }
+}

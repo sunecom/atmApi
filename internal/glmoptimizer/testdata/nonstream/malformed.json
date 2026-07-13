@@ -1,0 +1,9 @@
+{
+  "id": "chatcmpl-malformed",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "truncated upstream body"
+      }
+    }

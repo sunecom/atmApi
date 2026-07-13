@@ -1,0 +1,21 @@
+{
+  "id": "chatcmpl-refusal",
+  "object": "chat.completion",
+  "model": "z-ai/glm-5.2",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "refusal": "I cannot assist with that request."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 80,
+    "completion_tokens": 12,
+    "total_tokens": 92
+  }
+}

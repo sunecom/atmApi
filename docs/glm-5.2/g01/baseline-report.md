@@ -86,3 +86,25 @@
 - [ ] 确认 S01 优先移除并轮换支付、JWT 和管理员凭据。
 
 完成以上复核并把日志路径写入本报告后，G01 方可改为“已完成”。
+
+## 8. V0.2.1 Task 1 协议失败基线
+
+2026-07-13，建国签字批准 V0.2.1 开发，Task 0B 继续冻结。Task 1 在提交 `692ff6e` 之后建立脱敏协议夹具和旧止血逻辑特征测试，没有启动应用、加载 `.env`、连接数据库或调用真实上游。
+
+新增夹具覆盖：
+
+- 非流式正文、reasoning-only、tool call、refusal、空 choices、损坏 JSON。
+- 流式正文、reasoning-only、分段 tool call、refusal、无 `[DONE]` 的中断流。
+
+特征测试证实：
+
+1. 合法的 `content:null + tool_calls` 响应会被旧字符串判空逻辑识别为失败。
+2. 旧全量缓冲转发在上游 EOF 前向客户端输出 0 字节，因此不是真流式。
+3. 字符串判空还受 JSON 空格影响；紧凑 JSON 与格式化 JSON 可能产生不同结果，进一步证明必须改为结构化解析。
+
+验证结果：
+
+- `go test -v ./internal/glmoptimizer/...`：通过。
+- `go test -vet=off ./internal/...`：通过，包含新增 `internal/glmoptimizer`。
+- `go test ./...`：退出码 1，只复现第 5 节登记的两个既有问题：`internal/model/db.go:104` vet 错误，以及 `test_phase2a_plus.go`/`test_phase2c.go` 重复声明。
+- 应用健康接口、流式和非流式在线样例：未运行。原因是第 4 节 S01 安全边界仍禁止启动当前应用；Task 1 使用离线协议夹具代替，不以加载敏感环境文件为代价补一项样例。

@@ -1,0 +1,20 @@
+{
+  "id": "chatcmpl-content",
+  "object": "chat.completion",
+  "model": "z-ai/glm-5.2",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "A visible answer."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 120,
+    "completion_tokens": 24,
+    "total_tokens": 144
+  }
+}
