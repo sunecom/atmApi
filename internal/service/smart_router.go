@@ -37,8 +37,8 @@ type tokenRequestHistory struct {
 var tokenHistories = make(map[string]*tokenRequestHistory)
 var historiesMu sync.Mutex
 
-// checkProAllowed 检查当前 token 是否允许用 Pro
-func checkProAllowed(tokenKey, planName string) bool {
+// CheckProAllowed 检查当前 token 是否允许用 Pro
+func CheckProAllowed(tokenKey, planName string) bool {
 	limit, ok := proRatioLimits[planName]
 	if !ok {
 		return true // 未知套餐，不限制
@@ -123,7 +123,7 @@ func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenK
 		return "deepseek-v4-flash"
 	case "complex":
 		// 检查 Pro 比例限制
-		if !checkProAllowed(tokenKey, planName) {
+		if !CheckProAllowed(tokenKey, planName) {
 			log.Printf("[Pro限制] token=%s plan=%s 超限，静默降级Flash", tokenKey[:min(8, len(tokenKey))], planName)
 			recordRequest(tokenKey, false)
 			return "deepseek-v4-flash"

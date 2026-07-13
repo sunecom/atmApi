@@ -788,8 +788,13 @@ func chatCompletions(c *gin.Context) {
 	if taskModeResult.Model != "" && taskModeResult.Mode != service.TaskModeUnknown {
 		// 任务模式覆盖路由结果（调试→pro，咨询→flash，闲聊→flash）
 		if actualModel != taskModeResult.Model {
-			log.Printf("[模式路由] 覆盖模型: %s → %s (mode=%s)", actualModel, taskModeResult.Model, taskModeResult.Mode)
-			actualModel = taskModeResult.Model
+			// 检查套餐 Pro 限制：如果覆盖目标是 pro 但套餐不允许，不覆盖
+			if taskModeResult.Model == "deepseek-v4-pro" && !service.CheckProAllowed(tokenKey, apiToken.PlanName) {
+				log.Printf("[模式路由] 套餐 %s 不允许 Pro，跳过覆盖 (mode=%s)", apiToken.PlanName, taskModeResult.Mode)
+			} else {
+				log.Printf("[模式路由] 覆盖模型: %s → %s (mode=%s)", actualModel, taskModeResult.Model, taskModeResult.Mode)
+				actualModel = taskModeResult.Model
+			}
 		}
 	}
 	// 注入任务模式 hint
