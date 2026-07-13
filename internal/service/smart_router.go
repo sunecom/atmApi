@@ -4,6 +4,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 var imageURLRegex = regexp.MustCompile(`(?i)\.(png|jpe?g|gif|webp|svg|bmp|ico)(\?[^\s]*)?`)
@@ -13,7 +14,87 @@ func hasImageURL(text string) bool {
 	return urlRegex.MatchString(text)
 }
 
-func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenKey string) string {
+// ===== Pro 比例控制（套餐级）=====
+// 套餐 Pro 调用比例上限
+var proRatioLimits = map[string]float64{
+	"basic":      0.00, // 0%，纯 Flash
+	"pro":        0.10, // ≤10%
+	"starter":    0.15, // ≤15%
+	"flagship":   0.25, // ≤25%
+	"advanced":   1.00, // 不限制
+	"enterprise": 1.00, // 不限制
+}
+
+// 统计窗口大小（最近 N 次请求）
+const proRatioWindow = 20
+
+// 每个 token 的请求历史
+type tokenRequestHistory struct {
+	requests []bool // true = pro, false = flash
+	mu       sync.Mutex
+}
+
+var tokenHistories = make(map[string]*tokenRequestHistory)
+var historiesMu sync.Mutex
+
+// checkProAllowed 检查当前 token 是否允许用 Pro
+func checkProAllowed(tokenKey, planName string) bool {
+	limit, ok := proRatioLimits[planName]
+	if !ok {
+		return true // 未知套餐，不限制
+	}
+	if limit >= 1.0 {
+		return true // 不限制
+	}
+	if limit <= 0.001 {
+		return false // 完全禁止 Pro（basic=0%）
+	}
+
+	// 获取/创建历史记录
+	historiesMu.Lock()
+	history, ok := tokenHistories[tokenKey]
+	if !ok {
+		history = &tokenRequestHistory{}
+		tokenHistories[tokenKey] = history
+	}
+	historiesMu.Unlock()
+
+	history.mu.Lock()
+	defer history.mu.Unlock()
+
+	// 统计 Pro 占比（窗口未填满时也检查）
+	proCount := 0
+	for _, isPro := range history.requests {
+		if isPro {
+			proCount++
+		}
+	}
+	// 在 20 次窗口中，pro=10% 允许 2 次 Pro
+	// 用窗口大小计算绝对配额，而不是比例
+	maxPro := int(limit * proRatioWindow)
+	return proCount < maxPro
+}
+
+// recordRequest 记录本次请求使用的模型
+func recordRequest(tokenKey string, isPro bool) {
+	historiesMu.Lock()
+	history, ok := tokenHistories[tokenKey]
+	if !ok {
+		history = &tokenRequestHistory{}
+		tokenHistories[tokenKey] = history
+	}
+	historiesMu.Unlock()
+
+	history.mu.Lock()
+	defer history.mu.Unlock()
+
+	history.requests = append(history.requests, isPro)
+	if len(history.requests) > proRatioWindow {
+		history.requests = history.requests[1:]
+	}
+}
+
+func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenKey string, planName string) string {
 	requestedModel = strings.ToLower(requestedModel)
 	if requestedModel != "deepseek-a4" {
 		return requestedModel
@@ -35,13 +116,22 @@ func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenK
 	}
 
 	complexity := analyzeComplexityV2(messages)
-	log.Printf("[路由] 复杂度=%s", complexity)
+	log.Printf("[路由] 复杂度=%s plan=%s", complexity, planName)
 	switch complexity {
 	case "simple":
+		recordRequest(tokenKey, false)
 		return "deepseek-v4-flash"
 	case "complex":
+		// 检查 Pro 比例限制
+		if !checkProAllowed(tokenKey, planName) {
+			log.Printf("[Pro限制] token=%s plan=%s 超限，静默降级Flash", tokenKey[:min(8, len(tokenKey))], planName)
+			recordRequest(tokenKey, false)
+			return "deepseek-v4-flash"
+		}
+		recordRequest(tokenKey, true)
 		return "deepseek-v4-pro"
 	default:
+		recordRequest(tokenKey, false)
 		return "deepseek-v4-flash"
 	}
 }

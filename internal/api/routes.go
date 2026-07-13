@@ -781,7 +781,7 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 	log.Printf("[路由] 最后3条: %s", lastRoles)
-	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey)
+	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey, apiToken.PlanName)
 
 	// ===== 任务模式路由（Phase 2C） =====
 	taskModeResult := service.ClassifyTaskMode(req.Messages)
