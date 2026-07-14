@@ -10,25 +10,38 @@ import (
 	"strings"
 	"time"
 
+	"atmapi/internal/glmoptimizer"
 	"atmapi/internal/model"
 )
 
 // ===== 上下文压缩引擎 v3（成本感知） =====
 // 两级策略，阈值根据套餐 MaxInputTokens 按比例计算：
-//   > 50% MaxInputTokens → 无损截断
+//   > 50% MaxInputTokens → 历史裁剪
 //   > 80% MaxInputTokens → 摘要替换
 //   MaxInputTokens=0（不限量）→ 回退默认硬编码阈值
 
 const (
-	ThresholdTruncate = 30000  // 默认截断阈值（无套餐或无限量时回退）
-	ThresholdSummary  = 60000  // 默认摘要阈值（无套餐或无限量时回退）
-	TruncateRatio     = 0.50   // MaxInputTokens 的 50% 触发截断
-	SummaryRatio      = 0.80   // MaxInputTokens 的 80% 触发摘要
-	MinTruncateEst    = 5000   // estTokens 安全下限（防误触发）
-	TailKeepMessages  = 6      // 保留最后 6 条（约 3 轮对话）
-	SummaryMaxTokens  = 800    // 摘要生成 max_tokens
-	SummaryTimeout    = 30     // 摘要请求超时秒数
+	ThresholdTruncate = 30000 // 默认截断阈值（无套餐或无限量时回退）
+	ThresholdSummary  = 60000 // 默认摘要阈值（无套餐或无限量时回退）
+	TruncateRatio     = 0.50  // MaxInputTokens 的 50% 触发截断
+	SummaryRatio      = 0.80  // MaxInputTokens 的 80% 触发摘要
+	MinTruncateEst    = 5000  // estTokens 安全下限（防误触发）
+	TailKeepMessages  = 6     // 保留最后 6 条（约 3 轮对话）
+	SummaryMaxTokens  = 800   // 摘要生成 max_tokens
+	SummaryTimeout    = 30    // 摘要请求超时秒数
 )
+
+// PrepareGLM52Context is the only context-processing entry used by the
+// GLM-5.2 path. It never calls the legacy DeepSeek Flash summarizer and never
+// replaces history with a semantic summary.
+func PrepareGLM52Context(body []byte, planName string, maxInputTokens int) ([]byte, glmoptimizer.ContextDecision, error) {
+	updated, decision, shadow, err := glmoptimizer.ApplyContextBudget(body, glmoptimizer.ContextPolicy{
+		PlanName: planName, MaxInputTokens: maxInputTokens,
+		ToolOutputMaxRunes: 2000, ShadowTriggerRatio: 0.80,
+	})
+	ObserveGLM52SummaryShadow(decision, shadow)
+	return updated, decision, err
+}
 
 // CompressContext 上下文压缩入口（成本感知 v3）
 // 根据套餐 MaxInputTokens 按比例计算阈值，更高配的套餐推迟压缩
@@ -81,12 +94,12 @@ func CompressContext(messages []map[string]interface{}, tokenKey string) []map[s
 			log.Printf("[压缩] ✓ 摘要替换完成: %d 条中间消息 → 1 条摘要", len(middleMsgs))
 			return result
 		}
-		log.Printf("[压缩] 摘要生成失败，降级为无损截断")
+		log.Printf("[压缩] 摘要生成失败，降级为历史裁剪")
 	}
 
-	// > truncateThreshold → 无损截断
+	// > truncateThreshold → 历史裁剪（会删除中间历史，并非无损）
 	result := mergeTruncated(systemMsgs, tailMsgs, len(middleMsgs))
-	log.Printf("[压缩] ✓ 无损截断完成: 丢弃 %d 条中间消息", len(middleMsgs))
+	log.Printf("[压缩] ✓ 历史裁剪完成: 丢弃 %d 条中间消息", len(middleMsgs))
 	return result
 }
 
@@ -328,7 +341,7 @@ func extractTextOnly(msg map[string]interface{}) string {
 // mergeWithSummary 合并 system + 摘要 + tail
 func mergeWithSummary(system []map[string]interface{}, summary string, tail []map[string]interface{}, middleCount int) []map[string]interface{} {
 	summaryMsg := map[string]interface{}{
-		"role": "system",
+		"role":    "system",
 		"content": fmt.Sprintf("[上下文摘要 · 已压缩 %d 条历史消息]\n%s", middleCount, summary),
 	}
 
@@ -339,7 +352,7 @@ func mergeWithSummary(system []map[string]interface{}, summary string, tail []ma
 	return result
 }
 
-// mergeTruncated 合并 system + 标记 + tail（无损截断）
+// mergeTruncated 合并 system + 标记 + tail（旧模型历史裁剪）
 func mergeTruncated(system, tail []map[string]interface{}, middleCount int) []map[string]interface{} {
 	marker := map[string]interface{}{
 		"role": "system",

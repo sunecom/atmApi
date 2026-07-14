@@ -5,7 +5,21 @@ import (
 	"log"
 	"regexp"
 	"strings"
+
+	"atmapi/internal/glmoptimizer"
 )
+
+// ObserveGLM52SummaryShadow records only safe comparison metadata. Candidate
+// summary text is deliberately excluded from logs because it may contain
+// prompt content; shadow mode never injects the candidate into upstream input.
+func ObserveGLM52SummaryShadow(decision glmoptimizer.ContextDecision, shadow *glmoptimizer.SummaryShadow) {
+	if shadow == nil {
+		return
+	}
+	log.Printf("[GLM52摘要shadow] plan=%q original_tokens=%d final_tokens=%d groups=%d source_groups=%d candidate_runes=%d candidate_hash=%s",
+		decision.PlanName, decision.OriginalEstimatedTokens, decision.FinalEstimatedTokens,
+		decision.GroupCount, shadow.SourceGroups, shadow.CandidateRunes, decision.ShadowHashPrefix)
+}
 
 // ===== 行为修正引擎（Phase 2） =====
 // 检测 AI 对话中的低效模式，主动注入 system hint 减少冗余轮次
@@ -32,9 +46,9 @@ var confirmationPattern = regexp.MustCompile(`(?i)(可以吗|继续吗|需要我
 
 // 短轮阈值（字符数）
 const (
-	ShortReplyThreshold = 80   // <80 字算短轮
-	FragmentedCountMax  = 5    // >5 次短轮触发
-	ConfirmationCountMax = 3   // >3 次确认触发
+	ShortReplyThreshold   = 80    // <80 字算短轮
+	FragmentedCountMax    = 5     // >5 次短轮触发
+	ConfirmationCountMax  = 3     // >3 次确认触发
 	VerboseTokenThreshold = 50000 // >50K tokens 触发
 )
 

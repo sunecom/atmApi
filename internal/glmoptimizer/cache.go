@@ -52,12 +52,17 @@ func EvaluateCacheEligibility(body []byte) CacheDecision {
 		}
 	}
 	var messages []struct {
-		Content json.RawMessage `json:"content"`
+		Role      string          `json:"role"`
+		Content   json.RawMessage `json:"content"`
+		ToolCalls json.RawMessage `json:"tool_calls"`
 	}
 	if json.Unmarshal(request["messages"], &messages) != nil {
 		return CacheDecision{Reason: "invalid_messages"}
 	}
 	for _, message := range messages {
+		if message.Role == "tool" || (len(message.ToolCalls) > 0 && string(message.ToolCalls) != "null" && string(message.ToolCalls) != "[]") {
+			return CacheDecision{Reason: "tool_context"}
+		}
 		if len(message.Content) == 0 || string(message.Content) == "null" {
 			continue
 		}

@@ -39,6 +39,7 @@ func TestCacheEligibility(t *testing.T) {
 		"nonzero temperature": `{"model":"glm-5.2","messages":[],"temperature":0.1}`,
 		"stream":              `{"model":"glm-5.2","messages":[],"temperature":0,"stream":true}`,
 		"tools":               `{"model":"glm-5.2","messages":[],"temperature":0,"tools":[]}`,
+		"tool history":        `{"model":"glm-5.2","messages":[{"role":"tool","tool_call_id":"x","content":"done"}],"temperature":0}`,
 		"multimodal":          `{"model":"glm-5.2","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],"temperature":0}`,
 		"unknown behavior":    `{"model":"glm-5.2","messages":[],"temperature":0,"frequency_penalty":1}`,
 	}

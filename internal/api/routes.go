@@ -708,7 +708,7 @@ func chatCompletions(c *gin.Context) {
 	// ===== 输出控制：简洁回复约束（替代硬截断）=====
 	// 2026-07-08：用 system message 约束输出长度，而不是 max_tokens 硬截断
 	// 用户明确要求"详细/完整/长文"时不注入，尊重用户意图
-	{
+	if !isGLM52 {
 		longFormKeywords := []string{"详细", "完整", "长文", "展开", "深入", "全面", "长篇", "写一篇", "详细解释", "详细说明"}
 		needLongForm := false
 		// 检查最后一条用户消息
@@ -846,7 +846,7 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 	// 注入任务模式 hint
-	if taskModeResult.Hint != "" {
+	if !isGLM52 && taskModeResult.Hint != "" {
 		req.Messages = service.ApplyTaskModeHint(req.Messages, taskModeResult)
 	}
 	actualModel = preparedRequest.SelectModel(actualModel)
@@ -941,6 +941,40 @@ modelAllowed:
 		}
 	}
 
+	if isGLM52 {
+		plan, planErr := service.GetPlan(apiPlanName)
+		if planErr != nil || plan == nil {
+			log.Printf("[GLM52上下文] policy_error plan=%q err=%v", apiPlanName, planErr)
+			respondError(c, http.StatusInternalServerError, ErrInternal,
+				"GLM-5.2 套餐输入预算未配置，请联系管理员")
+			return
+		}
+		var contextDecision glmoptimizer.ContextDecision
+		body, contextDecision, err = service.PrepareGLM52Context(body, plan.Name, plan.MaxInputTokens)
+		log.Printf("[GLM52上下文] plan=%q max_input=%d original_est=%d final_est=%d groups=%d tool_tx=%d compressed_tools=%d shadow=%t decision=%s",
+			contextDecision.PlanName, contextDecision.MaxInputTokens,
+			contextDecision.OriginalEstimatedTokens, contextDecision.FinalEstimatedTokens,
+			contextDecision.GroupCount, contextDecision.ToolTransactions,
+			contextDecision.ToolMessagesCompressed, contextDecision.ShadowGenerated, contextDecision.Reason)
+		if err != nil {
+			if contextErr, ok := err.(*glmoptimizer.ContextError); ok {
+				respondError(c, contextErr.HTTPStatus, ErrorCode(contextErr.Code), contextErr.Message, contextErr.Details)
+			} else {
+				respondError(c, http.StatusInternalServerError, ErrInternal,
+					"GLM-5.2 上下文预算处理失败")
+			}
+			return
+		}
+		var contextRequest struct {
+			Messages []map[string]interface{} `json:"messages"`
+		}
+		if json.Unmarshal(body, &contextRequest) != nil {
+			respondError(c, http.StatusInternalServerError, ErrInternal,
+				"GLM-5.2 上下文结果解析失败")
+			return
+		}
+		req.Messages = contextRequest.Messages
+	} else {
 	// ===== 工具输出压缩（Phase 2A+ 第二道防线） =====
 	// 压缩 role=tool 的消息，减少 token 大户（命令输出/日志/diff）
 	{
@@ -1011,6 +1045,7 @@ modelAllowed:
 			reqMapBH["messages"] = newMsgs
 			body, _ = json.Marshal(reqMapBH)
 		}
+	}
 	}
 
 	var glmCacheKey string
