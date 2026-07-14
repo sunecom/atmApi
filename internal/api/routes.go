@@ -745,9 +745,49 @@ func chatCompletions(c *gin.Context) {
 			log.Printf("[输出控制] token=%s 用户要求长文，跳过简洁约束", apiToken.Name)
 		}
 	}
-	// ===== 输出控制：max_tokens 安全上限（仅防极端情况）=====
-	// 不再硬截断，只设一个很高的安全上限防止输出爆炸
-	if apiToken.RateLimitGroup != "" {
+	// ===== GLM-5.2 reasoning/output 预算守卫 =====
+	// GLM 路径使用套餐硬上限并为可见正文保留预算；非 GLM 路径保持旧语义。
+	if isGLM52 {
+		planName := apiToken.PlanName
+		if planName == "" {
+			planName = apiToken.RateLimitGroup
+		}
+		plan, planErr := service.GetPlan(planName)
+		if planErr != nil || plan == nil {
+			log.Printf("[GLM52预算] policy_error plan=%q err=%v", planName, planErr)
+			respondError(c, http.StatusInternalServerError, ErrInternal,
+				"GLM-5.2 套餐输出预算未配置，请联系管理员")
+			return
+		}
+
+		var decision glmoptimizer.BudgetDecision
+		body, decision, err = glmoptimizer.ApplyBudget(
+			body,
+			glmoptimizer.BudgetPolicyForPlan(plan.Name, plan.MaxOutputTokens),
+		)
+		log.Printf("[GLM52预算] plan=%q requested_max=%d effective_max=%d reasoning=%t effort=%q reasoning_max=%d min_visible=%d estimated_visible=%d decision=%s",
+			decision.PlanName,
+			decision.RequestedMaxTokens,
+			decision.EffectiveMaxTokens,
+			decision.ReasoningEnabled,
+			decision.EffectiveEffort,
+			decision.ReasoningMaxTokens,
+			decision.MinVisibleTokens,
+			decision.EstimatedVisibleTokens,
+			decision.Reason,
+		)
+		if err != nil {
+			if budgetErr, ok := err.(*glmoptimizer.BudgetError); ok {
+				respondError(c, budgetErr.HTTPStatus, ErrorCode(budgetErr.Code), budgetErr.Message, budgetErr.Details)
+			} else {
+				respondError(c, http.StatusInternalServerError, ErrInternal,
+					"GLM-5.2 输出预算处理失败")
+			}
+			return
+		}
+	} else if apiToken.RateLimitGroup != "" {
+		// ===== 旧模型输出控制：max_tokens 安全上限（仅防极端情况）=====
+		// 保留原有实现，避免 Task 3 改变 deepseek-a4 等既有路径。
 		plan, _ := service.GetPlan(apiToken.RateLimitGroup)
 		if plan != nil {
 			// 安全上限 = 套餐上限 * 2，最低 16384
