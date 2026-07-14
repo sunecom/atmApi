@@ -1299,6 +1299,14 @@ processResult:
 					service.GlobalAnalytics.RecordRequest(apiToken.ID, apiToken.Name,
 						relayResult.Usage.PromptTokens, relayResult.Usage.CachedTokens, relayResult.Usage.CachedTokens > 0, 0)
 				}
+				// GLM-5.2 点数扣减（双账分离）
+				if apiToken.PlanName == "glm-basic" || apiToken.PlanName == "glm-standard" || apiToken.PlanName == "glm-pro" {
+					failed := relayErr != nil && !relayResult.FirstDataSeen
+					cacheHit := singleflightShared || (relayResult.Usage.CachedTokens > 0 && relayResult.Usage.PromptTokens == relayResult.Usage.CachedTokens)
+					deductResult := service.GLMDeductor.DeductPoints(apiToken.ID, relayResult.Usage.PromptTokens, relayResult.Usage.CompletionTokens, cacheHit, failed)
+					log.Printf("[GLM-5.2扣点] token=%s points=%d reason=%s remaining=%d",
+						apiToken.Name, deductResult.PointsDeducted, deductResult.Reason, deductResult.RemainingPoints)
+				}
 				go SavePromptAnalysis(originalMessages, apiToken.ID, apiToken.Name, actualModel, relayResult.Usage.PromptTokens, relayResult.Usage.CachedTokens)
 				log.Printf("[GLM-5.2流式usage] token=%s model=%s tokens=%d cached=%d cost=%.6f",
 					apiToken.Name, actualModel, relayResult.Usage.TotalTokens, relayResult.Usage.CachedTokens, usageLog.EstimatedCost)
@@ -1453,6 +1461,14 @@ processResult:
 					StatusCode:    result.Response.StatusCode, DurationMs: duration}
 			}
 			model.DB.Create(&usageLog)
+			// GLM-5.2 点数扣减（双账分离）
+			if apiToken.PlanName == "glm-basic" || apiToken.PlanName == "glm-standard" || apiToken.PlanName == "glm-pro" {
+				failed := result.Response.StatusCode >= 400
+				cacheHit := singleflightShared || (cachedTokens > 0 && upstreamResp.Usage.PromptTokens == cachedTokens)
+				deductResult := service.GLMDeductor.DeductPoints(apiToken.ID, upstreamResp.Usage.PromptTokens, upstreamResp.Usage.CompletionTokens, cacheHit, failed)
+				log.Printf("[GLM-5.2扣点] token=%s points=%d reason=%s remaining=%d",
+					apiToken.Name, deductResult.PointsDeducted, deductResult.Reason, deductResult.RemainingPoints)
+			}
 			// 缓存分析埋点
 			if service.GlobalAnalytics != nil {
 				service.GlobalAnalytics.RecordRequest(apiToken.ID, apiToken.Name,
