@@ -10,6 +10,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -31,19 +32,27 @@ type FlushWriter interface {
 }
 
 type RelayOptions struct {
-	MaxEventBytes int
+	MaxEventBytes    int
+	RequestStartedAt time.Time
 }
 
 type StreamUsage struct {
+	Provider         string
+	ActualModel      string
 	PromptTokens     int64
 	CompletionTokens int64
 	TotalTokens      int64
 	CachedTokens     int64
+	CacheWriteTokens int64
+	ReasoningTokens  int64
+	ReportedCost     *float64
 }
 
 // RelayResult contains only bounded protocol metadata. It never contains
 // content, reasoning text, or tool arguments.
 type RelayResult struct {
+	TTFTMs         int64
+	FirstDataSeen  bool
 	BytesForwarded int64
 	ContentSeen    bool
 	RefusalSeen    bool
@@ -73,6 +82,9 @@ func RelaySSE(ctx context.Context, dst FlushWriter, src io.Reader, options Relay
 
 	reader := newSSEEventReader(src, maxEventBytes)
 	observer := newStreamObserver(maxEventBytes)
+	if !options.RequestStartedAt.IsZero() {
+		observer.requestStartedAt = options.RequestStartedAt
+	}
 	var result RelayResult
 
 	for {
@@ -206,17 +218,22 @@ func eventData(event []byte) ([]byte, bool) {
 }
 
 type streamObserver struct {
-	contentSeen   bool
-	refusalSeen   bool
-	reasoningSeen bool
-	finishReason  string
-	usage         StreamUsage
-	usageSeen     bool
-	parseErrors   int
-	malformed     string
-	toolBytes     int
-	maxToolBytes  int
-	tools         map[streamToolKey]*streamTool
+	requestStartedAt time.Time
+	ttftMs           int64
+	firstDataSeen    bool
+	provider         string
+	actualModel      string
+	contentSeen      bool
+	refusalSeen      bool
+	reasoningSeen    bool
+	finishReason     string
+	usage            StreamUsage
+	usageSeen        bool
+	parseErrors      int
+	malformed        string
+	toolBytes        int
+	maxToolBytes     int
+	tools            map[streamToolKey]*streamTool
 }
 
 type streamToolKey struct {
@@ -231,7 +248,9 @@ type streamTool struct {
 }
 
 type streamEnvelope struct {
-	Choices []struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Choices  []struct {
 		Index int `json:"index"`
 		Delta struct {
 			Content          json.RawMessage `json:"content"`
@@ -253,19 +272,28 @@ type streamEnvelope struct {
 }
 
 type streamUsageEnvelope struct {
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	TotalTokens      int64 `json:"total_tokens"`
+	PromptTokens     int64    `json:"prompt_tokens"`
+	CompletionTokens int64    `json:"completion_tokens"`
+	TotalTokens      int64    `json:"total_tokens"`
+	Cost             *float64 `json:"cost"`
 	PromptDetails    struct {
-		CachedTokens int64 `json:"cached_tokens"`
+		CachedTokens     int64 `json:"cached_tokens"`
+		CacheWriteTokens int64 `json:"cache_write_tokens"`
 	} `json:"prompt_tokens_details"`
+	CompletionDetails struct {
+		ReasoningTokens int64 `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
 }
 
 func newStreamObserver(maxToolBytes int) *streamObserver {
-	return &streamObserver{maxToolBytes: maxToolBytes, tools: make(map[streamToolKey]*streamTool)}
+	return &streamObserver{requestStartedAt: time.Now(), maxToolBytes: maxToolBytes, tools: make(map[streamToolKey]*streamTool)}
 }
 
 func (o *streamObserver) observe(payload []byte) {
+	if !o.firstDataSeen {
+		o.firstDataSeen = true
+		o.ttftMs = time.Since(o.requestStartedAt).Milliseconds()
+	}
 	var envelope streamEnvelope
 	if err := json.Unmarshal(bytes.TrimSpace(payload), &envelope); err != nil {
 		o.parseErrors++
@@ -273,6 +301,12 @@ func (o *streamObserver) observe(payload []byte) {
 			o.malformed = fmt.Sprintf("invalid SSE data JSON: %T", err)
 		}
 		return
+	}
+	if strings.TrimSpace(envelope.Provider) != "" {
+		o.provider = envelope.Provider
+	}
+	if strings.TrimSpace(envelope.Model) != "" {
+		o.actualModel = envelope.Model
 	}
 	for _, choice := range envelope.Choices {
 		o.contentSeen = o.observeText(choice.Delta.Content, "delta.content") || o.contentSeen
@@ -316,10 +350,15 @@ func (o *streamObserver) observe(payload []byte) {
 		}
 		o.usageSeen = true
 		o.usage = StreamUsage{
+			Provider:         o.provider,
+			ActualModel:      o.actualModel,
 			PromptTokens:     usage.PromptTokens,
 			CompletionTokens: usage.CompletionTokens,
 			TotalTokens:      usage.TotalTokens,
 			CachedTokens:     usage.PromptDetails.CachedTokens,
+			CacheWriteTokens: usage.PromptDetails.CacheWriteTokens,
+			ReasoningTokens:  usage.CompletionDetails.ReasoningTokens,
+			ReportedCost:     usage.Cost,
 		}
 	}
 }
@@ -400,6 +439,8 @@ func malformedStreamOutcome(detail string) TerminalOutcome {
 
 func (o *streamObserver) result(bytesForwarded int64, doneSeen bool) RelayResult {
 	return RelayResult{
+		TTFTMs:         o.ttftMs,
+		FirstDataSeen:  o.firstDataSeen,
 		BytesForwarded: bytesForwarded,
 		ContentSeen:    o.contentSeen,
 		RefusalSeen:    o.refusalSeen,

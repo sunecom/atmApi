@@ -26,10 +26,11 @@ type AttemptResult struct {
 }
 
 type RouteResult struct {
-	Value      any
-	ChannelID  uint
-	Attempts   int
-	Completion *RouteCompletion
+	Value        any
+	ChannelID    uint
+	Attempts     int
+	BreakerState BreakerState
+	Completion   *RouteCompletion
 }
 
 // RouteCompletion keeps a half-open probe reserved until a streaming caller
@@ -134,9 +135,10 @@ func (r *Router) Route(ctx context.Context, candidates []RouteCandidate, attempt
 			continue
 		}
 		attempts++
+		breakerState := r.breaker.State(candidate.ChannelID)
 		attemptResult, err := attempt(routeCtx, candidate)
 		if err == nil {
-			result := RouteResult{Value: attemptResult.Value, ChannelID: candidate.ChannelID, Attempts: attempts}
+			result := RouteResult{Value: attemptResult.Value, ChannelID: candidate.ChannelID, Attempts: attempts, BreakerState: breakerState}
 			if attemptResult.DeferredOutcome {
 				result.Completion = &RouteCompletion{permit: permit, channelID: candidate.ChannelID}
 			} else {

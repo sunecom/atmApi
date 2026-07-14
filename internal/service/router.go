@@ -19,10 +19,10 @@ import (
 
 // 渠道并发控制（通用）
 var (
-	channelConcurrency = make(map[uint]int) // channelID -> 当前并发数
-	concurrencyMutex   sync.Mutex
+	channelConcurrency  = make(map[uint]int) // channelID -> 当前并发数
+	concurrencyMutex    sync.Mutex
 	glm52CircuitBreaker = glmoptimizer.NewCircuitBreaker(glmoptimizer.BreakerConfig{})
-	glm52Router = glmoptimizer.NewRouter(glmoptimizer.RouterConfig{
+	glm52Router         = glmoptimizer.NewRouter(glmoptimizer.RouterConfig{
 		Breaker:       glm52CircuitBreaker,
 		TotalDeadline: glmoptimizer.DefaultRouteDeadline,
 	})
@@ -32,7 +32,7 @@ var (
 func acquireConcurrency(channelID uint, maxConcurrent int) bool {
 	concurrencyMutex.Lock()
 	defer concurrencyMutex.Unlock()
-	
+
 	current := channelConcurrency[channelID]
 	if current >= maxConcurrent {
 		return false
@@ -45,7 +45,7 @@ func acquireConcurrency(channelID uint, maxConcurrent int) bool {
 func releaseConcurrency(channelID uint) {
 	concurrencyMutex.Lock()
 	defer concurrencyMutex.Unlock()
-	
+
 	if current, ok := channelConcurrency[channelID]; ok && current > 0 {
 		channelConcurrency[channelID] = current - 1
 	}
@@ -53,12 +53,14 @@ func releaseConcurrency(channelID uint) {
 
 // RouteRequestResult 路由请求结果
 type RouteRequestResult struct {
-	Response    *http.Response
-	ChannelID   uint
-	ChannelName string
-	AtmModel    string
-	ActualModel string // 实际发给渠道的模型名
+	Response        *http.Response
+	ChannelID       uint
+	ChannelName     string
+	AtmModel        string
+	ActualModel     string // 实际发给渠道的模型名
 	GLM52Completion *glmoptimizer.RouteCompletion
+	RetryCount      int
+	BreakerState    glmoptimizer.BreakerState
 	coalescedShared bool
 }
 
@@ -79,15 +81,15 @@ func (b *releaseOnCloseBody) Close() error {
 // 每个条目：[channel_id, model_override, priority]
 // 数字越大越优先，失败就 fallback 到下一个
 type ModelRouteEntry struct {
-	ChannelID uint
-	ChannelName string
+	ChannelID     uint
+	ChannelName   string
 	ModelOverride string // 空字符串表示用原模型名
-	Priority int
+	Priority      int
 }
 
 type ModelRouteConfig struct {
 	VisibleModel string // 对外暴露的模型名
-	Routes []ModelRouteEntry
+	Routes       []ModelRouteEntry
 }
 
 // modelRouter 路由策略配置（已移除 glm-5.2，改走聚合组 model_group）
@@ -101,8 +103,8 @@ var modelRouter = map[string][]ModelRouteEntry{
 	// 根据消息内容（图片/复杂度）转成具体模型名：qwen3.7-plus / deepseek-v4-flash / deepseek-v4-pro
 	// 这里的路由表是兜底，万一 SmartRoute 没有命中（不太可能）
 	"deepseek-a4": {
-		{ChannelID: 1, ModelOverride: "qwen3.7-plus", Priority: 100},    // 多模态
-		{ChannelID: 2, ModelOverride: "deepseek-v4-pro", Priority: 90}, // 深度推理（同 DeepSeek 渠道）
+		{ChannelID: 1, ModelOverride: "qwen3.7-plus", Priority: 100},     // 多模态
+		{ChannelID: 2, ModelOverride: "deepseek-v4-pro", Priority: 90},   // 深度推理（同 DeepSeek 渠道）
 		{ChannelID: 2, ModelOverride: "deepseek-v4-flash", Priority: 80}, // 默认
 	},
 }
@@ -238,8 +240,8 @@ func routeRequestContext(ctx context.Context, targetModel string, requestBody []
 
 		// 更新配额
 		updateQuota(token, 1)
-		RecordRequest(token.ID) // 记录滑动窗口
-		GlobalRPMLimiter.RecordRPM(token.ID) // 记录 RPM
+		RecordRequest(token.ID)                                       // 记录滑动窗口
+		GlobalRPMLimiter.RecordRPM(token.ID)                          // 记录 RPM
 		GlobalChannelLimiter.RecordChannelRPM(token.ID, channel.Name) // 记录渠道 RPM
 
 		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel}, nil
@@ -275,34 +277,34 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 
 	routeOnce := func() (*RouteRequestResult, error) {
 		routeResult, routeErr := glm52Router.Route(ctx, candidates, func(attemptCtx context.Context, candidate glmoptimizer.RouteCandidate) (glmoptimizer.AttemptResult, error) {
-		channel := channelsByID[candidate.ChannelID]
-		acquired := false
-		if channel.MaxConcurrent > 0 {
-			if !acquireConcurrency(channel.ID, channel.MaxConcurrent) {
-				return glmoptimizer.AttemptResult{}, &glmoptimizer.Failure{Class: glmoptimizer.FailureChannelCapacity, ChannelID: channel.ID}
+			channel := channelsByID[candidate.ChannelID]
+			acquired := false
+			if channel.MaxConcurrent > 0 {
+				if !acquireConcurrency(channel.ID, channel.MaxConcurrent) {
+					return glmoptimizer.AttemptResult{}, &glmoptimizer.Failure{Class: glmoptimizer.FailureChannelCapacity, ChannelID: channel.ID}
+				}
+				acquired = true
 			}
-			acquired = true
-		}
-		response, actualSentModel, attemptErr := tryGLM52Channel(attemptCtx, channel, targetModel, requestBody, request.Stream)
-		if attemptErr != nil {
+			response, actualSentModel, attemptErr := tryGLM52Channel(attemptCtx, channel, targetModel, requestBody, request.Stream)
+			if attemptErr != nil {
+				if acquired {
+					releaseConcurrency(channel.ID)
+				}
+				failure := glmoptimizer.NormalizeFailure(channel.ID, attemptErr)
+				log.Printf("[GLM52路由] channel_id=%d class=%s status=%d retryable=%t breaker_counted=%t",
+					channel.ID, failure.Class, failure.StatusCode, failure.Retryable(), failure.CountsTowardBreaker())
+				return glmoptimizer.AttemptResult{}, failure
+			}
 			if acquired {
-				releaseConcurrency(channel.ID)
+				if request.Stream {
+					response.Body = &releaseOnCloseBody{ReadCloser: response.Body, release: func() { releaseConcurrency(channel.ID) }}
+				} else {
+					releaseConcurrency(channel.ID)
+				}
 			}
-			failure := glmoptimizer.NormalizeFailure(channel.ID, attemptErr)
-			log.Printf("[GLM52路由] channel_id=%d class=%s status=%d retryable=%t breaker_counted=%t",
-				channel.ID, failure.Class, failure.StatusCode, failure.Retryable(), failure.CountsTowardBreaker())
-			return glmoptimizer.AttemptResult{}, failure
-		}
-		if acquired {
-			if request.Stream {
-				response.Body = &releaseOnCloseBody{ReadCloser: response.Body, release: func() { releaseConcurrency(channel.ID) }}
-			} else {
-				releaseConcurrency(channel.ID)
-			}
-		}
-		return glmoptimizer.AttemptResult{Value: &RouteRequestResult{
-			Response: response, ChannelID: channel.ID, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel,
-		}, DeferredOutcome: request.Stream}, nil
+			return glmoptimizer.AttemptResult{Value: &RouteRequestResult{
+				Response: response, ChannelID: channel.ID, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel,
+			}, DeferredOutcome: request.Stream}, nil
 		})
 		if routeErr != nil {
 			return nil, routeErr
@@ -312,6 +314,10 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 			return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureChannelProtocol, Cause: fmt.Errorf("GLM-5.2 router returned an invalid result")}
 		}
 		result.GLM52Completion = routeResult.Completion
+		if routeResult.Attempts > 0 {
+			result.RetryCount = routeResult.Attempts - 1
+		}
+		result.BreakerState = routeResult.BreakerState
 		return result, nil
 	}
 	result, shared, err := coalesceGLM52Route(ctx, cacheKey, routeOnce)
@@ -446,7 +452,7 @@ func routeToBestChannel(originalModel string, requestBody []byte, token *model.T
 
 		log.Printf("[路由] 尝试: %s → %s", entry.ChannelName, entry.ModelOverride)
 		resp, actualSentModel, err := trySingleChannel(channel, entry.ModelOverride, requestBody)
-		
+
 		if err != nil {
 			// BUG-005 修复：失败时立即释放并发槽位
 			if acquired {
@@ -507,7 +513,7 @@ func trySingleChannel(channel model.Channel, targetModel string, originalBody []
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		log.Printf("渠道 %s 返回 HTTP %d: %s", channel.Name, resp.StatusCode, string(bodyBytes))
-		
+
 		if shouldFastFail(resp.StatusCode) {
 			// 4xx 客户端错误 → 快速失败，不继续 fallback
 			// 消息格式问题（如 tool_calls 不匹配）换个渠道也一样，不要浪费时间
@@ -555,8 +561,8 @@ func validateToken(key string) (*model.Token, error) {
 		// 过期时间 = 激活时刻 + 1个自然月
 		tk.ExpiredTime = now.AddDate(0, 1, 0).Unix()
 		model.DB.Save(tk)
-		log.Printf("[激活] token %s 首次使用，激活时间=%s，过期时间=%s", 
-			tk.Name, 
+		log.Printf("[激活] token %s 首次使用，激活时间=%s，过期时间=%s",
+			tk.Name,
 			now.Format("2006-01-02 15:04:05"),
 			now.AddDate(0, 1, 0).Format("2006-01-02 15:04:05"))
 	}
@@ -574,7 +580,7 @@ func validateToken(key string) (*model.Token, error) {
 func getChannelsForModel(modelName string) ([]model.Channel, error) {
 	// 统一转小写，兼容不同大小写写法的模型名
 	modelName = strings.ToLower(modelName)
-	
+
 	var channels []model.Channel
 	result := model.DB.Where(
 		"LOWER(models) LIKE ? AND status = ?",

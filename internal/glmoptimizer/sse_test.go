@@ -80,7 +80,7 @@ func TestRelaySSEPreservesEventBoundariesAndObservesMetadata(t *testing.T) {
 	stream := strings.Join([]string{
 		": heartbeat\r\n\r\n",
 		"event: message\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"lookup\",\"arguments\":\"\"}}]}}]}\ndata: \n\n",
-		"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"q\\\":\\\"glm\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":4,\"total_tokens\":24,\"prompt_tokens_details\":{\"cached_tokens\":12}}}\n\n",
+		"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"q\\\":\\\"glm\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":4,\"total_tokens\":24,\"cost\":0.00125,\"prompt_tokens_details\":{\"cached_tokens\":12,\"cache_write_tokens\":3},\"completion_tokens_details\":{\"reasoning_tokens\":2}}}\n\n",
 		"data: [DONE]\n\n",
 	}, "")
 	destination := newRecordingFlushWriter()
@@ -95,11 +95,16 @@ func TestRelaySSEPreservesEventBoundariesAndObservesMetadata(t *testing.T) {
 	if result.Outcome.State != TerminalSuccessToolCall || result.Outcome.ToolCallCount != 1 {
 		t.Fatalf("outcome = %+v, want one valid tool call", result.Outcome)
 	}
-	if result.Usage.TotalTokens != 24 || result.Usage.CachedTokens != 12 {
+	if result.Usage.TotalTokens != 24 || result.Usage.CachedTokens != 12 ||
+		result.Usage.CacheWriteTokens != 3 || result.Usage.ReasoningTokens != 2 ||
+		result.Usage.ReportedCost == nil || *result.Usage.ReportedCost != 0.00125 {
 		t.Fatalf("usage = %+v", result.Usage)
 	}
 	if !result.DoneSeen || result.ParseErrors != 0 {
 		t.Fatalf("result = %+v", result)
+	}
+	if !result.FirstDataSeen {
+		t.Fatalf("first data event was not observed: %+v", result)
 	}
 }
 
