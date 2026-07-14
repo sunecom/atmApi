@@ -1144,6 +1144,42 @@ processResult:
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
 		c.Status(result.Response.StatusCode)
+		if isGLM52 {
+			relayResult, relayErr := glmoptimizer.RelaySSE(c.Request.Context(), c.Writer, result.Response.Body, glmoptimizer.RelayOptions{})
+			streamDuration := time.Since(startTime).Milliseconds()
+			if relayResult.Usage.TotalTokens > 0 {
+				planName := ""
+				if apiToken.RateLimitGroup != "" {
+					planName = apiToken.RateLimitGroup
+				}
+				usageLog := model.UsageLog{
+					TokenID:       apiToken.ID,
+					TokenName:     apiToken.Name,
+					PlanName:      planName,
+					ChannelName:   result.ChannelName,
+					Model:         actualModel,
+					InputTokens:   relayResult.Usage.PromptTokens,
+					OutputTokens:  relayResult.Usage.CompletionTokens,
+					CachedTokens:  relayResult.Usage.CachedTokens,
+					TotalTokens:   relayResult.Usage.TotalTokens,
+					EstimatedCost: model.CalculateCost(relayResult.Usage.PromptTokens, relayResult.Usage.CompletionTokens, relayResult.Usage.CachedTokens, actualModel),
+					StatusCode:    result.Response.StatusCode,
+					DurationMs:    streamDuration,
+				}
+				model.DB.Create(&usageLog)
+				if service.GlobalAnalytics != nil {
+					service.GlobalAnalytics.RecordRequest(apiToken.ID, apiToken.Name,
+						relayResult.Usage.PromptTokens, relayResult.Usage.CachedTokens, relayResult.Usage.CachedTokens > 0, 0)
+				}
+				go SavePromptAnalysis(originalMessages, apiToken.ID, apiToken.Name, actualModel, relayResult.Usage.PromptTokens, relayResult.Usage.CachedTokens)
+				log.Printf("[GLM-5.2流式usage] token=%s model=%s tokens=%d cached=%d cost=%.6f",
+					apiToken.Name, actualModel, relayResult.Usage.TotalTokens, relayResult.Usage.CachedTokens, usageLog.EstimatedCost)
+			}
+			log.Printf("[GLM-5.2流式] token=%s model=%s channel=%s status=%d duration=%dms terminal=%s done=%t bytes=%d parse_errors=%d relay_error=%T",
+				apiToken.Name, actualModel, result.ChannelName, result.Response.StatusCode, streamDuration,
+				relayResult.Outcome.State, relayResult.DoneSeen, relayResult.BytesForwarded, relayResult.ParseErrors, relayErr)
+			return
+		}
 		flusher, hasFlusher := c.Writer.(interface{ Flush() })
 		bufReader := bufio.NewReader(result.Response.Body)
 		var lastChunk string
