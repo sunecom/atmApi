@@ -961,6 +961,31 @@ modelAllowed:
 	}
 
 	if isGLM52 {
+		// GLM-5.2 点数余额预检查（首字节前拒绝）
+		if apiToken.PlanName == "glm-basic" || apiToken.PlanName == "glm-standard" || apiToken.PlanName == "glm-pro" {
+			// 估算本次请求扣点（保守估计：假设output=max_tokens）
+			estimatedInput := len(body) / 4 // 粗略估算
+			estimatedOutput := 4096         // 默认输出
+			// 尝试从body中读取max_tokens
+			var maxTokensReq struct {
+				MaxTokens int `json:"max_tokens"`
+			}
+			if json.Unmarshal(body, &maxTokensReq) == nil && maxTokensReq.MaxTokens > 0 {
+				estimatedOutput = maxTokensReq.MaxTokens
+			}
+			estimatedPoints := service.EstimateStandardPoints(estimatedInput, estimatedOutput)
+			allowed, remaining := service.GLMDeductor.CheckBalance(apiToken.ID, estimatedPoints)
+			if !allowed {
+				log.Printf("[GLM-5.2余额] token=%s 余额不足: remaining=%d, estimated=%d", apiToken.Name, remaining, estimatedPoints)
+				respondError(c, http.StatusPaymentRequired, ErrPaymentRequired, "GLM-5.2 点数不足，请充值或升级套餐",
+					map[string]interface{}{
+						"remaining_points": remaining,
+						"estimated_points": estimatedPoints,
+					})
+				return
+			}
+		}
+
 		plan, planErr := service.GetPlan(apiPlanName)
 		if planErr != nil || plan == nil {
 			log.Printf("[GLM52上下文] policy_error plan=%q err=%v", apiPlanName, planErr)
