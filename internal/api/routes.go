@@ -73,7 +73,7 @@ func RegisterRoutes(r *gin.Engine) {
 		c.Writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Cache-Control, X-Atm-Session-ID, X-Session-ID, X-Conversation-ID")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
@@ -907,7 +907,7 @@ modelAllowed:
 	}
 	
 	var cacheKey string
-	if !isStream && service.GlobalCache != nil {
+	if !isGLM52 && !isStream && service.GlobalCache != nil {
 		// 从 reqMap 中提取 temperature 和 max_tokens
 		temperature := 0.0
 		maxTokens := 0
@@ -1013,9 +1013,56 @@ modelAllowed:
 		}
 	}
 
-	var result *service.RouteRequestResult
+	var glmCacheKey string
 	if isGLM52 {
-		result, err = service.RouteRequestContext(c.Request.Context(), actualModel, body, tokenKey)
+		conversationID := strings.TrimSpace(c.GetHeader("X-Atm-Session-ID"))
+		if conversationID == "" {
+			conversationID = strings.TrimSpace(c.GetHeader("X-Session-ID"))
+		}
+		if conversationID == "" {
+			conversationID = strings.TrimSpace(c.GetHeader("X-Conversation-ID"))
+		}
+		tenantScope := fmt.Sprintf("token:%d", apiToken.ID)
+		body, err = glmoptimizer.InjectStableSessionID(body, []byte(tokenKey), tenantScope, conversationID)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, ErrInvalidRequest, "GLM-5.2 session_id is invalid")
+			return
+		}
+		body, err = glmoptimizer.CanonicalizeJSON(body)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, ErrInvalidRequest, "GLM-5.2 request cannot be canonicalized")
+			return
+		}
+		cacheDecision := glmoptimizer.EvaluateCacheEligibility(body)
+		noStore := strings.Contains(strings.ToLower(c.GetHeader("Cache-Control")), "no-store")
+		if cacheDecision.Eligible && !noStore && service.GlobalGLM52Cache != nil {
+			glmCacheKey = glmoptimizer.BuildCacheKey([]byte(tokenKey), tenantScope, glmoptimizer.CachePolicyVersion, body)
+			if cached, found := service.GlobalGLM52Cache.Get(glmCacheKey); found {
+				duration := time.Since(startTime).Milliseconds()
+				c.Header("X-Actual-Model", glmoptimizer.ModelGLM52)
+				c.Header("X-Requested-Model", req.Model)
+				c.Header("X-Cache-Hit", "true")
+				model.DB.Create(&model.RequestLog{
+					TokenName: apiToken.Name, ChannelName: "GLM-5.2 local response cache",
+					Model: glmoptimizer.ModelGLM52, RoutedModel: req.Model,
+					StatusCode: http.StatusOK, DurationMs: duration,
+				})
+				service.RecordRequest(apiToken.ID)
+				c.Data(http.StatusOK, "application/json", cached)
+				return
+			}
+		}
+		log.Printf("[GLM52缓存检查] %s no_store=%t", cacheDecision.String(), noStore)
+	}
+
+	var result *service.RouteRequestResult
+	var singleflightShared bool
+	if isGLM52 {
+		if glmCacheKey != "" {
+			result, singleflightShared, err = service.RouteRequestContextWithCacheKey(c.Request.Context(), actualModel, body, tokenKey, glmCacheKey)
+		} else {
+			result, err = service.RouteRequestContext(c.Request.Context(), actualModel, body, tokenKey)
+		}
 	} else {
 		result, err = service.RouteRequest(actualModel, body, tokenKey)
 	}
@@ -1113,6 +1160,10 @@ modelAllowed:
 			respondError(c, http.StatusBadGateway, ErrChannelUnavail, err.Error())
 			return
 		}
+	}
+	if isGLM52 {
+		c.Header("X-Cache-Hit", "false")
+		c.Header("X-Singleflight-Shared", strconv.FormatBool(singleflightShared))
 	}
 processResult:
 	// 保存/清除会话模型偏好

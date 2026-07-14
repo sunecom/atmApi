@@ -1,12 +1,19 @@
 package service
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
+
+	"atmapi/internal/glmoptimizer"
 )
 
 type CacheEntry struct {
@@ -26,6 +33,8 @@ type ResponseCache struct {
 }
 
 var GlobalCache *ResponseCache
+var GlobalGLM52Cache *glmoptimizer.GLM52ResponseCache
+var GlobalGLM52Flights *glmoptimizer.FlightGroup
 
 func InitCache(ttl time.Duration, maxSize int) {
 	GlobalCache = &ResponseCache{
@@ -34,8 +43,89 @@ func InitCache(ttl time.Duration, maxSize int) {
 		ttl:     ttl,
 		maxSize: maxSize,
 	}
+	GlobalGLM52Cache = glmoptimizer.NewResponseCache(glmoptimizer.CacheConfig{
+		TTL:           ttl,
+		MaxEntries:    maxSize,
+		MaxEntryBytes: 2 << 20,
+		MaxTotalBytes: 64 << 20,
+	})
+	GlobalGLM52Flights = &glmoptimizer.FlightGroup{}
 	// 启动清理协程
 	go GlobalCache.cleanup()
+}
+
+type glm52RouteSnapshot struct {
+	StatusCode  int         `json:"status_code"`
+	Header      http.Header `json:"header"`
+	Body        []byte      `json:"body"`
+	ChannelID   uint        `json:"channel_id"`
+	ChannelName string      `json:"channel_name"`
+	AtmModel    string      `json:"atm_model"`
+	ActualModel string      `json:"actual_model"`
+}
+
+func snapshotGLM52Route(result *RouteRequestResult) ([]byte, error) {
+	if result == nil || result.Response == nil || result.Response.Body == nil {
+		return nil, fmt.Errorf("cannot snapshot empty GLM-5.2 response")
+	}
+	body, err := io.ReadAll(result.Response.Body)
+	_ = result.Response.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	snapshot := glm52RouteSnapshot{
+		StatusCode: result.Response.StatusCode, Header: result.Response.Header.Clone(), Body: body,
+		ChannelID: result.ChannelID, ChannelName: result.ChannelName,
+		AtmModel: result.AtmModel, ActualModel: result.ActualModel,
+	}
+	return json.Marshal(snapshot)
+}
+
+func restoreGLM52Route(snapshotBytes []byte) (*RouteRequestResult, error) {
+	var snapshot glm52RouteSnapshot
+	if err := json.Unmarshal(snapshotBytes, &snapshot); err != nil {
+		return nil, fmt.Errorf("decode coalesced GLM-5.2 response: %w", err)
+	}
+	response := &http.Response{
+		StatusCode:    snapshot.StatusCode,
+		Header:        snapshot.Header.Clone(),
+		Body:          io.NopCloser(bytes.NewReader(snapshot.Body)),
+		ContentLength: int64(len(snapshot.Body)),
+	}
+	return &RouteRequestResult{
+		Response: response, ChannelID: snapshot.ChannelID, ChannelName: snapshot.ChannelName,
+		AtmModel: snapshot.AtmModel, ActualModel: snapshot.ActualModel,
+	}, nil
+}
+
+func coalesceGLM52Route(ctx context.Context, cacheKey string, route func() (*RouteRequestResult, error)) (*RouteRequestResult, bool, error) {
+	if cacheKey == "" || GlobalGLM52Flights == nil {
+		result, err := route()
+		return result, false, err
+	}
+	snapshot, shared, err := GlobalGLM52Flights.Do(ctx, cacheKey, func() ([]byte, error) {
+		result, routeErr := route()
+		if routeErr != nil {
+			return nil, routeErr
+		}
+		encoded, snapshotErr := snapshotGLM52Route(result)
+		if snapshotErr != nil {
+			return nil, snapshotErr
+		}
+		var decoded glm52RouteSnapshot
+		if json.Unmarshal(encoded, &decoded) == nil {
+			responseNoStore := strings.Contains(strings.ToLower(decoded.Header.Get("Cache-Control")), "no-store")
+			if decoded.StatusCode == http.StatusOK && !responseNoStore && GlobalGLM52Cache != nil {
+				GlobalGLM52Cache.Set(cacheKey, decoded.Body)
+			}
+		}
+		return encoded, nil
+	})
+	if err != nil {
+		return nil, shared, err
+	}
+	result, err := restoreGLM52Route(snapshot)
+	return result, shared, err
 }
 
 func (c *ResponseCache) cleanup() {
@@ -135,12 +225,12 @@ func (c *ResponseCache) Stats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"size":        len(c.entries),
-		"max_size":    c.maxSize,
-		"ttl":         c.ttl.String(),
-		"hit_count":   c.hitCount,
-		"miss_count":  c.missCount,
-		"hit_rate":    hitRate,
+		"size":       len(c.entries),
+		"max_size":   c.maxSize,
+		"ttl":        c.ttl.String(),
+		"hit_count":  c.hitCount,
+		"miss_count": c.missCount,
+		"hit_rate":   hitRate,
 	}
 }
 

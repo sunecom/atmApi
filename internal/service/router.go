@@ -59,6 +59,7 @@ type RouteRequestResult struct {
 	AtmModel    string
 	ActualModel string // 实际发给渠道的模型名
 	GLM52Completion *glmoptimizer.RouteCompletion
+	coalescedShared bool
 }
 
 type releaseOnCloseBody struct {
@@ -122,6 +123,20 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 // RouteRequestContext preserves the legacy RouteRequest API while allowing
 // the GLM-5.2 path to share one client-cancellable total deadline.
 func RouteRequestContext(ctx context.Context, targetModel string, requestBody []byte, tokenKey string) (*RouteRequestResult, error) {
+	return routeRequestContext(ctx, targetModel, requestBody, tokenKey, "")
+}
+
+// RouteRequestContextWithCacheKey enables exact-request coalescing for an
+// already canonicalized, cache-eligible GLM-5.2 request.
+func RouteRequestContextWithCacheKey(ctx context.Context, targetModel string, requestBody []byte, tokenKey, cacheKey string) (*RouteRequestResult, bool, error) {
+	result, err := routeRequestContext(ctx, targetModel, requestBody, tokenKey, cacheKey)
+	if err != nil {
+		return nil, false, err
+	}
+	return result, result != nil && result.coalescedShared, nil
+}
+
+func routeRequestContext(ctx context.Context, targetModel string, requestBody []byte, tokenKey, cacheKey string) (*RouteRequestResult, error) {
 	// 1. 验证 token
 	token, err := validateToken(tokenKey)
 	if err != nil {
@@ -149,7 +164,7 @@ func RouteRequestContext(ctx context.Context, targetModel string, requestBody []
 		if len(groupChannels) == 0 {
 			return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureChannelTransient, Cause: glmoptimizer.ErrNoEligibleChannel}
 		}
-		return routeGLM52Group(ctx, groupChannels, requestBody, token, targetModel)
+		return routeGLM52Group(ctx, groupChannels, requestBody, token, targetModel, cacheKey)
 	}
 
 	// 4a. 先查聚合组（model_group）
@@ -243,7 +258,7 @@ func getModelGroupChannels(modelName string) ([]model.Channel, error) {
 	return channels, err
 }
 
-func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody []byte, token *model.Token, targetModel string) (*RouteRequestResult, error) {
+func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody []byte, token *model.Token, targetModel, cacheKey string) (*RouteRequestResult, error) {
 	request, err := glmoptimizer.ParseRequest(requestBody)
 	if err != nil {
 		return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureClientRequest, StatusCode: http.StatusBadRequest, Cause: err}
@@ -258,7 +273,8 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 		candidates = append(candidates, glmoptimizer.RouteCandidate{ChannelID: channel.ID, ModelGroup: channel.ModelGroup})
 	}
 
-	routeResult, err := glm52Router.Route(ctx, candidates, func(attemptCtx context.Context, candidate glmoptimizer.RouteCandidate) (glmoptimizer.AttemptResult, error) {
+	routeOnce := func() (*RouteRequestResult, error) {
+		routeResult, routeErr := glm52Router.Route(ctx, candidates, func(attemptCtx context.Context, candidate glmoptimizer.RouteCandidate) (glmoptimizer.AttemptResult, error) {
 		channel := channelsByID[candidate.ChannelID]
 		acquired := false
 		if channel.MaxConcurrent > 0 {
@@ -287,15 +303,22 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 		return glmoptimizer.AttemptResult{Value: &RouteRequestResult{
 			Response: response, ChannelID: channel.ID, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel,
 		}, DeferredOutcome: request.Stream}, nil
-	})
+		})
+		if routeErr != nil {
+			return nil, routeErr
+		}
+		result, ok := routeResult.Value.(*RouteRequestResult)
+		if !ok || result == nil {
+			return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureChannelProtocol, Cause: fmt.Errorf("GLM-5.2 router returned an invalid result")}
+		}
+		result.GLM52Completion = routeResult.Completion
+		return result, nil
+	}
+	result, shared, err := coalesceGLM52Route(ctx, cacheKey, routeOnce)
 	if err != nil {
 		return nil, err
 	}
-	result, ok := routeResult.Value.(*RouteRequestResult)
-	if !ok || result == nil {
-		return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureChannelProtocol, Cause: fmt.Errorf("GLM-5.2 router returned an invalid result")}
-	}
-	result.GLM52Completion = routeResult.Completion
+	result.coalescedShared = shared
 
 	updateQuota(token, 1)
 	RecordRequest(token.ID)
@@ -310,7 +333,10 @@ func tryGLM52Channel(ctx context.Context, channel model.Channel, targetModel str
 	mappedModel := applyModelMapping(channel.ModelMapping, targetModel)
 	limitedBody := limitTokenUsage(originalBody)
 	compressedBody := compressImagesInBody(limitedBody)
-	modifiedBody := replaceModelInRequest(compressedBody, mappedModel)
+	modifiedBody, err := replaceGLM52ModelAndCanonicalize(compressedBody, mappedModel)
+	if err != nil {
+		return nil, mappedModel, &glmoptimizer.Failure{Class: glmoptimizer.FailureClientRequest, ChannelID: channel.ID, StatusCode: http.StatusBadRequest, Cause: err}
+	}
 	response, err := sendToChannelContext(ctx, channel, modifiedBody)
 	if err != nil {
 		return nil, mappedModel, glmoptimizer.NormalizeFailure(channel.ID, err)
@@ -336,6 +362,23 @@ func tryGLM52Channel(ctx context.Context, channel model.Channel, targetModel str
 	response.Body = io.NopCloser(bytes.NewReader(body))
 	response.ContentLength = int64(len(body))
 	return response, mappedModel, nil
+}
+
+func replaceGLM52ModelAndCanonicalize(body []byte, mappedModel string) ([]byte, error) {
+	var request map[string]json.RawMessage
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, err
+	}
+	modelValue, err := json.Marshal(mappedModel)
+	if err != nil {
+		return nil, err
+	}
+	request["model"] = modelValue
+	updated, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	return glmoptimizer.CanonicalizeJSON(updated)
 }
 
 // routeToModelGroup 聚合组路由（纯模型一致性，全挂报错）

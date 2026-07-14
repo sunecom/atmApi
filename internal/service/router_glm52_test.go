@@ -16,11 +16,13 @@ import (
 
 func TestTryGLM52ChannelReturnsConsumableNonStreamResponse(t *testing.T) {
 	var receivedModel string
+	var receivedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		receivedBody, _ = io.ReadAll(request.Body)
 		var body struct {
 			Model string `json:"model"`
 		}
-		_ = json.NewDecoder(request.Body).Decode(&body)
+		_ = json.Unmarshal(receivedBody, &body)
 		receivedModel = body.Model
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(writer, `{"choices":[{"index":0,"message":{"content":"ok"},"finish_reason":"stop"}]}`)
@@ -32,13 +34,17 @@ func TestTryGLM52ChannelReturnsConsumableNonStreamResponse(t *testing.T) {
 		BaseURL: server.URL, ModelMapping: `{"glm-5.2":"z-ai/glm-5.2"}`,
 	}
 	response, actualModel, err := tryGLM52Channel(context.Background(), channel, glmoptimizer.ModelGLM52,
-		[]byte(`{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}]}`), false)
+		[]byte(`{"seed":9007199254740993,"messages":[{"content":"hi","role":"user"}],"model":"glm-5.2"}`), false)
 	if err != nil {
 		t.Fatalf("tryGLM52Channel() error = %v", err)
 	}
 	defer response.Body.Close()
 	if actualModel != "z-ai/glm-5.2" || receivedModel != "z-ai/glm-5.2" {
 		t.Fatalf("actual = %q, received = %q", actualModel, receivedModel)
+	}
+	expected, _ := glmoptimizer.CanonicalizeJSON([]byte(`{"model":"z-ai/glm-5.2","messages":[{"role":"user","content":"hi"}],"seed":9007199254740993}`))
+	if string(receivedBody) != string(expected) {
+		t.Fatalf("upstream body is not the exact canonical request:\n%s\nwant:\n%s", receivedBody, expected)
 	}
 	body, _ := io.ReadAll(response.Body)
 	if !strings.Contains(string(body), `"content":"ok"`) {
