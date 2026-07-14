@@ -100,8 +100,8 @@ func migrateMissingFields() {
 
 	// 创建 rate_limits 表
 	if !DB.Migrator().HasTable(&RateLimit{}) {
-		if err := DB.AutoMigrate(&RateLimit{}).Error; err != nil {
-			log.Printf("[迁移] 创建 rate_limits 表失败: %v", err)
+		if migrateErr := DB.AutoMigrate(&RateLimit{}); migrateErr != nil {
+			log.Printf("[迁移] 创建 rate_limits 表失败: %v", migrateErr)
 		} else {
 			log.Printf("[迁移] 创建 rate_limits 表成功")
 		}
