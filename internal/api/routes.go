@@ -1013,24 +1013,33 @@ modelAllowed:
 		}
 	}
 
-	result, err := service.RouteRequest(actualModel, body, tokenKey)
+	var result *service.RouteRequestResult
+	if isGLM52 {
+		result, err = service.RouteRequestContext(c.Request.Context(), actualModel, body, tokenKey)
+	} else {
+		result, err = service.RouteRequest(actualModel, body, tokenKey)
+	}
 	if err != nil {
 		// GLM-5.2 是锁定模型产品。聚合组内的同模型渠道已经由
 		// RouteRequest 尝试；失败后禁止进入下面的 Qwen/DeepSeek 跨模型降级。
 		if isGLM52 {
 			duration := time.Since(startTime).Milliseconds()
-			status := http.StatusBadGateway
+			failure := glmoptimizer.NormalizeFailure(0, err)
+			status := glmoptimizer.HTTPStatusForFailure(failure)
 			code := ErrChannelUnavail
-			if strings.Contains(err.Error(), "快速失败") || strings.Contains(err.Error(), "消息格式错误") {
-				status = http.StatusBadRequest
+			if failure.Class == glmoptimizer.FailureClientRequest {
 				code = ErrInvalidRequest
+			}
+			if failure.RetryAfter > 0 {
+				retryAfterSeconds := int64((failure.RetryAfter + time.Second - 1) / time.Second)
+				c.Header("Retry-After", strconv.FormatInt(retryAfterSeconds, 10))
 			}
 			model.DB.Create(&model.RequestLog{
 				TokenName: apiToken.Name, ChannelName: "无可用GLM-5.2渠道",
 				Model: glmoptimizer.ModelGLM52, RoutedModel: req.Model,
 				StatusCode: status, DurationMs: duration,
 			})
-			respondError(c, status, code, err.Error())
+			respondError(c, status, code, failure.Error())
 			return
 		}
 		// 检查是否是 tool_calls 不兼容错误
@@ -1146,6 +1155,19 @@ processResult:
 		c.Status(result.Response.StatusCode)
 		if isGLM52 {
 			relayResult, relayErr := glmoptimizer.RelaySSE(c.Request.Context(), c.Writer, result.Response.Body, glmoptimizer.RelayOptions{})
+			if result.GLM52Completion != nil {
+				if relayErr != nil {
+					completionErr := relayErr
+					if contextErr := c.Request.Context().Err(); contextErr != nil {
+						completionErr = contextErr
+					}
+					result.GLM52Completion.Fail(completionErr, relayResult.BytesForwarded)
+				} else if !relayResult.Outcome.Consumable {
+					result.GLM52Completion.Fail(glmoptimizer.NewTerminalFailure(result.ChannelID, relayResult.Outcome), relayResult.BytesForwarded)
+				} else {
+					result.GLM52Completion.Succeed()
+				}
+			}
 			streamDuration := time.Since(startTime).Milliseconds()
 			if relayResult.Usage.TotalTokens > 0 {
 				planName := ""

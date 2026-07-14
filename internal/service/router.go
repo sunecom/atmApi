@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"atmapi/internal/glmoptimizer"
 	"atmapi/internal/model"
 )
 
@@ -19,6 +21,11 @@ import (
 var (
 	channelConcurrency = make(map[uint]int) // channelID -> 当前并发数
 	concurrencyMutex   sync.Mutex
+	glm52CircuitBreaker = glmoptimizer.NewCircuitBreaker(glmoptimizer.BreakerConfig{})
+	glm52Router = glmoptimizer.NewRouter(glmoptimizer.RouterConfig{
+		Breaker:       glm52CircuitBreaker,
+		TotalDeadline: glmoptimizer.DefaultRouteDeadline,
+	})
 )
 
 // acquireConcurrency 尝试获取并发槽位
@@ -47,9 +54,23 @@ func releaseConcurrency(channelID uint) {
 // RouteRequestResult 路由请求结果
 type RouteRequestResult struct {
 	Response    *http.Response
+	ChannelID   uint
 	ChannelName string
 	AtmModel    string
 	ActualModel string // 实际发给渠道的模型名
+	GLM52Completion *glmoptimizer.RouteCompletion
+}
+
+type releaseOnCloseBody struct {
+	io.ReadCloser
+	once    sync.Once
+	release func()
+}
+
+func (b *releaseOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.once.Do(b.release)
+	return err
 }
 
 // ModelRoute 模型路由表
@@ -95,6 +116,12 @@ func isFastFailError(err error) bool {
 
 // RouteRequest 路由请求到合适渠道
 func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*RouteRequestResult, error) {
+	return RouteRequestContext(context.Background(), targetModel, requestBody, tokenKey)
+}
+
+// RouteRequestContext preserves the legacy RouteRequest API while allowing
+// the GLM-5.2 path to share one client-cancellable total deadline.
+func RouteRequestContext(ctx context.Context, targetModel string, requestBody []byte, tokenKey string) (*RouteRequestResult, error) {
 	// 1. 验证 token
 	token, err := validateToken(tokenKey)
 	if err != nil {
@@ -110,6 +137,19 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 	rlResult := CheckRateLimit(token)
 	if !rlResult.Allowed {
 		return nil, fmt.Errorf("限流：%s", rlResult.Reason)
+	}
+
+	// GLM-5.2 is a locked product line. It must never continue into the legacy
+	// route table or LIKE fallback, even when every exact group channel fails.
+	if glmoptimizer.IsGLM52Request(targetModel) {
+		groupChannels, groupErr := getModelGroupChannels(glmoptimizer.ModelGLM52)
+		if groupErr != nil {
+			return nil, glmoptimizer.NormalizeFailure(0, groupErr)
+		}
+		if len(groupChannels) == 0 {
+			return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureChannelTransient, Cause: glmoptimizer.ErrNoEligibleChannel}
+		}
+		return routeGLM52Group(ctx, groupChannels, requestBody, token, targetModel)
 	}
 
 	// 4a. 先查聚合组（model_group）
@@ -201,6 +241,101 @@ func getModelGroupChannels(modelName string) ([]model.Channel, error) {
 		modelName, 1,
 	).Order("priority DESC").Find(&channels).Error
 	return channels, err
+}
+
+func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody []byte, token *model.Token, targetModel string) (*RouteRequestResult, error) {
+	request, err := glmoptimizer.ParseRequest(requestBody)
+	if err != nil {
+		return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureClientRequest, StatusCode: http.StatusBadRequest, Cause: err}
+	}
+	channelsByID := make(map[uint]model.Channel, len(channels))
+	candidates := make([]glmoptimizer.RouteCandidate, 0, len(channels))
+	for _, channel := range channels {
+		if channel.Status != 1 || !strings.EqualFold(strings.TrimSpace(channel.ModelGroup), glmoptimizer.ModelGLM52) {
+			continue
+		}
+		channelsByID[channel.ID] = channel
+		candidates = append(candidates, glmoptimizer.RouteCandidate{ChannelID: channel.ID, ModelGroup: channel.ModelGroup})
+	}
+
+	routeResult, err := glm52Router.Route(ctx, candidates, func(attemptCtx context.Context, candidate glmoptimizer.RouteCandidate) (glmoptimizer.AttemptResult, error) {
+		channel := channelsByID[candidate.ChannelID]
+		acquired := false
+		if channel.MaxConcurrent > 0 {
+			if !acquireConcurrency(channel.ID, channel.MaxConcurrent) {
+				return glmoptimizer.AttemptResult{}, &glmoptimizer.Failure{Class: glmoptimizer.FailureChannelCapacity, ChannelID: channel.ID}
+			}
+			acquired = true
+		}
+		response, actualSentModel, attemptErr := tryGLM52Channel(attemptCtx, channel, targetModel, requestBody, request.Stream)
+		if attemptErr != nil {
+			if acquired {
+				releaseConcurrency(channel.ID)
+			}
+			failure := glmoptimizer.NormalizeFailure(channel.ID, attemptErr)
+			log.Printf("[GLM52路由] channel_id=%d class=%s status=%d retryable=%t breaker_counted=%t",
+				channel.ID, failure.Class, failure.StatusCode, failure.Retryable(), failure.CountsTowardBreaker())
+			return glmoptimizer.AttemptResult{}, failure
+		}
+		if acquired {
+			if request.Stream {
+				response.Body = &releaseOnCloseBody{ReadCloser: response.Body, release: func() { releaseConcurrency(channel.ID) }}
+			} else {
+				releaseConcurrency(channel.ID)
+			}
+		}
+		return glmoptimizer.AttemptResult{Value: &RouteRequestResult{
+			Response: response, ChannelID: channel.ID, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel,
+		}, DeferredOutcome: request.Stream}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result, ok := routeResult.Value.(*RouteRequestResult)
+	if !ok || result == nil {
+		return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureChannelProtocol, Cause: fmt.Errorf("GLM-5.2 router returned an invalid result")}
+	}
+	result.GLM52Completion = routeResult.Completion
+
+	updateQuota(token, 1)
+	RecordRequest(token.ID)
+	return result, nil
+}
+
+func tryGLM52Channel(ctx context.Context, channel model.Channel, targetModel string, originalBody []byte, stream bool) (*http.Response, string, error) {
+	if channel.Status != 1 || !strings.EqualFold(strings.TrimSpace(channel.ModelGroup), glmoptimizer.ModelGLM52) {
+		return nil, "", &glmoptimizer.Failure{Class: glmoptimizer.FailureClientRequest, ChannelID: channel.ID, StatusCode: http.StatusBadRequest}
+	}
+
+	mappedModel := applyModelMapping(channel.ModelMapping, targetModel)
+	limitedBody := limitTokenUsage(originalBody)
+	compressedBody := compressImagesInBody(limitedBody)
+	modifiedBody := replaceModelInRequest(compressedBody, mappedModel)
+	response, err := sendToChannelContext(ctx, channel, modifiedBody)
+	if err != nil {
+		return nil, mappedModel, glmoptimizer.NormalizeFailure(channel.ID, err)
+	}
+	if response.StatusCode >= 400 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 32*1024))
+		_ = response.Body.Close()
+		return nil, mappedModel, glmoptimizer.NewHTTPFailure(channel.ID, response.StatusCode, response.Header.Get("Retry-After"))
+	}
+	if stream {
+		return response, mappedModel, nil
+	}
+
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		return nil, mappedModel, glmoptimizer.NormalizeFailure(channel.ID, err)
+	}
+	outcome := glmoptimizer.ClassifyNonStream(body)
+	if !outcome.Consumable {
+		return nil, mappedModel, glmoptimizer.NewTerminalFailure(channel.ID, outcome)
+	}
+	response.Body = io.NopCloser(bytes.NewReader(body))
+	response.ContentLength = int64(len(body))
+	return response, mappedModel, nil
 }
 
 // routeToModelGroup 聚合组路由（纯模型一致性，全挂报错）
@@ -447,22 +582,29 @@ func replaceModelInRequest(body []byte, newModel string) []byte {
 
 // sendToChannel 发送请求到指定渠道
 func sendToChannel(channel model.Channel, body []byte) (*http.Response, error) {
+	timeout := 30 * time.Second
+	if strings.Contains(string(body), "image_url") || strings.Contains(string(body), "data:image") {
+		timeout = 90 * time.Second
+	}
+	return sendToChannelWithTimeout(context.Background(), channel, body, timeout)
+}
+
+func sendToChannelContext(ctx context.Context, channel model.Channel, body []byte) (*http.Response, error) {
+	return sendToChannelWithTimeout(ctx, channel, body, 0)
+}
+
+func sendToChannelWithTimeout(ctx context.Context, channel model.Channel, body []byte, timeout time.Duration) (*http.Response, error) {
 	url := channel.BaseURL
 	// 如果 base_url 不以 /chat/completions 结尾，才追加 /v1/chat/completions
 	if !strings.HasSuffix(url, "/chat/completions") {
 		url += "/v1/chat/completions"
 	}
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+channel.Key)
-	// 图片请求需要更长时间（qwen3.7-plus 处理大图可能要 60-90 秒）
-	timeout := 30 * time.Second
-	if strings.Contains(string(body), "image_url") || strings.Contains(string(body), "data:image") {
-		timeout = 90 * time.Second
-	}
 	client := &http.Client{Timeout: timeout}
 	return client.Do(req)
 }
