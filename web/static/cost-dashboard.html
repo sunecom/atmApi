@@ -398,6 +398,28 @@
                 <div class="rank-list" id="ranking-loss"></div>
             </div>
         </div>
+
+        <!-- GLM-5.2 专区（动态显示） -->
+        <div id="glm52-section" style="display:none;">
+            <div class="content-row row-4" style="margin-top:8px;">
+                <div class="panel">
+                    <div class="panel-title">💰 成本来源分布</div>
+                    <div class="chart-wrap" id="chart-glm52-cost-source"></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-title">🔤 Token 明细</div>
+                    <div class="chart-wrap" id="chart-glm52-token"></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-title">🌐 上游提供商</div>
+                    <div class="chart-wrap" id="chart-glm52-provider"></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-title">💱 币种分布</div>
+                    <div class="chart-wrap" id="chart-glm52-currency"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -576,6 +598,9 @@
             renderLossRanking(ranking.loss || []);
             renderCallsRanking(ranking.profitable || [], ranking.loss || []);
             renderAlerts(alerts);
+
+            // GLM-5.2 专区
+            renderGLM52Section(data.glm52_cost_stats);
         }
 
         function renderUpstreamChart(models) {
@@ -670,6 +695,92 @@
                     '<div class="alert-desc">' + (a.plan_name||'未分类') + ' · ' + a.suggestion + '</div></div>' +
                     '<div class="alert-loss">-¥' + a.current_loss.toFixed(2) + '</div></div>';
             }).join('');
+        }
+
+        // ===== GLM-5.2 专区 =====
+        function renderGLM52Section(stats) {
+            var section = document.getElementById('glm52-section');
+            if (!stats) {
+                section.style.display = 'none';
+                return;
+            }
+            section.style.display = 'block';
+
+            // 初始化 GLM-5.2 图表（如果还没初始化）
+            if (!charts.glm52CostSource) {
+                charts.glm52CostSource = echarts.init(document.getElementById('chart-glm52-cost-source'));
+                charts.glm52Token = echarts.init(document.getElementById('chart-glm52-token'));
+                charts.glm52Provider = echarts.init(document.getElementById('chart-glm52-provider'));
+                charts.glm52Currency = echarts.init(document.getElementById('chart-glm52-currency'));
+            }
+
+            // 1. 成本来源分布饼图
+            var sourceColors = {'upstream_reported': '#4ecdc4', 'pricing_snapshot': '#00d4ff', 'local_response_cache': '#ffd93d', 'singleflight_shared': '#7b2ff7', 'unknown': '#8b95a8'};
+            var sourceData = (stats.cost_source_distribution || []).map(function(item) {
+                var labels = {'upstream_reported': '上游实报', 'pricing_snapshot': '价格快照', 'local_response_cache': '本地缓存', 'singleflight_shared': '单例共享', 'unknown': '未知'};
+                return {value: +item.amount.toFixed(6), name: labels[item.source] || item.source, itemStyle: {color: sourceColors[item.source] || '#8b95a8'}};
+            });
+            charts.glm52CostSource.setOption({
+                tooltip: {trigger: 'item', formatter: function(p) { return p.name + ': ¥' + p.value.toFixed(4) + ' (' + p.percent + '%)'; }},
+                series: [{type: 'pie', radius: ['35%','65%'], center: ['50%','55%'],
+                    itemStyle: {borderRadius: 4, borderColor: '#0a0e27', borderWidth: 2},
+                    label: {color: '#8b95a8', fontSize: 10},
+                    data: sourceData
+                }]
+            }, true);
+
+            // 2. Token 明细柱状图
+            var tb = stats.token_breakdown || {};
+            charts.glm52Token.setOption({
+                tooltip: {trigger: 'axis'},
+                grid: {left: '3%', right: '3%', bottom: '3%', top: 20, containLabel: true},
+                xAxis: {type: 'category', data: ['缓存读取', '缓存写入', '推理Token', '可见输出'], axisLabel: {color: '#8b95a8', fontSize: 10}},
+                yAxis: {type: 'value', axisLabel: {color: '#8b95a8', fontSize: 10}},
+                series: [{type: 'bar', barWidth: '50%',
+                    data: [
+                        {value: tb.cached_tokens || 0, itemStyle: {color: '#00d4ff'}},
+                        {value: tb.cache_write_tokens || 0, itemStyle: {color: '#7b2ff7'}},
+                        {value: tb.reasoning_tokens || 0, itemStyle: {color: '#ffd93d'}},
+                        {value: tb.visible_output_tokens || 0, itemStyle: {color: '#4ecdc4'}}
+                    ],
+                    label: {show: true, position: 'top', color: '#8b95a8', fontSize: 10, formatter: function(p) { return p.value > 1000 ? (p.value/1000).toFixed(1)+'K' : p.value; }}
+                }]
+            }, true);
+
+            // 3. 上游提供商分布
+            var providerColors = ['#00d4ff','#7b2ff7','#4ecdc4','#ffd93d','#ff8c42','#ff006e'];
+            var providerData = (stats.upstream_providers || []).map(function(item, i) {
+                return {value: +item.cost.toFixed(6), name: item.provider, itemStyle: {color: providerColors[i % providerColors.length]}};
+            });
+            charts.glm52Provider.setOption({
+                tooltip: {trigger: 'item', formatter: function(p) { return p.name + ': ¥' + p.value.toFixed(4) + ' (' + p.percent + '%)'; }},
+                legend: {orient: 'vertical', right: 5, top: 'center', textStyle: {color: '#8b95a8', fontSize: 10}},
+                series: [{type: 'pie', radius: ['35%','65%'], center: ['35%','55%'],
+                    itemStyle: {borderRadius: 4, borderColor: '#0a0e27', borderWidth: 2},
+                    label: {show: false},
+                    emphasis: {label: {show: true, fontSize: 11, fontWeight: 'bold'}},
+                    data: providerData
+                }]
+            }, true);
+
+            // 4. 币种分布
+            var currencyColors = {'CNY': '#ff6b6b', 'OPENROUTER_CREDITS': '#00d4ff', 'UPSTREAM_CREDITS': '#4ecdc4', 'unknown': '#8b95a8'};
+            var currencyData = (stats.currency_distribution || []).map(function(item) {
+                return {value: +item.amount.toFixed(6), name: item.currency, itemStyle: {color: currencyColors[item.currency] || '#8b95a8'}};
+            });
+            charts.glm52Currency.setOption({
+                tooltip: {trigger: 'item', formatter: function(p) { return p.name + ': ' + p.value.toFixed(4) + ' (' + p.percent + '%)'; }},
+                series: [{type: 'pie', radius: ['35%','65%'], center: ['50%','55%'],
+                    itemStyle: {borderRadius: 4, borderColor: '#0a0e27', borderWidth: 2},
+                    label: {color: '#8b95a8', fontSize: 10},
+                    data: currencyData
+                }]
+            }, true);
+
+            // resize
+            setTimeout(function() {
+                Object.keys(charts).forEach(function(k) { if (charts[k] && charts[k].resize) charts[k].resize(); });
+            }, 100);
         }
 
         init();

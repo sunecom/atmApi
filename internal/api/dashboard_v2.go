@@ -20,6 +20,41 @@ type DashboardV2Response struct {
 	TokenRanking   TokenRankingResult    `json:"token_ranking"`
 	DailyTrend     []DailyTrendItem      `json:"daily_trend"`
 	Alerts         []AlertItemV2         `json:"alerts"`
+	GLM52Stats     *GLM52CostStats       `json:"glm52_cost_stats,omitempty"`
+}
+
+// GLM52CostStats GLM-5.2 专属成本统计
+type GLM52CostStats struct {
+	CostSourceDist   []CostSourceItem     `json:"cost_source_distribution"`
+	TokenBreakdown   TokenBreakdown       `json:"token_breakdown"`
+	UpstreamProvider []UpstreamProviderItem `json:"upstream_providers"`
+	CurrencyDist     []CurrencyDistItem   `json:"currency_distribution"`
+	CacheHitRate     float64              `json:"cache_hit_rate"`
+	AvgTTFTMs        float64              `json:"avg_ttft_ms"`
+}
+
+type CostSourceItem struct {
+	Source string  `json:"source"`
+	Count  int64   `json:"count"`
+	Amount float64 `json:"amount"`
+}
+
+type TokenBreakdown struct {
+	CachedTokens      int64 `json:"cached_tokens"`
+	CacheWriteTokens  int64 `json:"cache_write_tokens"`
+	ReasoningTokens   int64 `json:"reasoning_tokens"`
+	VisibleOutputTokens int64 `json:"visible_output_tokens"`
+}
+
+type UpstreamProviderItem struct {
+	Provider string  `json:"provider"`
+	Count    int64   `json:"count"`
+	Cost     float64 `json:"cost"`
+}
+
+type CurrencyDistItem struct {
+	Currency string  `json:"currency"`
+	Amount   float64 `json:"amount"`
 }
 
 type CoreMetrics struct {
@@ -273,6 +308,12 @@ func getDashboardV2(c *gin.Context) {
 		})
 	}
 
+	// 6. GLM-5.2 专属成本统计
+	var glm52Stats *GLM52CostStats
+	if atmModel == "glm-5.2" {
+		glm52Stats = buildGLM52CostStats(filteredLogs)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"atm_models":              atmModels,
 		"current_atm_model":       atmModel,
@@ -282,7 +323,108 @@ func getDashboardV2(c *gin.Context) {
 		"token_ranking":           TokenRankingResult{Profitable: profitable, Loss: loss},
 		"daily_trend":             dailyTrend,
 		"alerts":                  alerts,
+		"glm52_cost_stats":        glm52Stats,
 	})
+}
+
+// buildGLM52CostStats 构建 GLM-5.2 专属成本统计
+func buildGLM52CostStats(logs []model.UsageLog) *GLM52CostStats {
+	stats := &GLM52CostStats{}
+
+	// 成本来源分布
+	costSourceMap := make(map[string]*CostSourceItem)
+	// 上游提供商分布
+	providerMap := make(map[string]*UpstreamProviderItem)
+	// 币种分布
+	currencyMap := make(map[string]*CurrencyDistItem)
+	// Token 明细
+	var tokenBreakdown TokenBreakdown
+	// TTFT 统计
+	var ttftSum int64
+	var ttftCount int64
+	// 缓存命中率
+	var totalInput int64
+	var totalCached int64
+
+	for _, log := range logs {
+		// 成本来源
+		source := log.CostSource
+		if source == "" {
+			source = "unknown"
+		}
+		if _, ok := costSourceMap[source]; !ok {
+			costSourceMap[source] = &CostSourceItem{Source: source}
+		}
+		costSourceMap[source].Count++
+		costSourceMap[source].Amount += log.CostAmount
+
+		// 上游提供商
+		provider := log.UpstreamProvider
+		if provider == "" {
+			provider = "unknown"
+		}
+		if _, ok := providerMap[provider]; !ok {
+			providerMap[provider] = &UpstreamProviderItem{Provider: provider}
+		}
+		providerMap[provider].Count++
+		providerMap[provider].Cost += log.CostAmount
+
+		// 币种分布
+		currency := log.CostCurrency
+		if currency == "" {
+			currency = "unknown"
+		}
+		if _, ok := currencyMap[currency]; !ok {
+			currencyMap[currency] = &CurrencyDistItem{Currency: currency}
+		}
+		currencyMap[currency].Amount += log.CostAmount
+
+		// Token 明细
+		tokenBreakdown.CachedTokens += log.CachedTokens
+		tokenBreakdown.CacheWriteTokens += log.CacheWriteTokens
+		tokenBreakdown.ReasoningTokens += log.ReasoningTokens
+		tokenBreakdown.VisibleOutputTokens += log.VisibleOutputTokens
+
+		// TTFT
+		if log.TTFTMs > 0 {
+			ttftSum += log.TTFTMs
+			ttftCount++
+		}
+
+		// 缓存命中率
+		totalInput += log.InputTokens
+		totalCached += log.CachedTokens
+	}
+
+	// 组装结果
+	for _, item := range costSourceMap {
+		stats.CostSourceDist = append(stats.CostSourceDist, *item)
+	}
+	sort.Slice(stats.CostSourceDist, func(i, j int) bool {
+		return stats.CostSourceDist[i].Amount > stats.CostSourceDist[j].Amount
+	})
+
+	for _, item := range providerMap {
+		stats.UpstreamProvider = append(stats.UpstreamProvider, *item)
+	}
+	sort.Slice(stats.UpstreamProvider, func(i, j int) bool {
+		return stats.UpstreamProvider[i].Cost > stats.UpstreamProvider[j].Cost
+	})
+
+	for _, item := range currencyMap {
+		stats.CurrencyDist = append(stats.CurrencyDist, *item)
+	}
+
+	stats.TokenBreakdown = tokenBreakdown
+
+	if ttftCount > 0 {
+		stats.AvgTTFTMs = float64(ttftSum) / float64(ttftCount)
+	}
+	if totalInput > 0 {
+		stats.CacheHitRate = float64(totalCached) / float64(totalInput) * 100
+	}
+
+	return stats
 }
 
 // calculateRevenue 计算一组 usage_logs 的收入
