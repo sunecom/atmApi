@@ -1101,6 +1101,7 @@ modelAllowed:
 				model.DB.Create(&model.RequestLog{
 					TokenName: apiToken.Name, ChannelName: "GLM-5.2 local response cache",
 					Model: glmoptimizer.ModelGLM52, RoutedModel: req.Model,
+					AtmModel: "glm-5.2",
 					StatusCode: http.StatusOK, DurationMs: duration,
 				})
 				model.DB.Create(&model.UsageLog{
@@ -1147,6 +1148,7 @@ modelAllowed:
 			model.DB.Create(&model.RequestLog{
 				TokenName: apiToken.Name, ChannelName: "无可用GLM-5.2渠道",
 				Model: glmoptimizer.ModelGLM52, RoutedModel: req.Model,
+				AtmModel: "glm-5.2",
 				StatusCode: status, DurationMs: duration,
 			})
 			respondError(c, status, code, failure.Error())
@@ -2045,7 +2047,21 @@ func batchCreateTokens(c *gin.Context) {
 	if req.ExpireDays > 0 {
 		expiredTime = time.Now().AddDate(0, 0, req.ExpireDays).Unix()
 	}
-	activatedAt := time.Now().Unix()
+	// 批量生产时不激活，activated_at = 0，首次调用时自动激活
+	activatedAt := int64(0)
+	createdTime := time.Now().Unix()
+
+	// 配额优先级：monthly_max > weekly_max > daily_max > hourly_5_max
+	quota := plan.MonthlyMax
+	if quota == 0 {
+		quota = plan.WeeklyMax
+	}
+	if quota == 0 {
+		quota = plan.DailyMax
+	}
+	if quota == 0 {
+		quota = plan.Hourly5Max
+	}
 
 	type Result struct {
 		Key         string `json:"key"`
@@ -2056,19 +2072,25 @@ func batchCreateTokens(c *gin.Context) {
 
 	for i := 0; i < req.Count; i++ {
 		key := generateTokenKey()
-		name := fmt.Sprintf("%s-%s-%03d", req.PlanGroup, req.PlanName, i+1)
+		// 生成简洁名称：避免 plan_group 和 plan_name 重复
+		var name string
+		if strings.HasPrefix(req.PlanName, req.PlanGroup) || strings.HasPrefix(req.PlanName, strings.ReplaceAll(req.PlanGroup, "-", "")) {
+			name = fmt.Sprintf("%s-%03d", req.PlanName, i+1)
+		} else {
+			name = fmt.Sprintf("%s-%s-%03d", req.PlanGroup, req.PlanName, i+1)
+		}
 
 		token := model.Token{
 			UserID:         0,
 			Name:           name,
 			Key:            key,
 			Status:         1,
-			RemainQuota:    plan.MonthlyMax,
-			InitQuota:      plan.MonthlyMax,
+			RemainQuota:    quota,
+			InitQuota:      quota,
 			UnlimitedQuota: false,
 			ExpiredTime:    expiredTime,
 			ActivatedAt:    activatedAt,
-			CreatedTime:    activatedAt,
+			CreatedTime:    createdTime,
 			RateLimitGroup: req.PlanName,
 			PlanGroup:      req.PlanGroup,
 			PlanName:       req.PlanName,
