@@ -16,7 +16,7 @@ type Order struct {
 	Status          string         `gorm:"size:20;default:pending" json:"status"`                   // pending/paid/cancelled/expired/refunded
 	AlipayTradeNo   string         `gorm:"size:64;default:''" json:"alipay_trade_no"`               // 支付宝交易号
 	TokenName       string         `gorm:"size:100;default:''" json:"token_name"`                   // 支付成功后创建的 Token 名
-	PayURL          string         `gorm:"size:512;default:''" json:"pay_url"`                      // 支付链接
+	PayURL          string         `gorm:"type:text;default:''" json:"pay_url"`                      // 支付链接
 	PaidAt          time.Time      `json:"paid_at"`                                                 // 支付时间
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
