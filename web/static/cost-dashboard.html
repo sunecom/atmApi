@@ -401,7 +401,7 @@
 
         <!-- GLM-5.2 专区（动态显示） -->
         <div id="glm52-section" style="display:none;">
-            <div class="content-row row-4" style="margin-top:8px;">
+            <div class="content-row row-4" style="margin-top:8px;height:260px;">
                 <div class="panel">
                     <div class="panel-title">💰 成本来源分布</div>
                     <div class="chart-wrap" id="chart-glm52-cost-source"></div>
@@ -707,7 +707,7 @@
             section.style.display = 'block';
 
             // 等浏览器完成布局后再初始化和渲染图表
-            requestAnimationFrame(function() {
+            setTimeout(function() {
                 // 初始化 GLM-5.2 图表（如果还没初始化）
                 if (!charts.glm52CostSource) {
                     charts.glm52CostSource = echarts.init(document.getElementById('chart-glm52-cost-source'));
@@ -787,8 +787,8 @@
                 // resize
                 setTimeout(function() {
                     Object.keys(charts).forEach(function(k) { if (charts[k] && charts[k].resize) charts[k].resize(); });
-                }, 100);
-            }); // end requestAnimationFrame
+                }, 50);
+            }, 200); // end setTimeout
         }
 
         init();
