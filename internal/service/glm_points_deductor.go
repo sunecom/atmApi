@@ -191,15 +191,15 @@ func InitGLMLedgerIfNeeded(tokenID uint, planName string) error {
 	dailyPoints := 840
 
 	switch planName {
-	case "glm-basic":
+	case "glm52-basic":
 		totalPoints = 4200
 		fiveHourPoints = 420
 		dailyPoints = 840
-	case "glm-standard":
+	case "glm52-standard":
 		totalPoints = 10800
 		fiveHourPoints = 1080
 		dailyPoints = 2160
-	case "glm-pro":
+	case "glm52-pro":
 		totalPoints = 25000
 		fiveHourPoints = 2500
 		dailyPoints = 5000

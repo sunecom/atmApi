@@ -970,7 +970,7 @@ modelAllowed:
 
 	if isGLM52 {
 		// GLM-5.2 点数余额预检查（首字节前拒绝）
-		if apiToken.PlanName == "glm-basic" || apiToken.PlanName == "glm-standard" || apiToken.PlanName == "glm-pro" {
+		if apiToken.PlanName == "glm52-basic" || apiToken.PlanName == "glm52-standard" || apiToken.PlanName == "glm52-pro" {
 			// 估算本次请求扣点（保守估计：假设output=max_tokens）
 			estimatedInput := len(body) / 4 // 粗略估算
 			estimatedOutput := 4096         // 默认输出
@@ -1003,11 +1003,14 @@ modelAllowed:
 		}
 		var contextDecision glmoptimizer.ContextDecision
 		body, contextDecision, err = service.PrepareGLM52Context(body, plan.Name, plan.MaxInputTokens)
-		log.Printf("[GLM52上下文] plan=%q max_input=%d original_est=%d final_est=%d groups=%d tool_tx=%d compressed_tools=%d shadow=%t decision=%s",
+		log.Printf("[GLM52上下文] plan=%q max_input=%d original_est=%d final_est=%d groups=%d tool_tx=%d compressed_tools=%d shadow=%t decision=%s\n[GLM52上下文用量] context_usage_ratio=%.1f%% eligible_window=%d remaining_window=%d",
 			contextDecision.PlanName, contextDecision.MaxInputTokens,
 			contextDecision.OriginalEstimatedTokens, contextDecision.FinalEstimatedTokens,
 			contextDecision.GroupCount, contextDecision.ToolTransactions,
-			contextDecision.ToolMessagesCompressed, contextDecision.ShadowGenerated, contextDecision.Reason)
+			contextDecision.ToolMessagesCompressed, contextDecision.ShadowGenerated, contextDecision.Reason,
+			safeRatio(contextDecision.FinalEstimatedTokens, contextDecision.MaxInputTokens),
+			contextDecision.MaxInputTokens,
+			contextDecision.MaxInputTokens-contextDecision.FinalEstimatedTokens)
 		if err != nil {
 			if contextErr, ok := err.(*glmoptimizer.ContextError); ok {
 				respondError(c, contextErr.HTTPStatus, ErrorCode(contextErr.Code), contextErr.Message, contextErr.Details)
@@ -1016,6 +1019,18 @@ modelAllowed:
 					"GLM-5.2 上下文预算处理失败")
 			}
 			return
+		}
+		// Phase 1: 上下文预警响应头
+		contextRatio := safeRatio(contextDecision.FinalEstimatedTokens, contextDecision.MaxInputTokens)
+		c.Header("X-ATM-Context-Usage-Ratio", fmt.Sprintf("%.1f", contextRatio))
+		c.Header("X-ATM-Context-Window", strconv.Itoa(contextDecision.MaxInputTokens))
+		c.Header("X-ATM-Context-Estimated", strconv.Itoa(contextDecision.FinalEstimatedTokens))
+		if contextRatio >= 95 {
+			c.Header("X-ATM-Context-Warning", "critical")
+		} else if contextRatio >= 85 {
+			c.Header("X-ATM-Context-Warning", "high")
+		} else if contextRatio >= 70 {
+			c.Header("X-ATM-Context-Warning", "medium")
 		}
 		var contextRequest struct {
 			Messages []map[string]interface{} `json:"messages"`
@@ -1310,6 +1325,9 @@ processResult:
 		c.Status(result.Response.StatusCode)
 		if isGLM52 {
 			relayResult, relayErr := glmoptimizer.RelaySSE(c.Request.Context(), c.Writer, result.Response.Body, glmoptimizer.RelayOptions{RequestStartedAt: startTime})
+		if relayErr != nil {
+			log.Printf("[GLM-5.2流式ERROR] token=%s channel=%s relayErr=%v bytes=%d parseErrors=%d", apiToken.Name, result.ChannelName, relayErr, relayResult.BytesForwarded, relayResult.ParseErrors)
+		}
 			if result.GLM52Completion != nil {
 				if relayErr != nil {
 					completionErr := relayErr
@@ -1343,7 +1361,7 @@ processResult:
 						relayResult.Usage.PromptTokens, relayResult.Usage.CachedTokens, relayResult.Usage.CachedTokens > 0, 0)
 				}
 				// GLM-5.2 点数扣减（双账分离）
-				if apiToken.PlanName == "glm-basic" || apiToken.PlanName == "glm-standard" || apiToken.PlanName == "glm-pro" {
+				if apiToken.PlanName == "glm52-basic" || apiToken.PlanName == "glm52-standard" || apiToken.PlanName == "glm52-pro" {
 					failed := relayErr != nil && !relayResult.FirstDataSeen
 					cacheHit := singleflightShared || (relayResult.Usage.CachedTokens > 0 && relayResult.Usage.PromptTokens == relayResult.Usage.CachedTokens)
 					deductResult := service.GLMDeductor.DeductPoints(apiToken.ID, relayResult.Usage.PromptTokens, relayResult.Usage.CompletionTokens, cacheHit, failed)
@@ -1516,7 +1534,7 @@ processResult:
 				model.DB.Model(&reqLog).Update("cached_tokens", cachedTokens)
 			}
 			// GLM-5.2 点数扣减（双账分离）
-			if apiToken.PlanName == "glm-basic" || apiToken.PlanName == "glm-standard" || apiToken.PlanName == "glm-pro" {
+			if apiToken.PlanName == "glm52-basic" || apiToken.PlanName == "glm52-standard" || apiToken.PlanName == "glm52-pro" {
 				failed := result.Response.StatusCode >= 400
 				cacheHit := singleflightShared || (cachedTokens > 0 && upstreamResp.Usage.PromptTokens == cachedTokens)
 				deductResult := service.GLMDeductor.DeductPoints(apiToken.ID, upstreamResp.Usage.PromptTokens, upstreamResp.Usage.CompletionTokens, cacheHit, failed)
@@ -2656,4 +2674,11 @@ func actualModelForLog(result *service.RouteRequestResult, fallback string) stri
 		return result.ActualModel
 	}
 	return fallback
+}
+
+func safeRatio(used, total int) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(used) / float64(total) * 100
 }

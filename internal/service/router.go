@@ -146,7 +146,8 @@ func routeRequestContext(ctx context.Context, targetModel string, requestBody []
 	}
 
 	// 2. 检查配额（总量）
-	if token.RemainQuota == 0 && !token.UnlimitedQuota {
+	// GLM-5.2 点数制套餐不走 RemainQuota，跳过此检查
+	if token.RemainQuota == 0 && !token.UnlimitedQuota && token.PlanGroup != "glm-5.2" {
 		return nil, fmt.Errorf("token 配额已用完")
 	}
 

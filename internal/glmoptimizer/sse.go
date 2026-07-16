@@ -603,6 +603,6 @@ func rebuildSSEEvent(originalEvent, originalPayload, sanitizedPayload []byte) []
 			result = append(result, line)
 		}
 	}
-	// 添加结尾换行
-	return bytes.Join(result, []byte("\n"))
+	// SSE 事件必须以 \n\n 结尾（空行分隔事件）
+	return append(bytes.Join(result, []byte("\n")), '\n', '\n')
 }

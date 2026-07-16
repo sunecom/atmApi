@@ -3,6 +3,7 @@ package glmoptimizer
 import (
 	"context"
 	"errors"
+	"sync"
 	"strings"
 	"time"
 )
@@ -38,23 +39,36 @@ type RouteResult struct {
 type RouteCompletion struct {
 	permit    *CircuitPermit
 	channelID uint
+	cancel    context.CancelFunc
+	once     sync.Once
 }
 
 func (c *RouteCompletion) Succeed() {
-	if c != nil {
-		c.permit.Succeed()
+	if c == nil {
+		return
 	}
+	c.once.Do(func() {
+		c.permit.Succeed()
+		if c.cancel != nil {
+			c.cancel()
+		}
+	})
 }
 
 func (c *RouteCompletion) Fail(err error, bytesForwarded int64) {
 	if c == nil {
 		return
 	}
-	failure := NormalizeFailure(c.channelID, err)
-	if bytesForwarded > failure.BytesForwarded {
-		failure.BytesForwarded = bytesForwarded
-	}
-	c.permit.Fail(failure)
+	c.once.Do(func() {
+		failure := NormalizeFailure(c.channelID, err)
+		if bytesForwarded > failure.BytesForwarded {
+			failure.BytesForwarded = bytesForwarded
+		}
+		c.permit.Fail(failure)
+		if c.cancel != nil {
+			c.cancel()
+		}
+	})
 }
 
 type AttemptFunc func(context.Context, RouteCandidate) (AttemptResult, error)
@@ -115,7 +129,6 @@ func (r *Router) Route(ctx context.Context, candidates []RouteCandidate, attempt
 		ctx = context.Background()
 	}
 	routeCtx, cancel := context.WithTimeout(ctx, r.totalDeadline)
-	defer cancel()
 
 	var lastFailure *Failure
 	attempts := 0
@@ -127,6 +140,7 @@ func (r *Router) Route(ctx context.Context, candidates []RouteCandidate, attempt
 			break
 		}
 		if err := routeCtx.Err(); err != nil {
+			cancel()
 			return RouteResult{Attempts: attempts}, NormalizeFailure(candidate.ChannelID, err)
 		}
 
@@ -140,9 +154,11 @@ func (r *Router) Route(ctx context.Context, candidates []RouteCandidate, attempt
 		if err == nil {
 			result := RouteResult{Value: attemptResult.Value, ChannelID: candidate.ChannelID, Attempts: attempts, BreakerState: breakerState}
 			if attemptResult.DeferredOutcome {
-				result.Completion = &RouteCompletion{permit: permit, channelID: candidate.ChannelID}
+				// 流式请求：cancel 转交给 RouteCompletion，不在此时取消
+				result.Completion = &RouteCompletion{permit: permit, channelID: candidate.ChannelID, cancel: cancel}
 			} else {
 				permit.Succeed()
+				cancel()
 			}
 			return result, nil
 		}
@@ -154,18 +170,22 @@ func (r *Router) Route(ctx context.Context, candidates []RouteCandidate, attempt
 		permit.Fail(failure)
 		lastFailure = failure
 		if !failure.Retryable() {
+			cancel()
 			return RouteResult{Attempts: attempts}, failure
 		}
 		if routeCtx.Err() != nil {
+			cancel()
 			return RouteResult{Attempts: attempts}, NormalizeFailure(candidate.ChannelID, routeCtx.Err())
 		}
 		if attempts < r.maxAttempts && r.backoff > 0 {
 			if err := waitForRouteBackoff(routeCtx, r.backoff*time.Duration(1<<(attempts-1))); err != nil {
+				cancel()
 				return RouteResult{Attempts: attempts}, NormalizeFailure(candidate.ChannelID, err)
 			}
 		}
 	}
 
+	cancel()
 	if lastFailure != nil {
 		return RouteResult{Attempts: attempts}, lastFailure
 	}

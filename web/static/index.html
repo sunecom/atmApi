@@ -1052,18 +1052,21 @@
     }
 
     function formatQuota(tk) {
-      // 未激活
-      if (tk.activated_at === 0) return '未激活';
-      // 周配额套餐
+      // 团队无限卡
+      if (tk.unlimited_quota) return '无限';
+      // GLM-5.2 点数制套餐：显示 init_quota
       if (tk.plan_group === 'glm-5.2' || tk.plan_group === 'glm52') {
-        return (tk.init_quota || 0).toLocaleString() + '次/周';
+        var q = tk.init_quota || tk.remain_quota || 0;
+        if (q > 0) return q.toLocaleString() + '点';
+        if (tk.activated_at === 0) return '未激活';
+        return '0点';
       }
-      // 月度套餐：显示 init_quota（月额度）
+      // 月度/周度套餐：显示 init_quota
       if (tk.plan_name && tk.init_quota > 0) {
         return tk.init_quota.toLocaleString() + '次/月';
       }
-      // 团队无限卡
-      if (tk.unlimited_quota) return '无限';
+      // 未激活
+      if (tk.activated_at === 0) return '未激活';
       // 子卡/体验卡：显示剩余
       return tk.remain_quota;
     }
