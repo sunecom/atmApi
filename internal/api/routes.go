@@ -1137,8 +1137,13 @@ modelAllowed:
 					AtmModel: "glm-5.2",
 					StatusCode: http.StatusOK, DurationMs: duration,
 				})
+				// plan_name 优先用 PlanName，fallback 到 RateLimitGroup
+				logPlanName := apiToken.PlanName
+				if logPlanName == "" {
+					logPlanName = apiToken.RateLimitGroup
+				}
 				model.DB.Create(&model.UsageLog{
-					TokenID: apiToken.ID, TokenName: apiToken.Name, PlanName: apiToken.RateLimitGroup,
+					TokenID: apiToken.ID, TokenName: apiToken.Name, PlanName: logPlanName,
 					RequestedModel: req.Model, ActualModel: glmoptimizer.ModelGLM52, Model: glmoptimizer.ModelGLM52,
 					PolicyVersion: model.GLM52UsagePolicyVersion, CostSource: model.CostSourceLocalResponseCache,
 					CostCurrency: "CNY", LocalResponseCacheHit: true, SessionIDHashPrefix: glmSessionHashPrefix,
@@ -1383,8 +1388,9 @@ processResult:
 				} `json:"usage"`
 			}
 			if err := json.Unmarshal([]byte(lastChunk), &lastResp); err == nil && lastResp.Usage.TotalTokens > 0 {
-				planName := ""
-				if apiToken.RateLimitGroup != "" {
+				// plan_name 优先用 PlanName，fallback 到 RateLimitGroup
+				planName := apiToken.PlanName
+				if planName == "" {
 					planName = apiToken.RateLimitGroup
 				}
 				cachedTokens := lastResp.Usage.PromptTokensDetails.CachedTokens
@@ -2569,8 +2575,13 @@ func buildGLM52UsageLog(token *model.Token, result *service.RouteRequestResult, 
 	if costErr != nil {
 		cost = model.ProviderCost{Currency: snapshot.Currency, Source: "pricing_error", PricingSnapshotID: snapshot.ID}
 	}
+	// plan_name 优先用 PlanName，fallback 到 RateLimitGroup
+	logPlanName := token.PlanName
+	if logPlanName == "" {
+		logPlanName = token.RateLimitGroup
+	}
 	entry := model.UsageLog{
-		TokenID: token.ID, TokenName: token.Name, PlanName: token.RateLimitGroup,
+		TokenID: token.ID, TokenName: token.Name, PlanName: logPlanName,
 		ChannelID: result.ChannelID, ChannelName: result.ChannelName,
 		Model: actualModel, RequestedModel: requestedModel, ActualModel: actualModel,
 		UpstreamProvider: provider, PolicyVersion: model.GLM52UsagePolicyVersion,
