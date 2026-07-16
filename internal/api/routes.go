@@ -2181,14 +2181,19 @@ func batchCreateTokens(c *gin.Context) {
 	}
 	var results []Result
 
+	// 查询该套餐下已有的 token 数量，避免名称重复
+	var existingCount int64
+	model.DB.Model(&model.Token{}).Where("plan_name = ?", req.PlanName).Count(&existingCount)
+	baseIndex := int(existingCount)
+
 	for i := 0; i < req.Count; i++ {
 		key := generateTokenKey()
-		// 生成简洁名称：避免 plan_group 和 plan_name 重复
+		// 生成简洁名称：避免 plan_group 和 plan_name 重复，编号从已有数量+1开始
 		var name string
 		if strings.HasPrefix(req.PlanName, req.PlanGroup) || strings.HasPrefix(req.PlanName, strings.ReplaceAll(req.PlanGroup, "-", "")) {
-			name = fmt.Sprintf("%s-%03d", req.PlanName, i+1)
+			name = fmt.Sprintf("%s-%03d", req.PlanName, baseIndex+i+1)
 		} else {
-			name = fmt.Sprintf("%s-%s-%03d", req.PlanGroup, req.PlanName, i+1)
+			name = fmt.Sprintf("%s-%s-%03d", req.PlanGroup, req.PlanName, baseIndex+i+1)
 		}
 
 		token := model.Token{
