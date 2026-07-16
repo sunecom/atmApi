@@ -1293,10 +1293,11 @@ processResult:
 	// ===== 流式响应分支：逐 chunk 转发 =====
 	if isStream {
 		duration := time.Since(startTime).Milliseconds()
-		model.DB.Create(&model.RequestLog{
+		streamReqLog := model.RequestLog{
 			TokenName: apiToken.Name, ChannelName: result.ChannelName, AtmModel: result.AtmModel,
 			Model: actualModelForLog(result, actualModel), RoutedModel: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
-		})
+		}
+		model.DB.Create(&streamReqLog)
 		c.Header("X-Actual-Model", actualModel)
 		c.Header("X-Requested-Model", req.Model)
 		if result.Response.StatusCode < 500 {
@@ -1333,6 +1334,10 @@ processResult:
 					result.Response.StatusCode, streamDuration, string(relayResult.Outcome.State), relayResult.FinishReason,
 					relayResult.TTFTMs, relayErr != nil && !relayResult.FirstDataSeen, errors.Is(relayErr, glmoptimizer.ErrStreamInterrupted))
 				model.DB.Create(&usageLog)
+				// 更新 RequestLog 的 CachedTokens
+				if relayResult.Usage.CachedTokens > 0 {
+					model.DB.Model(&streamReqLog).Update("cached_tokens", relayResult.Usage.CachedTokens)
+				}
 				if service.GlobalAnalytics != nil {
 					service.GlobalAnalytics.RecordRequest(apiToken.ID, apiToken.Name,
 						relayResult.Usage.PromptTokens, relayResult.Usage.CachedTokens, relayResult.Usage.CachedTokens > 0, 0)
@@ -1409,6 +1414,10 @@ processResult:
 					DurationMs:    duration,
 				}
 				model.DB.Create(&usageLog)
+				// 更新 RequestLog 的 CachedTokens
+				if cachedTokens > 0 {
+					model.DB.Model(&streamReqLog).Update("cached_tokens", cachedTokens)
+				}
 				// 缓存分析埋点
 				if service.GlobalAnalytics != nil {
 					service.GlobalAnalytics.RecordRequest(apiToken.ID, apiToken.Name,
@@ -1428,10 +1437,12 @@ processResult:
 	// ===== 非流式：原有逻辑 =====
 	respBody, _ := io.ReadAll(result.Response.Body)
 	duration := time.Since(startTime).Milliseconds()
-	model.DB.Create(&model.RequestLog{
+	// 先创建 RequestLog（不含 CachedTokens）
+	reqLog := model.RequestLog{
 		TokenName: apiToken.Name, ChannelName: result.ChannelName, AtmModel: result.AtmModel,
 		Model: actualModelForLog(result, actualModel), RoutedModel: req.Model, StatusCode: result.Response.StatusCode, DurationMs: duration,
-	})
+	}
+	model.DB.Create(&reqLog)
 	// 设置响应头：返回实际路由的模型名
 	c.Header("X-Actual-Model", actualModel)
 	c.Header("X-Requested-Model", req.Model)
@@ -1500,6 +1511,10 @@ processResult:
 					StatusCode:    result.Response.StatusCode, DurationMs: duration}
 			}
 			model.DB.Create(&usageLog)
+			// 更新 RequestLog 的 CachedTokens
+			if cachedTokens > 0 {
+				model.DB.Model(&reqLog).Update("cached_tokens", cachedTokens)
+			}
 			// GLM-5.2 点数扣减（双账分离）
 			if apiToken.PlanName == "glm-basic" || apiToken.PlanName == "glm-standard" || apiToken.PlanName == "glm-pro" {
 				failed := result.Response.StatusCode >= 400
