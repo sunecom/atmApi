@@ -1997,7 +1997,8 @@ func tokenInfo(c *gin.Context) {
 		remainingDays = -1
 		expireDate = "永不过期"
 	}
-	// 获取所有套餐列表（供前端升级选择）
+	// 获取套餐列表（供前端升级选择）
+	// GLM-5.2 用户只显示 GLM 套餐，其他用户显示非 GLM 套餐
 	var allPlans []model.Plan
 	model.DB.Order("CAST(price AS DECIMAL(10,2))").Find(&allPlans)
 	type PlanBrief struct {
@@ -2007,10 +2008,15 @@ func tokenInfo(c *gin.Context) {
 		Hourly5Max  int64  `json:"hourly_5_max"`
 		MonthlyMax  int64  `json:"monthly_max"`
 	}
-	allPlansList := make([]PlanBrief, len(allPlans))
+	var allPlansList []PlanBrief
 	planPrice := ""
-	for i, p := range allPlans {
-		allPlansList[i] = PlanBrief{p.Name, p.DisplayName, p.Price, p.Hourly5Max, p.MonthlyMax}
+	for _, p := range allPlans {
+		isGLMPlan := strings.HasPrefix(p.Name, "glm")
+		// GLM-5.2 用户只看 GLM 套餐，其他用户只看非 GLM 套餐
+		if isGLM52 != isGLMPlan {
+			continue
+		}
+		allPlansList = append(allPlansList, PlanBrief{p.Name, p.DisplayName, p.Price, p.Hourly5Max, p.MonthlyMax})
 		if p.Name == token.RateLimitGroup {
 			planPrice = p.Price
 		}
