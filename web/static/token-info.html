@@ -289,14 +289,36 @@ function renderResult(data, inputToken) {
 
     // 配额
     let html = '';
-    if (data.skip_hourly) {
-        html += `<div class="quota"><div class="quota-header"><span class="quota-label">5小时</span><span class="quota-count safe">不限量</span></div></div>`;
+    if (data.is_glm52 && data.points) {
+        // GLM-5.2 点数账本
+        const p = data.points;
+        html += renderQuota('月度点数', p.used_points, p.total_points);
+        html += renderQuota('5小时', p.five_hour_used, p.five_hour_points);
+        html += renderQuota('今日', p.daily_used, p.daily_points);
+        // 显示点数价值
+        const remainingPoints = p.total_points - p.used_points;
+        const pointValue = (remainingPoints * p.standard_price_per_point).toFixed(2);
+        html += `<div class="info-grid" style="margin-top:12px;">
+            <div class="info-item">
+                <div class="info-label">剩余点数价值</div>
+                <div class="info-value">¥${pointValue}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">单价</div>
+                <div class="info-value">¥${p.standard_price_per_point}/点</div>
+            </div>
+        </div>`;
     } else {
-        html += renderQuota('5小时', data.used_5h||0, data.limit_5h||0);
+        // 传统限流模式
+        if (data.skip_hourly) {
+            html += `<div class="quota"><div class="quota-header"><span class="quota-label">5小时</span><span class="quota-count safe">不限量</span></div></div>`;
+        } else {
+            html += renderQuota('5小时', data.used_5h||0, data.limit_5h||0);
+        }
+        html += renderQuota('今日', data.used_daily||0, data.limit_daily||0);
+        html += renderQuota('本周', data.used_7d||0, data.weekly_max||0);
+        html += renderQuota('本月', data.monthly_used||0, data.monthly_max||0);
     }
-    html += renderQuota('今日', data.used_daily||0, data.limit_daily||0);
-    html += renderQuota('本周', data.used_7d||0, data.weekly_max||0);
-    html += renderQuota('本月', data.monthly_used||0, data.monthly_max||0);
     document.getElementById('quotaContainer').innerHTML = html;
 
     document.getElementById('planType').textContent = data.plan_name || data.plan || '-';

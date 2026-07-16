@@ -126,6 +126,8 @@ func RelaySSE(ctx context.Context, dst FlushWriter, src io.Reader, options Relay
 
 		if hasData {
 			observer.observe(payload)
+			// 清洗敏感字段后再转发
+			event = rebuildSSEEvent(event, payload, sanitizeSSEPayload(payload))
 		}
 		if err := writeAndFlush(dst, event); err != nil {
 			return observer.result(result.BytesForwarded, false), err
@@ -513,4 +515,94 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// sanitizeSSEPayload 清洗 SSE data 行的 JSON payload
+// 移除上游敏感字段（provider、system_fingerprint、cost 等）
+// 强制 model 字段为 "glm-5.2"
+func sanitizeSSEPayload(payload []byte) []byte {
+	// 快速路径：如果没有敏感字段，直接返回
+	if !needsSanitization(payload) {
+		return payload
+	}
+
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return payload // 解析失败，原样返回
+	}
+
+	// 移除敏感字段
+	delete(obj, "provider")
+	delete(obj, "system_fingerprint")
+
+	// 强制 model 为 glm-5.2
+	obj["model"] = json.RawMessage(`"glm-5.2"`)
+
+	// 清洗 usage 字段
+	if rawUsage, ok := obj["usage"]; ok && len(bytes.TrimSpace(rawUsage)) > 0 {
+		if cleaned := sanitizeUsage(rawUsage); cleaned != nil {
+			obj["usage"] = cleaned
+		}
+	}
+
+	cleaned, err := json.Marshal(obj)
+	if err != nil {
+		return payload
+	}
+	return cleaned
+}
+
+func needsSanitization(payload []byte) bool {
+	return bytes.Contains(payload, []byte(`"provider"`)) ||
+		bytes.Contains(payload, []byte(`"system_fingerprint"`)) ||
+		bytes.Contains(payload, []byte(`"cost"`)) ||
+		bytes.Contains(payload, []byte(`"is_byok"`)) ||
+		bytes.Contains(payload, []byte(`"usage_source"`)) ||
+		bytes.Contains(payload, []byte(`"usageNormalization"`)) ||
+		bytes.Contains(payload, []byte(`"claude_cache`))
+}
+
+func sanitizeUsage(raw json.RawMessage) json.RawMessage {
+	var usage map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &usage); err != nil {
+		return nil
+	}
+
+	// 移除敏感字段
+	delete(usage, "cost")
+	delete(usage, "is_byok")
+	delete(usage, "usage_source")
+	delete(usage, "usageNormalization")
+	delete(usage, "claude_cache_creation_5_m_tokens")
+	delete(usage, "claude_cache_creation_1_h_tokens")
+
+	cleaned, err := json.Marshal(usage)
+	if err != nil {
+		return nil
+	}
+	return cleaned
+}
+
+// rebuildSSEEvent 重建 SSE 事件，替换 data 行内容
+func rebuildSSEEvent(originalEvent, originalPayload, sanitizedPayload []byte) []byte {
+	// 如果 payload 没变，直接返回原事件
+	if bytes.Equal(originalPayload, sanitizedPayload) {
+		return originalEvent
+	}
+
+	// 重建事件：保留非 data 行，替换 data 行
+	lines := bytes.Split(originalEvent, []byte("\n"))
+	var result [][]byte
+	for _, line := range lines {
+		line = bytes.TrimSuffix(line, []byte("\r"))
+		if bytes.HasPrefix(line, []byte("data:")) {
+			// 替换为清洗后的 payload
+			result = append(result, append([]byte("data: "), sanitizedPayload...))
+		} else if len(bytes.TrimSpace(line)) > 0 {
+			// 保留其他非空行（如 id:、retry: 等）
+			result = append(result, line)
+		}
+	}
+	// 添加结尾换行
+	return bytes.Join(result, []byte("\n"))
 }

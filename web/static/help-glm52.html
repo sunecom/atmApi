@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GLM-5.2 套餐说明 — atmApi</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; }
+        .container { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+        .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: white; padding: 40px; border-radius: 12px; margin-bottom: 30px; text-align: center; }
+        .header h1 { font-size: 28px; margin-bottom: 10px; }
+        .header p { opacity: 0.9; font-size: 16px; }
+        .card { background: white; border-radius: 8px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .card h2 { color: #0f3460; margin-bottom: 15px; font-size: 20px; border-left: 4px solid #0f3460; padding-left: 12px; }
+        .plan-tabs { display: flex; gap: 10px; margin-bottom: 25px; }
+        .plan-tab { flex: 1; padding: 15px 15px; border: 2px solid #e0e0e0; border-radius: 8px; background: white; cursor: pointer; transition: all 0.2s; text-align: center; }
+        .plan-tab.active { border-color: #0f3460; background: #0f3460; color: white; }
+        .plan-tab:hover { border-color: #0f3460; }
+        .plan-tab h3 { font-size: 15px; margin-bottom: 4px; }
+        .plan-tab p { font-size: 13px; opacity: 0.7; }
+        .plan-tab.active p { opacity: 0.85; }
+        .plan-detail { display: none; }
+        .plan-detail.show { display: block; }
+        .plan-detail h3 { color: #0f3460; font-size: 18px; margin-bottom: 15px; }
+        .plan-specs { background: #f8f9fa; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .plan-specs table { width: 100%; border-collapse: collapse; }
+        .plan-specs th, .plan-specs td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; }
+        .plan-specs th { font-weight: 600; color: #555; width: 35%; }
+        .scenario { background: #e8f4fd; border-radius: 6px; padding: 15px; margin: 15px 0; }
+        .scenario h4 { color: #0f3460; margin-bottom: 8px; font-size: 14px; }
+        .scenario ul { padding-left: 20px; font-size: 14px; }
+        .code-block { background: #2d3748; color: #e2e8f0; padding: 15px; border-radius: 6px; font-family: 'Courier New', monospace; overflow-x: auto; margin: 10px 0; font-size: 14px; }
+        .tip { background: #d1ecf1; border-left: 4px solid #17a2b8; padding: 15px; border-radius: 4px; margin: 15px 0; }
+        .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 4px; margin: 15px 0; }
+        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        a { color: #0f3460; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .footer { text-align: center; padding: 30px; color: #999; font-size: 14px; }
+        .back-link { display: inline-block; margin-bottom: 20px; padding: 8px 16px; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 14px; }
+        @media (max-width: 768px) { .container { padding: 20px 15px; } .header { padding: 30px 20px; } .header h1 { font-size: 22px; } .card { padding: 20px; } .plan-tabs { flex-direction: column; } }
+    </style>
+</head>
+<body>
+<div class="container">
+
+<a href="/static/help.html" class="back-link">← 返回使用说明首页</a>
+
+<div class="header">
+    <h1>✨ GLM-5.2 — 企业级多平台智能路由</h1>
+    <p>点数灵活计费 · 多节点负载均衡 · 自动故障切换</p>
+</div>
+
+<!-- 模型介绍 -->
+<div class="card">
+<h2>模型介绍</h2>
+<p>模型名：<code>glm-5.2</code></p>
+<p style="margin-top: 10px;">企业级 GLM-5.2 多平台智能路由，系统自动选择最优线路，多节点负载均衡，确保高可用。适合需要深度推理和长上下文的场景。</p>
+
+<div class="plan-specs" style="margin-top: 20px;">
+<table>
+<tr><th>核心能力</th><td>深度推理、长上下文理解、代码生成、逻辑分析</td></tr>
+<tr><th>上下文窗口</th><td>最大 128K tokens</td></tr>
+<tr><th>最大输出</th><td>最大 32K tokens</td></tr>
+<tr><th>计费方式</th><td>点数制（按实际 token 用量扣点）</td></tr>
+<tr><th>路由策略</th><td>多平台智能路由，自动选择最优线路</td></tr>
+</table>
+</div>
+</div>
+
+<!-- 套餐 Tab -->
+<div class="card">
+<h2>套餐详情</h2>
+
+<div class="plan-tabs">
+    <div class="plan-tab active" onclick="switchPlan('basic')">
+        <h3>体验版</h3>
+        <p>¥49.9/月</p>
+    </div>
+    <div class="plan-tab" onclick="switchPlan('standard')">
+        <h3>标准版</h3>
+        <p>¥128/月</p>
+    </div>
+    <div class="plan-tab" onclick="switchPlan('pro')">
+        <h3>专业版</h3>
+        <p>¥298/月</p>
+    </div>
+</div>
+
+<!-- 体验版 -->
+<div id="plan-basic" class="plan-detail show">
+<h3>体验版 — ¥49.9/月</h3>
+<p style="color: #666; margin-bottom: 15px;">轻度体验，适合个人开发者试用</p>
+
+<div class="plan-specs">
+<table>
+<tr><th>月度总点数</th><td><strong>4,200 点</strong>（约 100 次普通对话）</td></tr>
+<tr><th>5小时上限</th><td>420 点</td></tr>
+<tr><th>每日上限</th><td>840 点</td></tr>
+<tr><th>每周上限</th><td>2,940 点</td></tr>
+<tr><th>输入上下文</th><td>32K tokens</td></tr>
+<tr><th>最大输出</th><td>8K tokens</td></tr>
+<tr><th>并发数</th><td>1</td></tr>
+</table>
+</div>
+
+<div class="scenario">
+<h4>🎯 适用场景</h4>
+<ul>
+<li>个人开发者日常试用</li>
+<li>简单问答、短文本生成</li>
+<li>小量级代码辅助</li>
+</ul>
+</div>
+</div>
+
+<!-- 标准版 -->
+<div id="plan-standard" class="plan-detail">
+<h3>标准版 — ¥128/月</h3>
+<p style="color: #666; margin-bottom: 15px;">日常编程，适合全职开发者</p>
+
+<div class="plan-specs">
+<table>
+<tr><th>月度总点数</th><td><strong>10,800 点</strong>（约 270 次普通对话）</td></tr>
+<tr><th>5小时上限</th><td>1,080 点</td></tr>
+<tr><th>每日上限</th><td>2,160 点</td></tr>
+<tr><th>每周上限</th><td>7,560 点</td></tr>
+<tr><th>输入上下文</th><td>64K tokens</td></tr>
+<tr><th>最大输出</th><td>16K tokens</td></tr>
+<tr><th>并发数</th><td>2</td></tr>
+</table>
+</div>
+
+<div class="scenario">
+<h4>🎯 适用场景</h4>
+<ul>
+<li>全职开发者日常编程</li>
+<li>中等复杂度代码生成与审查</li>
+<li>长文档分析与总结</li>
+<li>多轮对话推理</li>
+</ul>
+</div>
+</div>
+
+<!-- 专业版 -->
+<div id="plan-pro" class="plan-detail">
+<h3>专业版 — ¥298/月</h3>
+<p style="color: #666; margin-bottom: 15px;">重度开发，适合团队和企业用户</p>
+
+<div class="plan-specs">
+<table>
+<tr><th>月度总点数</th><td><strong>25,000 点</strong>（约 625 次普通对话）</td></tr>
+<tr><th>5小时上限</th><td>2,500 点</td></tr>
+<tr><th>每日上限</th><td>5,000 点</td></tr>
+<tr><th>每周上限</th><td>17,500 点</td></tr>
+<tr><th>输入上下文</th><td>128K tokens（完整上下文）</td></tr>
+<tr><th>最大输出</th><td>32K tokens</td></tr>
+<tr><th>并发数</th><td>4</td></tr>
+</table>
+</div>
+
+<div class="scenario">
+<h4>🎯 适用场景</h4>
+<ul>
+<li>企业级应用集成</li>
+<li>大型代码库分析与重构</li>
+<li>超长文档处理（论文、合同等）</li>
+<li>高并发场景（多用户/多任务并行）</li>
+<li>复杂逻辑推理与多步骤分析</li>
+</ul>
+</div>
+</div>
+
+</div>
+
+<!-- 点数计费说明 -->
+<div class="card">
+<h2>💡 点数计费说明</h2>
+
+<div class="plan-specs">
+<table>
+<tr><th>换算关系</th><td>100 点 = ¥1，1 点 = ¥0.01</td></tr>
+<tr><th>扣点公式</th><td>⌈输入 tokens × 0.008 + 输出 tokens × 0.028⌉</td></tr>
+<tr><th>简化理解</th><td>每 1K 输入 = 8 点，每 1K 输出 = 28 点</td></tr>
+</table>
+</div>
+
+<h3 style="margin: 20px 0 10px; color: #555; font-size: 16px;">实际场景扣点参考</h3>
+<table>
+<tr><th>场景</th><th>大约扣点</th><th>大约费用</th></tr>
+<tr><td>简单问答（"你好"）</td><td>~10 点</td><td>~¥0.1</td></tr>
+<tr><td>日常编程（2K输入+1K输出）</td><td>~44 点</td><td>~¥0.4</td></tr>
+<tr><td>长对话（5K输入+2K输出）</td><td>~96 点</td><td>~¥1</td></tr>
+<tr><td>缓存命中</td><td><strong>0 点</strong></td><td>免费</td></tr>
+<tr><td>失败请求</td><td><strong>0 点</strong></td><td>免费</td></tr>
+</table>
+
+<div class="tip">
+<strong>省钱技巧：</strong>
+<ul style="padding-left: 20px; margin-top: 8px;">
+<li>相同内容重复提问会命中缓存，<strong>扣 0 点</strong></li>
+<li>精简输入、减少不必要的历史消息，可降低扣点</li>
+<li>点数按滑动窗口自动重置，未用完不累积</li>
+</ul>
+</div>
+</div>
+
+<!-- API 调用示例 -->
+<div class="card">
+<h2>🔌 API 调用示例</h2>
+
+<h3 style="margin: 15px 0 10px; color: #555;">cURL</h3>
+<div class="code-block">curl -X POST https://atmapi.aitomoney.online/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-…xxxx" \
+  -d '{"model":"glm-5.2","messages":[{"role":"user","content":"你好！"}]}'</div>
+
+<h3 style="margin: 15px 0 10px; color: #555;">Python</h3>
+<div class="code-block">from openai import OpenAI
+
+client = OpenAI(
+    api_key=***
+    base_url="https://atmapi.aitomoney.online/v1"
+)
+response = client.chat.completions.create(
+    model="glm-5.2",
+    messages=[{"role": "user", "content": "你好！"}]
+)
+print(response.choices[0].message.content)</div>
+</div>
+
+<!-- 注意事项 -->
+<div class="card">
+<h2>⚠️ 注意事项</h2>
+<div class="warning">
+<ul style="padding-left: 20px;">
+<li>GLM-5.2 套餐与 DeepSeek-A4 套餐<strong>不通用</strong>，请确认购买正确的产品线</li>
+<li>GLM-5.2 是推理模型，首次响应可能较慢（需要 reasoning），属正常现象</li>
+<li>点数按滑动窗口自动重置，未用完不累积</li>
+<li>Token 是您的专属密钥，请勿泄露</li>
+<li>禁止用于违法、违规内容</li>
+</ul>
+</div>
+</div>
+
+<!-- 用量查询 -->
+<div class="card">
+<h2>📈 用量查询</h2>
+
+<h3 style="margin: 15px 0 10px; color: #555;">方式一：Token 查询页面（推荐）</h3>
+<div class="step" style="display: flex; align-items: flex-start; margin-bottom: 15px;">
+<div style="background: #0f3460; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 12px; flex-shrink: 0;">1</div>
+<div>打开查询页面：<br><code style="background: #f0f0f0; padding: 4px 8px; border-radius: 4px; font-size: 13px;">https://atmapi.aitomoney.online/token-info</code></div>
+</div>
+<div class="step" style="display: flex; align-items: flex-start; margin-bottom: 15px;">
+<div style="background: #0f3460; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 12px; flex-shrink: 0;">2</div>
+<div>输入您的 API Key（Token）</div>
+</div>
+<div class="step" style="display: flex; align-items: flex-start; margin-bottom: 15px;">
+<div style="background: #0f3460; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 12px; flex-shrink: 0;">3</div>
+<div>查看实时数据：<strong>剩余点数</strong>、<strong>5小时/每日/每周限额</strong>、<strong>到期时间</strong></div>
+</div>
+<div class="step" style="display: flex; align-items: flex-start; margin-bottom: 15px;">
+<div style="background: #0f3460; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 12px; flex-shrink: 0;">4</div>
+<div>如套餐即将到期，页面上可直接<strong>续费</strong>或<strong>升级</strong></div>
+</div>
+
+<h3 style="margin: 20px 0 10px; color: #555;">方式二：MCP 工具查询</h3>
+<p>如果您使用 OpenClaw 或其他支持 MCP 的客户端，可通过 MCP 工具查询：</p>
+<div class="code-block" style="background: #2d3748; color: #e2e8f0; padding: 15px; border-radius: 6px; font-family: 'Courier New', monospace; overflow-x: auto; margin: 10px 0; font-size: 14px;">{
+  "mcpServers": {
+    "atmapi": {
+      "type": "http",
+      "url": "https://atmapi.aitomoney.online/mcp",
+      "headers": { "Authorization": "Bearer sk-…xxxx" }
+    }
+  }
+}</div>
+<p style="margin-top: 10px;">可用工具：</p>
+<ul style="padding-left: 20px; margin-top: 5px;">
+<li><code>query_glm_usage</code> — 查询 GLM-5.2 点数余额和使用情况</li>
+<li><code>list_models</code> — 查看可用模型和套餐</li>
+<li><code>create_renewal</code> — 生成续费/升级支付链接</li>
+</ul>
+
+<h3 style="margin: 20px 0 10px; color: #555;">方式三：对话中查询</h3>
+<p>在对话中发送 <strong>「查询用量」</strong>，系统会自动返回您的用量详情。</p>
+<div class="tip">💡 到期前 7 天，系统会自动提醒您续费。</div>
+</div>
+
+<div class="footer">
+    <p>Powered by atmApi · AI API Gateway</p>
+    <p>© 2026 AiToMoney. All rights reserved.</p>
+</div>
+
+</div>
+
+<script>
+function switchPlan(plan) {
+    document.querySelectorAll('.plan-tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.plan-detail').forEach(function(d) { d.classList.remove('show'); });
+    document.getElementById('plan-' + plan).classList.add('show');
+    document.querySelectorAll('.plan-tab').forEach(function(t) {
+        if (t.getAttribute('onclick') && t.getAttribute('onclick').indexOf(plan) !== -1) {
+            t.classList.add('active');
+        }
+    });
+}
+</script>
+<div style="text-align:center;margin-top:24px;padding:20px 0;font-size:12px;color:#666;"><span>上海新智国艳科技服务有限公司 运营维护</span><span style="margin-left:10px;"><a href="https://beian.miit.gov.cn/" target="_blank" style="color:#666;text-decoration:none;">沪ICP备2026016770号-2</a></span></div>
+</body>
+</html>

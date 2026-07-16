@@ -158,12 +158,17 @@ func routeRequestContext(ctx context.Context, targetModel string, requestBody []
 
 	// GLM-5.2 is a locked product line. It must never continue into the legacy
 	// route table or LIKE fallback, even when every exact group channel fails.
+	log.Printf("[路由调试] targetModel=%q, IsGLM52=%v", targetModel, glmoptimizer.IsGLM52Request(targetModel))
 	if glmoptimizer.IsGLM52Request(targetModel) {
+		log.Printf("[GLM52路由] ===HIT=== 检测到 GLM-5.2 请求，targetModel=%s", targetModel)
 		groupChannels, groupErr := getModelGroupChannels(glmoptimizer.ModelGLM52)
 		if groupErr != nil {
+			log.Printf("[GLM52路由] 查询渠道失败: %v", groupErr)
 			return nil, glmoptimizer.NormalizeFailure(0, groupErr)
 		}
+		log.Printf("[GLM52路由] 查询到 %d 个渠道", len(groupChannels))
 		if len(groupChannels) == 0 {
+			log.Printf("[GLM52路由] 无可用渠道")
 			return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureChannelTransient, Cause: glmoptimizer.ErrNoEligibleChannel}
 		}
 		return routeGLM52Group(ctx, groupChannels, requestBody, token, targetModel, cacheKey)
@@ -261,6 +266,7 @@ func getModelGroupChannels(modelName string) ([]model.Channel, error) {
 }
 
 func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody []byte, token *model.Token, targetModel, cacheKey string) (*RouteRequestResult, error) {
+	log.Printf("[GLM52路由] 开始路由，传入渠道数=%d", len(channels))
 	request, err := glmoptimizer.ParseRequest(requestBody)
 	if err != nil {
 		return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureClientRequest, StatusCode: http.StatusBadRequest, Cause: err}
@@ -268,12 +274,14 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 	channelsByID := make(map[uint]model.Channel, len(channels))
 	candidates := make([]glmoptimizer.RouteCandidate, 0, len(channels))
 	for _, channel := range channels {
+		log.Printf("[GLM52路由] 检查渠道 id=%d name=%s status=%d model_group=%s", channel.ID, channel.Name, channel.Status, channel.ModelGroup)
 		if channel.Status != 1 || !strings.EqualFold(strings.TrimSpace(channel.ModelGroup), glmoptimizer.ModelGLM52) {
 			continue
 		}
 		channelsByID[channel.ID] = channel
 		candidates = append(candidates, glmoptimizer.RouteCandidate{ChannelID: channel.ID, ModelGroup: channel.ModelGroup})
 	}
+	log.Printf("[GLM52路由] 候选渠道数=%d", len(candidates))
 
 	routeOnce := func() (*RouteRequestResult, error) {
 		routeResult, routeErr := glm52Router.Route(ctx, candidates, func(attemptCtx context.Context, candidate glmoptimizer.RouteCandidate) (glmoptimizer.AttemptResult, error) {

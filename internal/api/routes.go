@@ -853,7 +853,13 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 	log.Printf("[路由] 最后3条: %s", lastRoles)
-	actualModel := preparedRequest.SelectModel(service.SmartRoute(req.Model, req.Messages, tokenKey))
+	var actualModel string
+	if isGLM52 {
+		// GLM-5.2 走独立路由，不经过 SmartRoute
+		actualModel = glmoptimizer.ModelGLM52
+	} else {
+		actualModel = preparedRequest.SelectModel(service.SmartRoute(req.Model, req.Messages, tokenKey))
+	}
 
 	// ===== 任务模式路由（Phase 2C） =====
 	taskModeResult := service.ClassifyTaskMode(req.Messages)
@@ -868,7 +874,9 @@ func chatCompletions(c *gin.Context) {
 	if !isGLM52 && taskModeResult.Hint != "" {
 		req.Messages = service.ApplyTaskModeHint(req.Messages, taskModeResult)
 	}
+	log.Printf("[路由调试2] isGLM52=%v, preparedRequest.IsGLM52=%v, actualModel_before=%s", isGLM52, preparedRequest.IsGLM52, actualModel)
 	actualModel = preparedRequest.SelectModel(actualModel)
+	log.Printf("[路由调试3] actualModel_after=%s", actualModel)
 
 	if actualModel != req.Model {
 		// 替换请求体中的 model
@@ -1896,6 +1904,50 @@ func tokenInfo(c *gin.Context) {
 	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, oneDayAgo).Count(&countDaily)
 	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, sevenDaysAgo).Count(&count7d)
 	model.DB.Model(&model.RateLimit{}).Where("token_id = ? AND request_time > ?", token.ID, thirtyDaysAgo).Count(&count30d)
+	// GLM-5.2 点数账本查询
+	type PointsLedger struct {
+		TotalPoints       int     `json:"total_points"`
+		UsedPoints        int     `json:"used_points"`
+		FiveHourPoints    int     `json:"five_hour_points"`
+		FiveHourUsed      int     `json:"five_hour_used"`
+		DailyPoints       int     `json:"daily_points"`
+		DailyUsed         int     `json:"daily_used"`
+		StandardPrice     float64 `json:"standard_price_per_point"`
+		PeriodEnd         string  `json:"period_end"`
+	}
+	var pointsData *PointsLedger
+	// 判断是否是 GLM-5.2 套餐（plan_name 包含 glm 或 glm52）
+	isGLM52 := strings.Contains(strings.ToLower(token.RateLimitGroup), "glm")
+	if isGLM52 {
+		var ledger struct {
+			TotalPoints    int
+			UsedPoints     int
+			FiveHourPoints int
+			FiveHourUsed   int
+			DailyPoints    int
+			DailyUsed      int
+			StandardPrice  float64
+			PeriodEnd      time.Time
+		}
+		err := model.DB.Table("glm_points_ledger").
+			Select("total_points, used_points, five_hour_points, five_hour_used, daily_points, daily_used, standard_price_per_point, period_end").
+			Where("token_id = ? AND period_end > NOW()", token.ID).
+			Order("period_start DESC").
+			Limit(1).
+			Scan(&ledger).Error
+		if err == nil && ledger.TotalPoints > 0 {
+			pointsData = &PointsLedger{
+				TotalPoints:    ledger.TotalPoints,
+				UsedPoints:     ledger.UsedPoints,
+				FiveHourPoints: ledger.FiveHourPoints,
+				FiveHourUsed:   ledger.FiveHourUsed,
+				DailyPoints:    ledger.DailyPoints,
+				DailyUsed:      ledger.DailyUsed,
+				StandardPrice:  ledger.StandardPrice,
+				PeriodEnd:      ledger.PeriodEnd.Format("2006-01-02 15:04:05"),
+			}
+		}
+	}
 	// 从 usage_logs 查累计调用次数 + 累计 tokens
 	type TokenUsage struct {
 		Calls int64 `gorm:"column:calls"`
@@ -1947,7 +1999,7 @@ func tokenInfo(c *gin.Context) {
 	}
 	// 获取所有套餐列表（供前端升级选择）
 	var allPlans []model.Plan
-	model.DB.Order("CAST(price AS REAL)").Find(&allPlans)
+	model.DB.Order("CAST(price AS DECIMAL(10,2))").Find(&allPlans)
 	type PlanBrief struct {
 		Name        string `json:"name"`
 		DisplayName string `json:"display_name"`
@@ -1963,7 +2015,7 @@ func tokenInfo(c *gin.Context) {
 			planPrice = p.Price
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"status":       status,
 		"token_name":   token.Name,
 		"plan":         token.RateLimitGroup,
@@ -1994,7 +2046,13 @@ func tokenInfo(c *gin.Context) {
 		}(),
 		"expired_at":     expireDate,
 		"remaining_days": remainingDays,
-	})
+		"is_glm52":       isGLM52,
+	}
+	// GLM-5.2 点数账本数据
+	if pointsData != nil {
+		resp["points"] = pointsData
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // ===== 辅助函数 =====

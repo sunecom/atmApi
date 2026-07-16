@@ -3,307 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>atmApi 使用说明 — AI API 智能网关</title>
+    <title>atmApi 套餐说明</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; }
-        .container { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
-        .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: white; padding: 40px; border-radius: 12px; margin-bottom: 30px; text-align: center; }
-        .header h1 { font-size: 28px; margin-bottom: 10px; }
-        .header p { opacity: 0.9; font-size: 16px; }
-        .product-tabs { display: flex; gap: 10px; margin-bottom: 30px; }
-        .product-tab { flex: 1; padding: 15px 20px; border: 2px solid #e0e0e0; border-radius: 8px; background: white; cursor: pointer; transition: all 0.2s; text-align: center; }
-        .product-tab.active { border-color: #0f3460; background: #0f3460; color: white; }
-        .product-tab:hover { border-color: #0f3460; }
-        .product-tab h3 { font-size: 16px; margin-bottom: 4px; }
-        .product-tab p { font-size: 13px; opacity: 0.7; }
-        .product-tab.active p { opacity: 0.85; }
-        .card { background: white; border-radius: 8px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: none; }
-        .card.show { display: block; }
-        .config-section { display: none; }
-        .config-section.show { display: block; }
-        .card h2 { color: #0f3460; margin-bottom: 15px; font-size: 20px; border-left: 4px solid #0f3460; padding-left: 12px; }
-        .card-common { display: block !important; }
-        .step { display: flex; align-items: flex-start; margin-bottom: 15px; }
-        .step-num { background: #0f3460; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 12px; flex-shrink: 0; }
-        .code-block { background: #2d3748; color: #e2e8f0; padding: 15px; border-radius: 6px; font-family: 'Courier New', monospace; overflow-x: auto; margin: 10px 0; font-size: 14px; }
-        .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 4px; margin: 15px 0; }
-        .tip { background: #d1ecf1; border-left: 4px solid #17a2b8; padding: 15px; border-radius: 4px; margin: 15px 0; }
-        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background: #f8f9fa; font-weight: 600; }
-        a { color: #0f3460; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-        .footer { text-align: center; padding: 30px; color: #999; font-size: 14px; }
-        .route-table td:first-child { font-weight: 600; }
-        @media (max-width: 768px) { .container { padding: 20px 15px; } .header { padding: 30px 20px; } .header h1 { font-size: 22px; } .card { padding: 20px; } .product-tabs { flex-direction: column; } }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .container { max-width: 600px; width: 100%; padding: 40px 20px; text-align: center; }
+        .header { margin-bottom: 50px; }
+        .header h1 { font-size: 32px; color: #0f3460; margin-bottom: 10px; }
+        .header p { font-size: 16px; color: #666; }
+        .plan-cards { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+        .plan-card { flex: 1; min-width: 240px; max-width: 280px; background: white; border-radius: 12px; padding: 30px 25px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); transition: all 0.3s; text-decoration: none; color: inherit; display: block; }
+        .plan-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+        .plan-icon { font-size: 48px; margin-bottom: 15px; }
+        .plan-name { font-size: 20px; font-weight: 600; color: #0f3460; margin-bottom: 8px; }
+        .plan-desc { font-size: 14px; color: #666; margin-bottom: 15px; line-height: 1.5; }
+        .plan-tag { display: inline-block; padding: 4px 12px; background: #e8f4fd; color: #0f3460; border-radius: 20px; font-size: 12px; }
+        .footer { margin-top: 50px; color: #999; font-size: 13px; }
+        @media (max-width: 600px) { .plan-cards { flex-direction: column; } .plan-card { max-width: 100%; } }
     </style>
 </head>
 <body>
 <div class="container">
-<div class="header">
-    <h1>🚀 atmApi — AI API 智能网关</h1>
-    <p>一个 Token，接入多个 AI 模型 · 智能路由 · 按量计费</p>
-</div>
-
-<div class="product-tabs">
-    <div class="product-tab active" onclick="switchProduct('dp-a4')">
-        <h3>🧠 DeepSeek-A4</h3>
-        <p>智能路由 · 自动选最优模型</p>
+    <div class="header">
+        <h1>🚀 atmApi</h1>
+        <p>AI API 智能网关 · 套餐说明</p>
     </div>
-    <div class="product-tab" onclick="switchProduct('openclaw')">
-        <h3>🔧 OpenClaw（atm卡）</h3>
-        <p>OpenClaw 智能体专属</p>
+
+    <div class="plan-cards">
+        <a href="/static/help-dp4.html" class="plan-card">
+            <div class="plan-icon">🧠</div>
+            <div class="plan-name">DeepSeek-A4</div>
+            <div class="plan-desc">智能路由模型<br>自动选择最优后端<br>按次计费</div>
+            <span class="plan-tag">¥29.9 起/月</span>
+        </a>
+
+        <a href="/static/help-glm52.html" class="plan-card">
+            <div class="plan-icon">✨</div>
+            <div class="plan-name">GLM-5.2</div>
+            <div class="plan-desc">企业级多平台路由<br>深度推理 · 长上下文<br>按点数计费</div>
+            <span class="plan-tag">¥49.9 起/月</span>
+        </a>
     </div>
-    <div class="product-tab" onclick="switchProduct('hermes')">
-        <h3>🤖 Hermes（小马哥）</h3>
-        <p>自动化工作流专用</p>
-    </div>
-</div>
 
-<!-- DeepSeek-A4 -->
-<div id="product-dp-a4" class="card show">
-<h2>DeepSeek-A4 — 智能路由模型</h2>
-<p><strong>不是单一模型，而是一个智能路由层。</strong>填入模型名 <code>deepseek-a4</code>，系统自动判断请求复杂度，路由到最优模型：</p>
-<table class="route-table" style="margin-top: 20px;">
-<tr><th>您的输入</th><th>自动路由到</th><th>特点</th></tr>
-<tr><td>简单提问、寒暄</td><td>deepseek-v4-flash</td><td>⚡ 快速便宜</td></tr>
-<tr><td>复杂分析、长文、代码</td><td>deepseek-v4-pro</td><td>🧠 深度推理（1M上下文）</td></tr>
-<tr><td>含图片的问题</td><td>qwen3.7-plus</td><td>👁️ 多模态视觉理解</td></tr>
-</table>
-
-<h3 style="margin: 20px 0 10px; color: #555;">套餐</h3>
-<table>
-<tr><th>套餐</th><th>价格</th><th>5小时</th><th>每日</th><th>每月</th><th>图片/天</th><th>RPM</th></tr>
-<tr><td>基础版</td><td>¥29.9/月</td><td>100 次</td><td>400 次</td><td>8,000 次</td><td>—</td><td>10</td></tr>
-<tr><td>专业版</td><td>¥69/月</td><td>300 次</td><td>1,200 次</td><td>24,000 次</td><td>50 张</td><td>30</td></tr>
-<tr><td>创业版</td><td>¥99/月</td><td>400 次</td><td>1,600 次</td><td>30,000 次</td><td>100 张</td><td>—</td></tr>
-<tr><td>旗舰版</td><td>¥129/月</td><td>600 次</td><td>2,400 次</td><td>50,000 次</td><td>200 张</td><td>60</td></tr>
-<tr><td>高级版</td><td>¥299/月</td><td>1,200 次</td><td>4,800 次</td><td>100,000 次</td><td>500 张</td><td>—</td></tr>
-<tr><td>企业版</td><td>¥599/月</td><td>3,000 次</td><td>12,000 次</td><td>300,000 次</td><td>2,000 张</td><td>—</td></tr>
-</table>
-</div>
-
-<!-- OpenClaw -->
-<div id="product-openclaw" class="card">
-<h2>OpenClaw 套餐（atm卡）</h2>
-<p><strong>专为 OpenClaw Gateway 用户设计</strong>，不限图片次数，适合智能体持续对话场景。</p>
-<p>模型名：<code>deepseek-a4</code>（与其他产品线相同）</p>
-
-<h3 style="margin: 20px 0 10px; color: #555;">套餐</h3>
-<table>
-<tr><th>套餐</th><th>价格</th><th>5小时</th><th>每日</th><th>每月</th><th>并发</th></tr>
-<tr><td>OpenClaw 基础</td><td>¥99/月</td><td>500 次</td><td>2,000 次</td><td>30,000 次</td><td>20</td></tr>
-<tr><td>OpenClaw 进阶</td><td>¥299/月</td><td>2,000 次</td><td>8,000 次</td><td>100,000 次</td><td>80</td></tr>
-</table>
-<div class="tip">💡 <strong>tips：</strong>OpenClaw 套餐不限图片次数，不限 RPM，并发量更高。适合 OpenClaw Gateway 智能体长期运行。</div>
-</div>
-
-<!-- Hermes -->
-<div id="product-hermes" class="card">
-<h2>Hermes 套餐（小马哥）</h2>
-<p><strong>专为 Hermes 自动化工作流设计</strong>，高并发、高配额，适用于爬虫、数据分析、批量处理场景。</p>
-<p>模型名由 Hermes 工作流自动指定，<strong>无需手动配置</strong>。</p>
-
-<h3 style="margin: 20px 0 10px; color: #555;">套餐</h3>
-<table>
-<tr><th>套餐</th><th>价格</th><th>5小时</th><th>每日</th><th>每月</th><th>并发</th></tr>
-<tr><td>Hermes 基础</td><td>¥149/月</td><td>800 次</td><td>3,200 次</td><td>50,000 次</td><td>40</td></tr>
-<tr><td>Hermes 进阶</td><td>¥399/月</td><td>3,000 次</td><td>12,000 次</td><td>150,000 次</td><td>120</td></tr>
-</table>
-<div class="tip">💡 <strong>tips：</strong>Hermes 套餐不限图片次数，不限 RPM。如有技术问题，请在群内联系小马哥。</div>
-</div>
-
-<!-- 通用内容 -->
-<div class="card card-common">
-<h2>🚀 快速开始</h2>
-<div class="step"><div class="step-num">1</div><div><strong>获取您的 API Key</strong><p>购买后您的专属 Key（以 sk- 开头）会通过消息发送给您。</p></div></div>
-<div class="step"><div class="step-num">2</div><div><strong>配置到您的客户端</strong><div class="code-block">API 地址：https://atmapi.aitomoney.online/v1
-API Key：sk-…xxxx
-模型名称：deepseek-a4</div></div></div>
-<div class="step"><div class="step-num">3</div><div><strong>发送第一个请求</strong><div class="code-block">curl -X POST https://atmapi.aitomoney.online/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-…xxxx" \
-  -d '{"model":"deepseek-a4","messages":[{"role":"user","content":"你好！"}]}'</div></div></div>
-</div>
-
-<div class="card card-common">
-<h2>🔌 客户端配置</h2>
-
-<div class="product-tabs" style="margin-bottom: 20px;">
-    <div class="product-tab active" onclick="switchConfig('openclaw')" style="flex:0 1 auto; padding:10px 20px;">
-        <h3 style="margin:0;">OpenClaw</h3>
-    </div>
-    <div class="product-tab" onclick="switchConfig('hermes')" style="flex:0 1 auto; padding:10px 20px;">
-        <h3 style="margin:0;">Hermes（小马哥）</h3>
-    </div>
-    <div class="product-tab" onclick="switchConfig('other')" style="flex:0 1 auto; padding:10px 20px;">
-        <h3 style="margin:0;">其他客户端</h3>
+    <div class="footer">
+        <p>atmApi · AI API Gateway</p>
     </div>
 </div>
-
-<div id="config-openclaw" class="config-section show">
-<h3 style="margin: 15px 0 10px; color: #555;">OpenClaw Gateway 配置</h3>
-<p>编辑 OpenClaw 配置文件（<code>openclaw.json</code>），添加 atmapi provider：</p>
-<div class="code-block">{
-  "providers": {
-    "atmapi": {
-      "baseUrl": "https://atmapi.aitomoney.online/v1",
-      "apiKey": "***"
-    }
-  },
-  "agents": {
-    "defaults": {
-      "model": { "primary": "atmapi/deepseek-a4" }
-    }
-  }
-}</div>
-<div class="tip">💡 配置后重启 Gateway：<code>openclaw gateway restart</code>，之后所有对话自动走 deepseek-a4 智能路由。</div>
-
-<h3 style="margin: 15px 0 10px; color: #555;">OpenClaw MCP 集成</h3>
-<p>也可以只通过 MCP 接入 atmApi 工具（查询用量、续费等），模型仍用自己的：</p>
-<div class="code-block">{
-  "mcpServers": {
-    "atmapi": {
-      "type": "http",
-      "url": "https://atmapi.aitomoney.online/mcp",
-      "headers": { "Authorization": "***" }
-    }
-  }
-}</div>
-</div>
-
-<div id="config-hermes" class="config-section">
-<h3 style="margin: 15px 0 10px; color: #555;">Hermes（小马哥）配置</h3>
-<p>Hermes 用户使用相同的 API 地址和 Token，<strong>模型名由 Hermes 工作流自动指定</strong>，无需手动配置。</p>
-<p>配置文件位置：<code>~/.hermes/config.yaml</code></p>
-<div class="code-block"># ~/.hermes/config.yaml
-api:
-  base_url: https://atmapi.aitomoney.online/v1
-  api_key: "***"
-  model: deepseek-a4</div>
-<div class="tip">💡 <strong>注意：</strong>Hermes 套餐（基础 ¥149/进阶 ¥399）和 DeepSeek-A4 套餐不通用。请确认您的 Token 属于 Hermes 产品线。如有问题，在群内联系小马哥。</div>
-</div>
-
-<div id="config-other" class="config-section">
-<h3 style="margin: 15px 0 10px; color: #555;">通用客户端配置</h3>
-<p>适用于 ChatBox、NextChat、LobeChat、Cursor 等支持 OpenAI API 的客户端：</p>
-<table>
-<tr><th>配置项</th><th>填写内容</th></tr>
-<tr><td><strong>API Base URL</strong></td><td><code>https://atmapi.aitomoney.online/v1</code></td></tr>
-<tr><td><strong>API Key</strong></td><td>您的专属 Key</td></tr>
-<tr><td><strong>Model</strong></td><td><code>deepseek-a4</code></td></tr>
-</table>
-
-<h3 style="margin: 15px 0 10px; color: #555;">Python</h3>
-<div class="code-block">from openai import OpenAI
-
-client = OpenAI(
-    api_key=***
-    base_url="https://atmapi.aitomoney.online/v1"
-)
-response = client.chat.completions.create(
-    model="deepseek-a4",
-    messages=[{"role": "user", "content": "你好！"}]
-)
-print(response.choices[0].message.content)</div>
-</div>
-
-<div class="card card-common">
-<h2>📈 用量查询</h2>
-<p>您可以通过以下方式随时查看 API 用量：</p>
-
-<h3 style="margin: 15px 0 10px; color: #555;">方式一：Token 查询页面（推荐）</h3>
-<div class="step"><div class="step-num">1</div><div>打开 <a href="https://atmapi.aitomoney.online/token-info" target="_blank">https://atmapi.aitomoney.online/token-info</a></div></div>
-<div class="step"><div class="step-num">2</div><div>输入您的 API Key（Token）</div></div>
-<div class="step"><div class="step-num">3</div><div>查看实时数据：<strong>剩余配额</strong>、<strong>套餐信息</strong>、<strong>到期时间</strong></div></div>
-<div class="step"><div class="step-num">4</div><div>如套餐即将到期，页面上可直接<strong>续费</strong>或<strong>升级</strong></div></div>
-
-<h3 style="margin: 15px 0 10px; color: #555;">方式二：对话中查询</h3>
-<p>在对话中发送 <strong>「查询用量」</strong>，系统会自动返回您的用量详情。</p>
-<div class="tip">💡 到期前 7 天，系统会自动提醒您续费。</div>
-</div>
-
-<div class="card card-common">
-<h2>🔌 MCP 集成（OpenClaw 用户）</h2>
-<p>将 atmApi 能力接入您的 OpenClaw 智能体：</p>
-<div class="code-block">{
-  "mcpServers": {
-    "atmapi": {
-      "type": "http",
-      "url": "https://atmapi.aitomoney.online/mcp",
-      "headers": { "Authorization": "***" }
-    }
-  }
-}</div>
-
-<h3 style="margin: 15px 0 10px; color: #555;">可用工具</h3>
-<table>
-<tr><th>工具</th><th>功能</th><th>用法</th></tr>
-<tr><td><code>query_usage</code></td><td>查询剩余配额和用量</td><td>「帮我查下配额」</td></tr>
-<tr><td><code>create_renewal</code></td><td>生成续费/升级支付链接</td><td>「我要续费旗舰版」</td></tr>
-<tr><td><code>list_models</code></td><td>查看可用模型和套餐</td><td>「有哪些套餐？」</td></tr>
-</table>
-</div>
-
-<div class="card card-common">
-<h2>⚠️ 注意事项</h2>
-<div class="warning">
-<ul style="padding-left: 20px;">
-<li><strong>Token 是您的专属密钥</strong>，请勿泄露</li>
-<li>配额按滑动窗口自动重置，未用完不累积</li>
-<li>禁止用于违法、违规内容</li>
-</ul>
-</div>
-</div>
-
-<div class="card card-common">
-<h2>❓ 常见问题</h2>
-<p><strong>Q: deepseek-a4 是什么模型？</strong></p>
-<p>A: 一个智能路由层，自动选择 flash/pro/qwen，您不需要手动切换。</p>
-<p style="margin-top: 15px;"><strong>Q: 配额用完了怎么办？</strong></p>
-<p>A: 滑动窗口自动重置。5小时窗口滚动即可恢复，月卡有效期内持续有效。</p>
-<p style="margin-top: 15px;"><strong>Q: Token 会过期吗？</strong></p>
-<p>A: 激活后 30 天有效。到期前 7 天自动提醒续费。</p>
-<p style="margin-top: 15px;"><strong>Q: 如何续费或升级？</strong></p>
-<p>A: 对话中发送「续费」或「升级」，或访问 <a href="https://atmapi.aitomoney.online/token-info" target="_blank">Token 查询页面</a>。</p>
-<p style="margin-top: 15px;"><strong>Q: 不同产品线的套餐能混用吗？</strong></p>
-<p>A: 不能。DeepSeek-A4、OpenClaw（atm卡）、Hermes 是独立产品线，套餐互不通用。</p>
-</div>
-
-<div class="footer">
-    <p>Powered by atmApi · AI API Gateway</p>
-    <p>© 2026 AiToMoney. All rights reserved.</p>
-</div>
-</div>
-
-<script>
-function switchProduct(product) {
-    // 只操作顶部产品线 tab
-    var topTabs = document.querySelectorAll('.product-tabs:first-of-type .product-tab');
-    topTabs.forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('[id^="product-"]').forEach(function(c) { c.classList.remove('show'); });
-    var target = document.getElementById('product-' + product);
-    if (target) target.classList.add('show');
-    topTabs.forEach(function(t) {
-        if (t.getAttribute('onclick') && t.getAttribute('onclick').indexOf(product) !== -1) {
-            t.classList.add('active');
-        }
-    });
-}
-function switchConfig(type) {
-    var configTabs = document.querySelectorAll('.card-common .product-tabs .product-tab');
-    configTabs.forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('.config-section').forEach(function(s) { s.classList.remove('show'); });
-    var target = document.getElementById('config-' + type);
-    if (target) target.classList.add('show');
-    configTabs.forEach(function(t) {
-        if (t.getAttribute('onclick') && t.getAttribute('onclick').indexOf(type) !== -1) {
-            t.classList.add('active');
-        }
-    });
-}
-</script>
 <div style="text-align:center;margin-top:24px;padding:20px 0;font-size:12px;color:#666;"><span>上海新智国艳科技服务有限公司 运营维护</span><span style="margin-left:10px;"><a href="https://beian.miit.gov.cn/" target="_blank" style="color:#666;text-decoration:none;">沪ICP备2026016770号-2</a></span></div>
 </body>
 </html>

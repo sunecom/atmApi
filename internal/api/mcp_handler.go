@@ -56,7 +56,21 @@ type RPCError struct {
 var mcpTools = []map[string]interface{}{
 	{
 		"name":        "query_usage",
-		"description": "查询 atmApi Token 的剩余配额和使用情况。返回 5小时/每日/每周/每月 的已用/剩余次数、套餐信息、到期时间等。token 参数可选——如果不传，自动使用当前调用者的 API Key。",
+		"description": "查询 atmApi Token 的剩余配额和使用情况（deepseek-a4 次数制套餐）。返回 5小时/每日/每周/每月 的已用/剩余次数、套餐信息、到期时间等。token 参数可选——如果不传，自动使用当前调用者的 API Key。",
+		"inputSchema": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"token": map[string]interface{}{
+					"type":        "string",
+					"description": "atmApi 的 API Key（可选，不传则自动使用当前调用者的 token）",
+				},
+			},
+			"required": []string{},
+		},
+	},
+	{
+		"name":        "query_glm_usage",
+		"description": "查询 GLM-5.2 Token 的点数余额和使用情况（GLM-5.2 点数制套餐）。返回月度总点数、已用、剩余、5小时/每日/每周限额、输入输出上限等。token 参数可选——如果不传，自动使用当前调用者的 API Key。",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -70,7 +84,7 @@ var mcpTools = []map[string]interface{}{
 	},
 	{
 		"name":        "create_renewal",
-		"description": "生成续费或升级套餐的指引。传入目标套餐名，返回带 token 的 token-info 页面链接，用户可在页面上查看套餐详情并完成支付。token 参数可选——如果不传，自动使用当前调用者的 API Key。可用套餐名请通过 list_models 查询。",
+		"description": "生成续费或升级套餐的指引。传入目标套餐名，返回带 token 的 token-info 页面链接，用户可在页面上查看套餐详情并完成支付。支持 deepseek-a4 和 GLM-5.2 套餐。token 参数可选——如果不传，自动使用当前调用者的 API Key。可用套餐名请通过 list_models 查询。",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -80,7 +94,7 @@ var mcpTools = []map[string]interface{}{
 				},
 				"plan": map[string]interface{}{
 					"type":        "string",
-					"description": "目标套餐名（如 basic, pro, flagship 等）。先调 list_models 获取所有可用套餐列表。",
+					"description": "目标套餐名（如 basic, pro, flagship, glm-basic, glm-standard, glm-pro 等）。先调 list_models 获取所有可用套餐列表。",
 				},
 			},
 			"required": []string{"plan"},
@@ -88,7 +102,7 @@ var mcpTools = []map[string]interface{}{
 	},
 	{
 		"name":        "list_models",
-		"description": "介绍 deepseek-a4 智能路由模型。了解它的核心能力、工作原理、适用场景和套餐价格。AiToMoney 团队出品。",
+		"description": "查看 atmApi 所有可用模型和套餐。包含 deepseek-a4（智能路由）和 GLM-5.2（企业级多平台路由）的核心能力、工作原理、适用场景和套餐价格。AiToMoney 团队出品。",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -266,6 +280,8 @@ func mcpToolCall(c *gin.Context, req *JSONRPCRequest) {
 	switch params.Name {
 	case "query_usage":
 		mcpQueryUsage(c, req.ID, params.Arguments)
+	case "query_glm_usage":
+		mcpQueryGLMUsage(c, req.ID, params.Arguments)
 	case "create_renewal":
 		mcpCreateRenewal(c, req.ID, params.Arguments)
 	case "list_models":
@@ -383,6 +399,129 @@ func mcpQueryUsage(c *gin.Context, id interface{}, args map[string]interface{}) 
 	})
 }
 
+// mcpQueryGLMUsage — 查询 GLM-5.2 Token 点数使用情况
+func mcpQueryGLMUsage(c *gin.Context, id interface{}, args map[string]interface{}) {
+	tokenKey, ok := args["token"].(string)
+	if !ok || tokenKey == "" {
+		mcpToolError(c, id, "缺少 token 参数")
+		return
+	}
+
+	token, err := model.FindByKey(tokenKey)
+	if err != nil {
+		mcpToolError(c, id, "Token 不存在")
+		return
+	}
+
+	// 查询 GLM 点数账本
+	now := time.Now()
+	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+
+	var ledger model.GLMPointsLedger
+	err = model.DB.Where("token_id = ? AND period_start = ?", token.ID, periodStart).First(&ledger).Error
+	if err != nil {
+		// 账本不存在，说明不是 GLM 套餐用户
+		mcpToolError(c, id, "该 Token 未开通 GLM-5.2 套餐或账本未初始化")
+		return
+	}
+
+	// 套餐信息
+	planName := token.RateLimitGroup
+	planDisplay := planName
+	var plan model.Plan
+	if planName != "" {
+		if p, err := service.GetPlan(planName); err == nil {
+			planDisplay = p.DisplayName
+			plan = *p
+		}
+	}
+
+	// 状态判断
+	status := "active"
+	if token.Status == 2 {
+		status = "disabled"
+	} else if token.ExpiredTime > 0 && now.Unix() > token.ExpiredTime {
+		status = "expired"
+	} else if token.ActivatedAt == 0 {
+		status = "waiting"
+	}
+
+	// 到期信息
+	var expireDate string
+	var remainingDays int
+	if token.ExpiredTime > 0 {
+		remainingDays = int((token.ExpiredTime - now.Unix()) / 86400)
+		if remainingDays < 0 {
+			remainingDays = 0
+		}
+		expireDate = time.Unix(token.ExpiredTime, 0).Format("2006-01-02 15:04:05")
+	} else {
+		expireDate = "never"
+		remainingDays = -1
+	}
+
+	// 计算剩余点数
+	remainingPoints := ledger.TotalPoints - ledger.UsedPoints
+	fiveHourRemaining := ledger.FiveHourPoints - ledger.FiveHourUsed
+	dailyRemaining := ledger.DailyPoints - ledger.DailyUsed
+
+	result := map[string]interface{}{
+		"token_name":   token.Name,
+		"plan":         planName,
+		"plan_display": planDisplay,
+		"status":       status,
+		"points": map[string]interface{}{
+			"total":     ledger.TotalPoints,
+			"used":      ledger.UsedPoints,
+			"remaining": remainingPoints,
+			"usage_pct": fmt.Sprintf("%.1f%%", float64(ledger.UsedPoints)/float64(ledger.TotalPoints)*100),
+		},
+		"quota_5h": map[string]interface{}{
+			"limit":     ledger.FiveHourPoints,
+			"used":      ledger.FiveHourUsed,
+			"remaining": fiveHourRemaining,
+		},
+		"quota_daily": map[string]interface{}{
+			"limit":     ledger.DailyPoints,
+			"used":      ledger.DailyUsed,
+			"remaining": dailyRemaining,
+		},
+		"period": map[string]interface{}{
+			"start": ledger.PeriodStart.Format("2006-01-02 15:04:05"),
+			"end":   ledger.PeriodEnd.Format("2006-01-02 15:04:05"),
+		},
+		"max_input_tokens":  plan.MaxInputTokens,
+		"max_output_tokens": plan.MaxOutputTokens,
+		"expired_at":        expireDate,
+		"remaining_days":    remainingDays,
+		"pricing": map[string]interface{}{
+			"standard_price_per_point": ledger.StandardPricePerPoint,
+			"description":              "100 点 = ¥1，1 点 = ¥0.01",
+			"formula":                  "每次扣点 = ⌈输入tokens × 0.008 + 输出tokens × 0.028⌉",
+		},
+	}
+
+	// 快到期时加上续费引导提示
+	if remainingDays >= 0 && remainingDays <= 7 {
+		result["renewal_hint"] = fmt.Sprintf("套餐还有 %d 天到期，如需续费请输入\"我要续费\"", remainingDays)
+	}
+
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+
+	c.JSON(http.StatusOK, JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": string(resultJSON),
+				},
+			},
+		},
+	})
+}
+
 // mcpCreateRenewal — 生成续费/升级链接
 func mcpCreateRenewal(c *gin.Context, id interface{}, args map[string]interface{}) {
 	tokenKey, ok := args["token"].(string)
@@ -463,27 +602,58 @@ func mcpListModels(c *gin.Context, id interface{}) {
 	var plans []model.Plan
 	model.DB.Find(&plans)
 	
-	var plansList []map[string]interface{}
+	// 按模型分组套餐
+	var deepseekPlans []map[string]interface{}
+	var glmPlans []map[string]interface{}
+	
 	for _, p := range plans {
-		plansList = append(plansList, map[string]interface{}{
-			"name":      p.Name,
-			"display":   p.DisplayName,
-			"price":      p.Price,
-			"quota_5h":   p.Hourly5Max,
+		planInfo := map[string]interface{}{
+			"name":          p.Name,
+			"display":       p.DisplayName,
+			"price":         p.Price,
+			"quota_5h":      p.Hourly5Max,
 			"quota_monthly": p.MonthlyMax,
-		})
+		}
+		
+		// 根据套餐名称判断属于哪个模型
+		if strings.HasPrefix(p.Name, "glm") {
+			// GLM-5.2 套餐，添加输入输出上限
+			planInfo["max_input_tokens"] = p.MaxInputTokens
+			planInfo["max_output_tokens"] = p.MaxOutputTokens
+			glmPlans = append(glmPlans, planInfo)
+		} else {
+			// deepseek-a4 套餐
+			deepseekPlans = append(deepseekPlans, planInfo)
+		}
 	}
 
 	result := map[string]interface{}{
-		"vendor":         "AiToMoney 团队出品 🚀",
-		"model":          "deepseek-a4",
-		"display_name":   "DeepSeek A4（智能路由）",
-		"capabilities":   "文本 + 图片理解",
-		"context_window": "1,000,000 tokens（1M）",
-		"max_output":     "384,000 tokens",
-		"description":    "atmApi 智能路由旗舰模型，AiToMoney 团队出品。根据请求内容自动选择最优后端：图片→Qwen3.7-Plus（多模态），简单文本→DeepSeek-V4-Flash（快速便宜），复杂推理→DeepSeek-V4-Pro（深度思考）。一模型打通所有场景。",
-		"routing":        "图片→qwen3.7-plus | 简单文本→deepseek-v4-flash | 复杂文本→deepseek-v4-pro | tool_calls→锁模型",
-		"plans":           plansList,
+		"vendor": "AiToMoney 团队出品 🚀",
+		"models": []map[string]interface{}{
+			{
+				"model":          "deepseek-a4",
+				"display_name":   "DeepSeek A4（智能路由）",
+				"capabilities":   "文本 + 图片理解",
+				"context_window": "1,000,000 tokens（1M）",
+				"max_output":     "384,000 tokens",
+				"description":    "atmApi 智能路由旗舰模型。根据请求内容自动选择最优后端：图片→Qwen3.7-Plus（多模态），简单文本→DeepSeek-V4-Flash（快速便宜），复杂推理→DeepSeek-V4-Pro（深度思考）。一模型打通所有场景。",
+				"routing":        "图片→qwen3.7-plus | 简单文本→deepseek-v4-flash | 复杂文本→deepseek-v4-pro | tool_calls→锁模型",
+				"billing":        "次数制（每次请求扣1次配额）",
+				"plans":          deepseekPlans,
+			},
+			{
+				"model":          "glm-5.2",
+				"display_name":   "GLM-5.2（企业级多平台路由）",
+				"capabilities":   "文本推理",
+				"context_window": "128,000 tokens（128K）",
+				"max_output":     "32,768 tokens",
+				"description":    "企业级 GLM-5.2 多平台智能路由，点数灵活计费。多节点负载均衡，自动故障切换，确保高可用。适合需要深度推理和长上下文的场景。",
+				"routing":        "多平台智能路由，自动选择最优线路",
+				"billing":        "点数制（按 token 用量扣点，缓存命中扣0点）",
+				"pricing_formula": "每次扣点 = ⌈输入tokens × 0.008 + 输出tokens × 0.028⌉",
+				"plans":          glmPlans,
+			},
+		},
 	}
 
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
