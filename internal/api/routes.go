@@ -973,6 +973,10 @@ modelAllowed:
 	if isGLM52 {
 		// GLM-5.2 点数余额预检查（首字节前拒绝）
 		if apiToken.PlanName == "glm52-basic" || apiToken.PlanName == "glm52-standard" || apiToken.PlanName == "glm52-pro" {
+			// 确保点数账本存在（首次调用自动初始化）
+			if err := service.InitGLMLedgerIfNeeded(apiToken.ID, apiToken.PlanName); err != nil {
+				log.Printf("[GLM-5.2账本] token=%s 初始化失败: %v", apiToken.Name, err)
+			}
 			// 估算本次请求扣点（保守估计：假设output=max_tokens）
 			estimatedInput := len(body) / 4 // 粗略估算
 			estimatedOutput := 4096         // 默认输出
