@@ -89,11 +89,35 @@ func TestRelaySSEPreservesEventBoundariesAndObservesMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RelaySSE() error = %v", err)
 	}
+	// 终态验证
+	if result.Outcome.State != TerminalSuccessToolCall {
+		t.Fatalf("outcome state = %+v, want %s", result.Outcome, TerminalSuccessToolCall)
+	}
+	if result.Outcome.ToolCallCount != 1 {
+		t.Fatalf("tool call count = %d, want 1", result.Outcome.ToolCallCount)
+	}
+	// usage 验证
+	if result.Usage.TotalTokens != 24 {
+		t.Fatalf("total tokens = %d, want 24", result.Usage.TotalTokens)
+	}
+	if result.Usage.CachedTokens != 12 {
+		t.Fatalf("cached tokens = %d, want 12", result.Usage.CachedTokens)
+	}
+	if result.Usage.CacheWriteTokens != 3 {
+		t.Fatalf("cache write tokens = %d, want 3", result.Usage.CacheWriteTokens)
+	}
+	if result.Usage.ReasoningTokens != 2 {
+		t.Fatalf("reasoning tokens = %d, want 2", result.Usage.ReasoningTokens)
+	}
+	if result.Usage.ReportedCost == nil || *result.Usage.ReportedCost != 0.00125 {
+		t.Fatalf("reported cost = %v, want 0.00125", result.Usage.ReportedCost)
+	}
+	// 完整性验证
 	if !result.DoneSeen || result.ParseErrors != 0 {
 		t.Fatalf("result = %+v", result)
 	}
 	if !result.FirstDataSeen {
-		t.Fatalf("first data event was not observed: %+v", result)
+		t.Fatalf("first data event was not observed")
 	}
 }
 

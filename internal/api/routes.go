@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"github.com/gin-gonic/gin"
 	"io"
 	"log"
@@ -988,8 +989,9 @@ modelAllowed:
 				estimatedOutput = maxTokensReq.MaxTokens
 			}
 			estimatedPoints := service.EstimateStandardPoints(estimatedInput, estimatedOutput)
-			allowed, remaining := service.GLMDeductor.CheckBalance(apiToken.ID, estimatedPoints)
-			if !allowed {
+			// 原子预占点数（防止并发起卖）
+			reservationID, reserved, remaining := service.GLMDeductor.ReservePoints(apiToken.ID, estimatedPoints)
+			if !reserved {
 				log.Printf("[GLM-5.2余额] token=%s 余额不足: remaining=%d, estimated=%d", apiToken.Name, remaining, estimatedPoints)
 				respondError(c, http.StatusPaymentRequired, ErrPaymentRequired, "GLM-5.2 点数不足，请充值或升级套餐",
 					map[string]interface{}{
@@ -998,6 +1000,13 @@ modelAllowed:
 					})
 				return
 			}
+			// 延迟结算：请求完成后按实际 usage 退差额
+			defer func() {
+				if reservationID > 0 {
+					c.Set("glm52_reservation_id", reservationID)
+					c.Set("glm52_reserved_points", estimatedPoints)
+				}
+			}()
 		}
 
 		plan, planErr := service.GetPlan(apiPlanName)
@@ -1376,10 +1385,30 @@ processResult:
 				// GLM-5.2 点数扣减（双账分离）
 				if apiToken.PlanName == "glm52-basic" || apiToken.PlanName == "glm52-standard" || apiToken.PlanName == "glm52-pro" {
 					failed := relayErr != nil && !relayResult.FirstDataSeen
-					cacheHit := singleflightShared || (relayResult.Usage.CachedTokens > 0 && relayResult.Usage.PromptTokens == relayResult.Usage.CachedTokens)
-					deductResult := service.GLMDeductor.DeductPoints(apiToken.ID, relayResult.Usage.PromptTokens, relayResult.Usage.CompletionTokens, cacheHit, failed)
-					log.Printf("[GLM-5.2扣点] token=%s points=%d reason=%s remaining=%d",
-						apiToken.Name, deductResult.PointsDeducted, deductResult.Reason, deductResult.RemainingPoints)
+					// 区分本地缓存 vs 上游 Prompt Cache
+					localCacheHit := singleflightShared
+					upstreamCacheHit := !singleflightShared && (relayResult.Usage.CachedTokens > 0 && relayResult.Usage.PromptTokens == relayResult.Usage.CachedTokens)
+					// 结算预占点数：按实际 usage 计算
+					if reservationID, exists := c.Get("glm52_reservation_id"); exists {
+						var actualPoints int
+						if localCacheHit || failed {
+							actualPoints = 0
+						} else if upstreamCacheHit {
+							actualPoints = int(math.Ceil(float64(relayResult.Usage.CompletionTokens) * 0.028))
+							if actualPoints < 1 {
+								actualPoints = 1
+							}
+						} else {
+							actualPoints = service.EstimateStandardPoints(int(relayResult.Usage.PromptTokens), int(relayResult.Usage.CompletionTokens))
+						}
+						reservedPts := c.GetInt64("glm52_reserved_points")
+						service.GLMDeductor.SettlePoints(reservationID.(int64), int(reservedPts), actualPoints)
+						log.Printf("[GLM-5.2结算] token=%s reserved=%d actual=%d", apiToken.Name, reservedPts, actualPoints)
+					} else {
+						// fallback：无预占记录时用旧逻辑
+						deductResult := service.GLMDeductor.DeductPoints(apiToken.ID, relayResult.Usage.PromptTokens, relayResult.Usage.CompletionTokens, localCacheHit || upstreamCacheHit, failed)
+						log.Printf("[GLM-5.2扣点fallback] token=%s points=%d reason=%s", apiToken.Name, deductResult.PointsDeducted, deductResult.Reason)
+					}
 				}
 				go SavePromptAnalysis(originalMessages, apiToken.ID, apiToken.Name, actualModel, relayResult.Usage.PromptTokens, relayResult.Usage.CachedTokens)
 				log.Printf("[GLM-5.2流式usage] token=%s model=%s tokens=%d cached=%d cost=%.6f",
@@ -1549,10 +1578,26 @@ processResult:
 			// GLM-5.2 点数扣减（双账分离）
 			if apiToken.PlanName == "glm52-basic" || apiToken.PlanName == "glm52-standard" || apiToken.PlanName == "glm52-pro" {
 				failed := result.Response.StatusCode >= 400
-				cacheHit := singleflightShared || (cachedTokens > 0 && upstreamResp.Usage.PromptTokens == cachedTokens)
-				deductResult := service.GLMDeductor.DeductPoints(apiToken.ID, upstreamResp.Usage.PromptTokens, upstreamResp.Usage.CompletionTokens, cacheHit, failed)
-				log.Printf("[GLM-5.2扣点] token=%s points=%d reason=%s remaining=%d",
-					apiToken.Name, deductResult.PointsDeducted, deductResult.Reason, deductResult.RemainingPoints)
+				// 区分本地缓存 vs 上游 Prompt Cache
+			localCacheHit := singleflightShared
+			upstreamCacheHit := !singleflightShared && (cachedTokens > 0 && upstreamResp.Usage.PromptTokens == cachedTokens)
+			// 结算预占点数
+			if reservationID, exists := c.Get("glm52_reservation_id"); exists {
+				var actualPoints int
+				if localCacheHit || failed {
+					actualPoints = 0
+				} else if upstreamCacheHit {
+					actualPoints = int(math.Ceil(float64(upstreamResp.Usage.CompletionTokens) * 0.028))
+					if actualPoints < 1 { actualPoints = 1 }
+				} else {
+					actualPoints = service.EstimateStandardPoints(int(upstreamResp.Usage.PromptTokens), int(upstreamResp.Usage.CompletionTokens))
+				}
+				reservedPts := c.GetInt64("glm52_reserved_points")
+				service.GLMDeductor.SettlePoints(reservationID.(int64), int(reservedPts), actualPoints)
+				log.Printf("[GLM-5.2结算] token=%s reserved=%d actual=%d", apiToken.Name, reservedPts, actualPoints)
+			} else {
+				service.GLMDeductor.DeductPoints(apiToken.ID, upstreamResp.Usage.PromptTokens, upstreamResp.Usage.CompletionTokens, localCacheHit || upstreamCacheHit, failed)
+			}
 			}
 			// 缓存分析埋点
 			if service.GlobalAnalytics != nil {

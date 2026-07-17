@@ -42,7 +42,7 @@ func FindByKey(key string) (*Token, error) {
 	var token Token
 	escaped := strings.ReplaceAll(key, "'", "''")
 	sql := "SELECT id,user_id,name,`key`,CAST(status AS SIGNED) as status,remain_quota,init_quota,unlimited_quota,rate_limit_group,plan_group,plan_name,activated_at,expired_time,created_time,accessed_time,created_at,updated_at,deleted_at FROM tokens WHERE `key` = '" + escaped + "' AND deleted_at IS NULL LIMIT 1"
-	log.Printf("[FindByKey] SQL: %s", sql)
+	log.Printf("[FindByKey] query for token name lookup")
 	err := DB.Raw(sql).Scan(&token).Error
 	if err != nil {
 		log.Printf("[FindByKey] Error: %v", err)

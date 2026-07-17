@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"atmapi/internal/config"
 
@@ -44,8 +45,20 @@ func InitDB(cfg *config.Config) {
 		log.Fatalf("不支持的数据库类型：%s", cfg.DBType)
 	}
 
+	// 自定义 Logger：Warn 级别 + 参数化查询（避免 Token 明文泄露）
+	customLogger := logger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags),
+		logger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  false,
+			ParameterizedQueries:      true, // SQL 参数用 ? 替代实际值
+		},
+	)
+
 	DB, err = gorm.Open(dialector, &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn), // 关闭 SQL Info 日志，避免 Token 明文泄露
+		Logger: customLogger,
 	})
 	if err != nil {
 		log.Fatalf("数据库连接失败：%v", err)

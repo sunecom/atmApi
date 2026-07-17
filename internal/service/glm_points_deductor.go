@@ -152,6 +152,46 @@ func (d *GLMPointsDeductor) GetUsage(tokenID uint) (used, total int, err error) 
 // 全局实例
 var GLMDeductor = &GLMPointsDeductor{}
 
+// ReservePoints 原子预占点数（请求前调用）
+// 返回 reservationID（用 ledger.ID + 时间戳），用于完成后结算
+func (d *GLMPointsDeductor) ReservePoints(tokenID uint, estimatedPoints int) (int64, bool, int) {
+	now := time.Now()
+	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+
+	var ledger model.GLMPointsLedger
+	err := model.DB.Where("token_id = ? AND period_start = ?", tokenID, periodStart).First(&ledger).Error
+	if err != nil {
+		return 0, false, 0 // fail-closed
+	}
+
+	// 原子预占：检查余额 + 扣减
+	result := model.DB.Model(&model.GLMPointsLedger{}).
+		Where("id = ? AND used_points + ? <= total_points", ledger.ID, estimatedPoints).
+		Update("used_points", model.DB.Raw("used_points + ?", estimatedPoints))
+	if result.Error != nil || result.RowsAffected == 0 {
+		remaining := ledger.TotalPoints - ledger.UsedPoints
+		return 0, false, remaining
+	}
+
+	return int64(ledger.ID), true, ledger.TotalPoints - ledger.UsedPoints - estimatedPoints
+}
+
+// SettlePoints 结算退差额（请求完成后调用）
+// reserved = 预占的点数，actual = 实际消耗的点数
+func (d *GLMPointsDeductor) SettlePoints(ledgerID int64, reserved, actual int) {
+	if reserved == actual {
+		return // 无需调整
+	}
+	diff := reserved - actual
+	if diff > 0 {
+		// 退回多扣的点数
+		model.DB.Model(&model.GLMPointsLedger{}).
+			Where("id = ?", ledgerID).
+			Update("used_points", model.DB.Raw("used_points - ?", diff))
+		log.Printf("[GLM点数结算] ledger=%d 退回=%d点 (预占=%d 实际=%d)", ledgerID, diff, reserved, actual)
+	}
+}
+
 // EstimateStandardPoints 估算标准扣点（用于预检查）
 func EstimateStandardPoints(inputTokens, outputTokens int) int {
 	points := int(math.Ceil(float64(inputTokens)*0.008 + float64(outputTokens)*0.028))
