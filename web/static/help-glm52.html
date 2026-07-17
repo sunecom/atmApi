@@ -62,7 +62,7 @@
 <div class="plan-specs" style="margin-top: 20px;">
 <table>
 <tr><th>核心能力</th><td>深度推理、长上下文理解、代码生成、逻辑分析</td></tr>
-<tr><th>上下文窗口</th><td>最大 128K tokens</td></tr>
+<tr><th>上下文窗口</th><td>最大 1M tokens（按套餐档位：32K/64K/128K）</td></tr>
 <tr><th>最大输出</th><td>最大 32K tokens</td></tr>
 <tr><th>计费方式</th><td>点数制（按实际 token 用量扣点）</td></tr>
 <tr><th>路由策略</th><td>多平台智能路由，自动选择最优线路</td></tr>
@@ -238,11 +238,23 @@ print(response.choices[0].message.content)</div>
 <ul style="padding-left: 20px;">
 <li>GLM-5.2 套餐与 DeepSeek-A4 套餐<strong>不通用</strong>，请确认购买正确的产品线</li>
 <li>GLM-5.2 是推理模型，首次响应可能较慢（需要 reasoning），属正常现象</li>
+<li>GLM-5.2 是<strong>纯文本模型</strong>，不支持图片识别。如需图片理解，请使用 DeepSeek-A4</li>
 <li>点数按滑动窗口自动重置，未用完不累积</li>
 <li>Token 是您的专属密钥，请勿泄露</li>
 <li>禁止用于违法、违规内容</li>
 </ul>
 </div>
+
+<h3 style="margin: 15px 0 10px; color: #555; font-size: 16px;">常见错误码</h3>
+<table>
+<tr><th>错误码</th><th>含义</th><th>处理方式</th></tr>
+<tr><td>400</td><td>请求格式错误</td><td>检查 messages 格式是否符合 OpenAI 规范</td></tr>
+<tr><td>401</td><td>Token 无效或未激活</td><td>检查 API Key 是否正确，首次使用会自动激活</td></tr>
+<tr><td>429</td><td>触发限流</td><td>5h/日/月额度用完，等待窗口恢复</td></tr>
+<tr><td>402</td><td>点数不足</td><td>充值或升级套餐</td></tr>
+<tr><td>502</td><td>上游渠道故障</td><td>系统会自动切换渠道，如持续报错请联系客服</td></tr>
+<tr><td>400 + 不支持图片</td><td>发送了图片</td><td>GLM-5.2 不支持图片，请改用 DeepSeek-A4</td></tr>
+</table>
 </div>
 
 <!-- 用量查询 -->
