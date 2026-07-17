@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"unicode/utf8"
 )
@@ -38,6 +39,7 @@ type ContextDecision struct {
 	ShadowCandidateRunes    int    `json:"shadow_candidate_runes,omitempty"`
 	ShadowHashPrefix        string `json:"shadow_hash_prefix,omitempty"`
 	Reason                  string `json:"reason"`
+	GroupsRemoved           int    `json:"groups_removed,omitempty"` // Phase 2: MessageGroup 兜底压缩移除的组数
 }
 
 type SummaryShadow struct {
@@ -138,11 +140,29 @@ func ApplyContextBudget(body []byte, policy ContextPolicy) ([]byte, ContextDecis
 		}
 	}
 
+	// Phase 2: MessageGroup 级安全兜底（Dry-run 模式）
+	if decision.FinalEstimatedTokens > policy.MaxInputTokens && len(groups) > 1 {
+		// 尝试从最早的已完成事务开始压缩，保留 system/当前请求/最近轮次
+		compressedMessages, compressedTokens, groupsRemoved := tryMessageGroupCompression(
+			updatedMessages, groups, policy.MaxInputTokens)
+		if groupsRemoved > 0 {
+			decision.GroupsRemoved = groupsRemoved
+			decision.FinalEstimatedTokens = compressedTokens
+			updatedMessages = compressedMessages
+			decision.Reason = "message_group_compression_applied"
+			log.Printf("[GLM52上下文] MessageGroup兜底压缩: 移除%d个历史组, 估算从%d降至%d tokens",
+				groupsRemoved, decision.OriginalEstimatedTokens, compressedTokens)
+		}
+	}
+
 	if decision.FinalEstimatedTokens > policy.MaxInputTokens {
 		decision.Reason = "safe_reduction_insufficient"
-		return nil, decision, shadow, contextError(400, ContextCodeLimitExceeded,
-			fmt.Sprintf("GLM-5.2 输入上下文约 %d tokens，超过套餐上限 %d；请在客户端压缩历史或升级套餐",
-				decision.FinalEstimatedTokens, policy.MaxInputTokens), decision)
+		// Phase 2: 超限错误信息优化（包含诊断信息）
+		errMsg := fmt.Sprintf(
+			"GLM-5.2 输入上下文约 %d tokens，超过套餐上限 %d tokens。"+
+				"建议操作：1) 在客户端启用上下文压缩 2) 减少历史消息 3) 升级套餐",
+			decision.FinalEstimatedTokens, policy.MaxInputTokens)
+		return nil, decision, shadow, contextError(400, ContextCodeLimitExceeded, errMsg, decision)
 	}
 	decision.Reason = "within_budget"
 	encodedMessages, _ := json.Marshal(updatedMessages)
@@ -415,6 +435,56 @@ func buildSummaryShadow(messages []ContextMessage, groups []MessageGroup) (strin
 		}
 	}
 	return truncateRunes(strings.Join(parts, "\n"), 1200), len(groups) - 1
+}
+
+// tryMessageGroupCompression 尝试从最早的已完成事务开始压缩，保留 system/当前请求/最近轮次
+// 返回：压缩后的 messages、估算的 tokens、移除的 group 数量
+func tryMessageGroupCompression(messages []ContextMessage, groups []MessageGroup, maxTokens int) ([]ContextMessage, int, int) {
+	if len(groups) <= 1 {
+		return messages, EstimateContextTokens(messages), 0
+	}
+
+	// 保留最后一个 group（当前请求），尝试移除前面的 group
+	groupsToRemove := len(groups) - 1
+
+	// 从最早的 group 开始，逐步移除，直到低于 maxTokens
+	for removeCount := 1; removeCount <= groupsToRemove; removeCount++ {
+		// 保留从 groups[removeCount].Start 到最后的 messages
+		keepStart := groups[removeCount].Start
+		if keepStart >= len(messages) {
+			break
+		}
+
+		// 构建保留的 messages（保留 system + 从 keepStart 开始的所有内容）
+		var keptMessages []ContextMessage
+		
+		// 先检查是否有 system 消息
+		for i := 0; i < keepStart; i++ {
+			if messageRole(messages[i]) == "system" {
+				keptMessages = append(keptMessages, messages[i])
+				break // 只保留第一个 system 消息
+			}
+		}
+		
+		// 保留从 keepStart 开始的所有 messages
+		keptMessages = append(keptMessages, messages[keepStart:]...)
+
+		// 估算 tokens
+		tokens := EstimateContextTokens(keptMessages)
+		
+		log.Printf("[GLM52上下文] MessageGroup压缩尝试: 移除前%d个group, 保留%d条消息, 估算%d tokens (上限%d)",
+			removeCount, len(keptMessages), tokens, maxTokens)
+
+		if tokens <= maxTokens {
+			log.Printf("[GLM52上下文] MessageGroup压缩成功: 从%d tokens降至%d tokens, 移除%d个历史group",
+				EstimateContextTokens(messages), tokens, removeCount)
+			return keptMessages, tokens, removeCount
+		}
+	}
+
+	// 即使移除所有历史 group 仍然超限，返回当前状态
+	log.Printf("[GLM52上下文] MessageGroup压缩失败: 即使移除所有历史group仍超限")
+	return messages, EstimateContextTokens(messages), 0
 }
 
 func contextError(status int, code, message string, decision ContextDecision) *ContextError {

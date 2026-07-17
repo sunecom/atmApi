@@ -51,6 +51,80 @@ func releaseConcurrency(channelID uint) {
 	}
 }
 
+// estimateRequiredWindow 估算本次请求所需的总窗口
+// 公式：输入 tokens + 输出预算 + reasoning 预留 + 安全余量
+func estimateRequiredWindow(requestBody []byte, request glmoptimizer.Request) int {
+	// 1. 估算输入 tokens（从请求体）
+	inputTokens := estimateInputTokens(requestBody)
+	
+	// 2. 输出预算（从 max_tokens 字段）
+	outputBudget := extractMaxTokens(requestBody)
+	if outputBudget == 0 {
+		outputBudget = 4096 // 默认输出预算
+	}
+	
+	// 3. Reasoning 预留（如果有 reasoning_effort 字段）
+	reasoningReserve := 0
+	if hasReasoning(requestBody) {
+		reasoningReserve = 8192 // reasoning 预留
+	}
+	
+	// 4. 安全余量（10%）
+	safetyMargin := int(float64(inputTokens+outputBudget+reasoningReserve) * 0.1)
+	
+	total := inputTokens + outputBudget + reasoningReserve + safetyMargin
+	return total
+}
+
+// estimateInputTokens 估算输入 tokens（简化版：字符数 / 4）
+func estimateInputTokens(requestBody []byte) int {
+	var req map[string]interface{}
+	if err := json.Unmarshal(requestBody, &req); err != nil {
+		return 0
+	}
+	
+	messages, ok := req["messages"].([]interface{})
+	if !ok {
+		return 0
+	}
+	
+	totalChars := 0
+	for _, msg := range messages {
+		if msgMap, ok := msg.(map[string]interface{}); ok {
+			if content, ok := msgMap["content"].(string); ok {
+				totalChars += len(content)
+			}
+		}
+	}
+	
+	// 粗略估算：1 token ≈ 4 字符
+	return totalChars / 4
+}
+
+// extractMaxTokens 从请求体提取 max_tokens
+func extractMaxTokens(requestBody []byte) int {
+	var req map[string]interface{}
+	if err := json.Unmarshal(requestBody, &req); err != nil {
+		return 0
+	}
+	
+	if maxTokens, ok := req["max_tokens"].(float64); ok {
+		return int(maxTokens)
+	}
+	return 0
+}
+
+// hasReasoning 检查请求是否包含 reasoning_effort
+func hasReasoning(requestBody []byte) bool {
+	var req map[string]interface{}
+	if err := json.Unmarshal(requestBody, &req); err != nil {
+		return false
+	}
+	
+	_, hasReasoning := req["reasoning_effort"]
+	return hasReasoning
+}
+
 // RouteRequestResult 路由请求结果
 type RouteRequestResult struct {
 	Response        *http.Response
@@ -272,15 +346,37 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 	if err != nil {
 		return nil, &glmoptimizer.Failure{Class: glmoptimizer.FailureClientRequest, StatusCode: http.StatusBadRequest, Cause: err}
 	}
+	// Phase 0B: 能力感知路由 - 计算所需总窗口
+	requiredTotalWindow := estimateRequiredWindow(requestBody, request)
+	log.Printf("[GLM52能力路由] 所需总窗口=%d tokens", requiredTotalWindow)
+
 	channelsByID := make(map[uint]model.Channel, len(channels))
 	candidates := make([]glmoptimizer.RouteCandidate, 0, len(channels))
+	eligibleCount := 0
 	for _, channel := range channels {
 		log.Printf("[GLM52路由] 检查渠道 id=%d name=%s status=%d model_group=%s", channel.ID, channel.Name, channel.Status, channel.ModelGroup)
 		if channel.Status != 1 || !strings.EqualFold(strings.TrimSpace(channel.ModelGroup), glmoptimizer.ModelGLM52) {
 			continue
 		}
+		// Phase 0B: 能力过滤 - 检查渠道是否能承载本次请求
+		if channel.ContextWindowTokens > 0 && requiredTotalWindow > 0 {
+			if requiredTotalWindow > channel.ContextWindowTokens {
+				log.Printf("[GLM52能力路由] 渠道 id=%d name=%s 能力不足: 需要=%d 窗口=%d",
+					channel.ID, channel.Name, requiredTotalWindow, channel.ContextWindowTokens)
+				continue
+			}
+			eligibleCount++
+		}
 		channelsByID[channel.ID] = channel
 		candidates = append(candidates, glmoptimizer.RouteCandidate{ChannelID: channel.ID, ModelGroup: channel.ModelGroup})
+	}
+	// Phase 0B: 记录运行模式
+	if eligibleCount >= 2 {
+		log.Printf("[GLM52能力路由] 高可用模式: %d 个渠道可承载", eligibleCount)
+	} else if eligibleCount == 1 {
+		log.Printf("[GLM52能力路由] 长上下文模式: 仅 1 个渠道可承载，容灾能力下降")
+	} else {
+		log.Printf("[GLM52能力路由] 无能力过滤（渠道无能力数据或无需过滤）")
 	}
 	log.Printf("[GLM52路由] 候选渠道数=%d", len(candidates))
 

@@ -34,10 +34,16 @@ const (
 // PrepareGLM52Context is the only context-processing entry used by the
 // GLM-5.2 path. It never calls the legacy DeepSeek Flash summarizer and never
 // replaces history with a semantic summary.
+//
+// Phase 0D: Threshold alignment with OpenClaw compact strategy
+// - OpenClaw compacts at 70-80% of context window
+// - atmApi acts as safety net at higher thresholds
+// - Shadow observation triggers at 90% (only for monitoring, not action)
+// - Hard rejection only as last resort when over 100%
 func PrepareGLM52Context(body []byte, planName string, maxInputTokens int) ([]byte, glmoptimizer.ContextDecision, error) {
 	updated, decision, shadow, err := glmoptimizer.ApplyContextBudget(body, glmoptimizer.ContextPolicy{
 		PlanName: planName, MaxInputTokens: maxInputTokens,
-		ToolOutputMaxRunes: 2000, ShadowTriggerRatio: 0.80,
+		ToolOutputMaxRunes: 2000, ShadowTriggerRatio: 0.90,
 	})
 	ObserveGLM52SummaryShadow(decision, shadow)
 	return updated, decision, err

@@ -591,12 +591,14 @@ func chatCompletions(c *gin.Context) {
 			}
 		}
 	}
-	// ===== 输入Token限制检查 =====
-	estimatedTokens := service.EstimateInputTokens(req.Messages)
-	if allowed, limit, actual := service.CheckInputTokenLimit(apiToken, estimatedTokens); !allowed {
-		respondError(c, http.StatusBadRequest, ErrInvalidRequest,
-			fmt.Sprintf("输入Token超过上限（估算=%d，上限=%d），请减少输入内容", actual, limit))
-		return
+	// ===== 输入Token限制检查（GLM-5.2 跳过，走专用上下文处理）=====
+	if !isGLM52 {
+		estimatedTokens := service.EstimateInputTokens(req.Messages)
+		if allowed, limit, actual := service.CheckInputTokenLimit(apiToken, estimatedTokens); !allowed {
+			respondError(c, http.StatusBadRequest, ErrInvalidRequest,
+				fmt.Sprintf("输入Token超过上限（估算=%d，上限=%d），请减少输入内容", actual, limit))
+			return
+		}
 	}
 	// ===== 图片分析缓存（deepseek-a4 专属）=====
 	// 逻辑：纯图 → 后台分析 + 返回“图片已收到”
@@ -1020,11 +1022,13 @@ modelAllowed:
 			}
 			return
 		}
-		// Phase 1: 上下文预警响应头
+		// Phase 1: 上下文预警响应头（柯大侠 V1.1 规范）
 		contextRatio := safeRatio(contextDecision.FinalEstimatedTokens, contextDecision.MaxInputTokens)
 		c.Header("X-ATM-Context-Usage-Ratio", fmt.Sprintf("%.1f", contextRatio))
-		c.Header("X-ATM-Context-Window", strconv.Itoa(contextDecision.MaxInputTokens))
-		c.Header("X-ATM-Context-Estimated", strconv.Itoa(contextDecision.FinalEstimatedTokens))
+		c.Header("X-ATM-Context-Effective-Limit", strconv.Itoa(contextDecision.MaxInputTokens))
+		c.Header("X-ATM-Context-Estimated-Input", strconv.Itoa(contextDecision.FinalEstimatedTokens))
+		c.Header("X-ATM-Context-Action", contextDecision.Reason)
+		c.Header("X-ATM-Context-Policy-Version", "glm52-v0.2.1")
 		if contextRatio >= 95 {
 			c.Header("X-ATM-Context-Warning", "critical")
 		} else if contextRatio >= 85 {

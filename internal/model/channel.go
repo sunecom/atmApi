@@ -22,6 +22,15 @@ type Channel struct {
 	MaxConcurrent int            `gorm:"default:0" json:"max_concurrent"`   // 最大并发数，0=不限
 	TestTime      int64          `json:"test_time"`      // 最后测试时间
 	ResponseTime  int            `json:"response_time"`  // 响应时间 (ms)
+	// Phase 0B: 渠道能力注册表字段
+	ContextWindowTokens   int       `gorm:"default:0" json:"context_window_tokens"`   // 上下文窗口总容量（tokens）
+	MaxOutputTokens       int       `gorm:"default:0" json:"max_output_tokens"`       // 最大输出 tokens
+	SupportsReasoning     bool      `gorm:"default:false" json:"supports_reasoning"`  // 是否支持 reasoning
+	Supports1M            bool      `gorm:"default:false" json:"supports_1m"`         // 是否支持 1M 上下文
+	CapabilityVerifiedAt  time.Time `json:"capability_verified_at"`                  // 能力验证时间
+	CapabilityVersion     string    `gorm:"size:50" json:"capability_version"`        // 能力验证版本
+	PricingVersion        string    `gorm:"size:50" json:"pricing_version"`           // 定价版本
+	EvidenceReference     string    `gorm:"size:500" json:"evidence_reference"`       // 验证证据引用
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
