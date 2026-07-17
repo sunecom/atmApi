@@ -15,8 +15,8 @@ func TestPrepareGLM52ContextUsesSafePipelineWithoutSemanticReplacement(t *testin
 		"model": "glm-5.2",
 		"messages": []map[string]interface{}{
 			{"role": "system", "content": "policy"},
-			{"role": "user", "content": strings.Repeat("历史事实", 200)},
-			{"role": "assistant", "content": strings.Repeat("历史结论", 200)},
+			{"role": "user", "content": strings.Repeat("历史事实", 220)},
+			{"role": "assistant", "content": strings.Repeat("历史结论", 220)},
 			{"role": "user", "content": "current"},
 		},
 	})

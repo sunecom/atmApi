@@ -66,13 +66,12 @@ func (d *GLMPointsDeductor) DeductPoints(tokenID uint, inputTokens, outputTokens
 		}
 	}
 
-	// 6. 原子扣减
-	err = model.DB.Model(&model.GLMPointsLedger{}).
+	// 6. 原子扣减（检查 RowsAffected）
+	result := model.DB.Model(&model.GLMPointsLedger{}).
 		Where("id = ? AND used_points + ? <= total_points", ledger.ID, standardPoints).
-		Update("used_points", model.DB.Raw("used_points + ?", standardPoints)).Error
-
-	if err != nil {
-		log.Printf("[GLM点数] token=%d 扣点失败: %v", tokenID, err)
+		Update("used_points", model.DB.Raw("used_points + ?", standardPoints))
+	if result.Error != nil || result.RowsAffected == 0 {
+		log.Printf("[GLM点数] token=%d 扣点失败: err=%v rows=%d", tokenID, result.Error, result.RowsAffected)
 		return &DeductResult{Success: false, PointsDeducted: 0, Reason: "deduct_failed"}
 	}
 
@@ -106,7 +105,7 @@ func (d *GLMPointsDeductor) CheckBalance(tokenID uint, estimatedPoints int) (boo
 	var ledger model.GLMPointsLedger
 	err := model.DB.Where("token_id = ? AND period_start = ?", tokenID, periodStart).First(&ledger).Error
 	if err != nil {
-		return true, 0 // 无账本，不限制
+		return false, 0 // fail-closed：无账本不 ProvisionallyAllow
 	}
 
 	remaining := ledger.TotalPoints - ledger.UsedPoints

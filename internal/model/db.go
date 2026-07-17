@@ -45,7 +45,7 @@ func InitDB(cfg *config.Config) {
 	}
 
 	DB, err = gorm.Open(dialector, &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: logger.Default.LogMode(logger.Warn), // 关闭 SQL Info 日志，避免 Token 明文泄露
 	})
 	if err != nil {
 		log.Fatalf("数据库连接失败：%v", err)

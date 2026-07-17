@@ -1328,8 +1328,8 @@ processResult:
 		model.DB.Create(&streamReqLog)
 		c.Header("X-Actual-Model", actualModel)
 		c.Header("X-Requested-Model", req.Model)
-		if result.Response.StatusCode < 500 {
-			service.RecordRequest(apiToken.ID)
+		if result.Response.StatusCode < 500 && !isGLM52 {
+			service.RecordRequest(apiToken.ID) // GLM-5.2 在 router.go 已记录
 		}
 		// 透传 SSE
 		c.Header("Content-Type", "text/event-stream")
@@ -1478,8 +1478,8 @@ processResult:
 	c.Header("X-Actual-Model", actualModel)
 	c.Header("X-Requested-Model", req.Model)
 	// 请求成功（或至少被上游处理），记录到限流表
-	if result.Response.StatusCode < 500 {
-		service.RecordRequest(apiToken.ID)
+	if result.Response.StatusCode < 500 && !isGLM52 {
+		service.RecordRequest(apiToken.ID) // GLM-5.2 在 router.go 已记录
 	}
 	// 解析 usage 字段并记录用量日志
 	if result.Response.StatusCode == 200 {
