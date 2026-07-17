@@ -1208,7 +1208,12 @@ modelAllowed:
 				AtmModel: "glm-5.2",
 				StatusCode: status, DurationMs: duration,
 			})
-			respondError(c, status, code, failure.Error())
+			// 图片识别友好提示
+			errMsg := failure.Error()
+			if failure.Cause != nil && strings.Contains(failure.Cause.Error(), "不支持图片识别") {
+				errMsg = failure.Cause.Error()
+			}
+			respondError(c, status, code, errMsg)
 			return
 		}
 		// 检查是否是 tool_calls 不兼容错误

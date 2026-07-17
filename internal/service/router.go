@@ -353,13 +353,12 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 	// 检测是否包含图片
 	hasImage := request.HasImage()
 	if hasImage {
-		log.Printf("[GLM52路由] 检测到图片内容，需要 vision 支持")
+		log.Printf("[GLM52路由] 检测到图片内容")
 	}
 
 	channelsByID := make(map[uint]model.Channel, len(channels))
 	candidates := make([]glmoptimizer.RouteCandidate, 0, len(channels))
 	eligibleCount := 0
-	visionEligibleCount := 0
 	for _, channel := range channels {
 		log.Printf("[GLM52路由] 检查渠道 id=%d name=%s status=%d model_group=%s", channel.ID, channel.Name, channel.Status, channel.ModelGroup)
 		if channel.Status != 1 || !strings.EqualFold(strings.TrimSpace(channel.ModelGroup), glmoptimizer.ModelGLM52) {
@@ -374,14 +373,6 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 			}
 			eligibleCount++
 		}
-		// Vision 过滤：如果请求包含图片，只选择支持 vision 的渠道
-		if hasImage && !channel.SupportsVision {
-			log.Printf("[GLM52路由] 渠道 id=%d name=%s 不支持 vision，跳过", channel.ID, channel.Name)
-			continue
-		}
-		if hasImage && channel.SupportsVision {
-			visionEligibleCount++
-		}
 		channelsByID[channel.ID] = channel
 		candidates = append(candidates, glmoptimizer.RouteCandidate{ChannelID: channel.ID, ModelGroup: channel.ModelGroup})
 	}
@@ -393,20 +384,22 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 	} else {
 		log.Printf("[GLM52能力路由] 无能力过滤（渠道无能力数据或无需过滤）")
 	}
-	// Vision 模式日志
+	// Vision 检测：如果有图片但没有 vision 渠道，返回友好提示
 	if hasImage {
-		if visionEligibleCount >= 2 {
-			log.Printf("[GLM52路由] Vision 高可用模式: %d 个渠道支持图片", visionEligibleCount)
-		} else if visionEligibleCount == 1 {
-			log.Printf("[GLM52路由] Vision 单通道模式: 仅 1 个渠道支持图片，容灾能力下降")
-		} else if visionEligibleCount == 0 && len(candidates) > 0 {
-			log.Printf("[GLM52路由] ⚠️ 警告: 请求包含图片但无渠道支持 vision，可能失败")
+		log.Printf("[GLM52路由] 检测到图片内容，GLM-5.2 不支持图片识别")
+		return nil, &glmoptimizer.Failure{
+			Class:      glmoptimizer.FailureClientRequest,
+			StatusCode: http.StatusBadRequest,
+			Cause:      fmt.Errorf("GLM-5.2 不支持图片识别，请使用 deepseek-a4 模型（支持多模态），或在客户端配置 vision 工具预处理图片"),
 		}
 	}
 	log.Printf("[GLM52路由] 候选渠道数=%d", len(candidates))
 
+	// 文字请求使用默认截止时间
+	router := glm52Router
+
 	routeOnce := func() (*RouteRequestResult, error) {
-		routeResult, routeErr := glm52Router.Route(ctx, candidates, func(attemptCtx context.Context, candidate glmoptimizer.RouteCandidate) (glmoptimizer.AttemptResult, error) {
+		routeResult, routeErr := router.Route(ctx, candidates, func(attemptCtx context.Context, candidate glmoptimizer.RouteCandidate) (glmoptimizer.AttemptResult, error) {
 			channel := channelsByID[candidate.ChannelID]
 			acquired := false
 			if channel.MaxConcurrent > 0 {
