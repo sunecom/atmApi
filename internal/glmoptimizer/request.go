@@ -23,6 +23,35 @@ type Request struct {
 	Stream   bool              `json:"stream,omitempty"`
 }
 
+// HasImage 检测请求是否包含图片内容（image_url 或 base64 image）
+func (r Request) HasImage() bool {
+	for _, msg := range r.Messages {
+		var m struct {
+			Content json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(msg, &m); err != nil || m.Content == nil {
+			continue
+		}
+		// content 可能是字符串或数组
+		var arr []json.RawMessage
+		if err := json.Unmarshal(m.Content, &arr); err != nil {
+			continue
+		}
+		for _, part := range arr {
+			var p struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(part, &p); err != nil {
+				continue
+			}
+			if p.Type == "image_url" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ParseRequest validates the minimum OpenAI chat-completions envelope without
 // rejecting provider extensions that later pipeline stages need to preserve.
 func ParseRequest(body []byte) (Request, error) {

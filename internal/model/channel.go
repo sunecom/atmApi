@@ -31,6 +31,7 @@ type Channel struct {
 	CapabilityVersion     string    `gorm:"size:50" json:"capability_version"`        // 能力验证版本
 	PricingVersion        string    `gorm:"size:50" json:"pricing_version"`           // 定价版本
 	EvidenceReference     string    `gorm:"size:500" json:"evidence_reference"`       // 验证证据引用
+	SupportsVision        bool      `gorm:"default:false" json:"supports_vision"`       // 是否支持图片输入
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`

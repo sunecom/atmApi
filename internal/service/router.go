@@ -349,10 +349,17 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 	// Phase 0B: 能力感知路由 - 计算所需总窗口
 	requiredTotalWindow := estimateRequiredWindow(requestBody, request)
 	log.Printf("[GLM52能力路由] 所需总窗口=%d tokens", requiredTotalWindow)
+	
+	// 检测是否包含图片
+	hasImage := request.HasImage()
+	if hasImage {
+		log.Printf("[GLM52路由] 检测到图片内容，需要 vision 支持")
+	}
 
 	channelsByID := make(map[uint]model.Channel, len(channels))
 	candidates := make([]glmoptimizer.RouteCandidate, 0, len(channels))
 	eligibleCount := 0
+	visionEligibleCount := 0
 	for _, channel := range channels {
 		log.Printf("[GLM52路由] 检查渠道 id=%d name=%s status=%d model_group=%s", channel.ID, channel.Name, channel.Status, channel.ModelGroup)
 		if channel.Status != 1 || !strings.EqualFold(strings.TrimSpace(channel.ModelGroup), glmoptimizer.ModelGLM52) {
@@ -367,6 +374,14 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 			}
 			eligibleCount++
 		}
+		// Vision 过滤：如果请求包含图片，只选择支持 vision 的渠道
+		if hasImage && !channel.SupportsVision {
+			log.Printf("[GLM52路由] 渠道 id=%d name=%s 不支持 vision，跳过", channel.ID, channel.Name)
+			continue
+		}
+		if hasImage && channel.SupportsVision {
+			visionEligibleCount++
+		}
 		channelsByID[channel.ID] = channel
 		candidates = append(candidates, glmoptimizer.RouteCandidate{ChannelID: channel.ID, ModelGroup: channel.ModelGroup})
 	}
@@ -377,6 +392,16 @@ func routeGLM52Group(ctx context.Context, channels []model.Channel, requestBody 
 		log.Printf("[GLM52能力路由] 长上下文模式: 仅 1 个渠道可承载，容灾能力下降")
 	} else {
 		log.Printf("[GLM52能力路由] 无能力过滤（渠道无能力数据或无需过滤）")
+	}
+	// Vision 模式日志
+	if hasImage {
+		if visionEligibleCount >= 2 {
+			log.Printf("[GLM52路由] Vision 高可用模式: %d 个渠道支持图片", visionEligibleCount)
+		} else if visionEligibleCount == 1 {
+			log.Printf("[GLM52路由] Vision 单通道模式: 仅 1 个渠道支持图片，容灾能力下降")
+		} else if visionEligibleCount == 0 && len(candidates) > 0 {
+			log.Printf("[GLM52路由] ⚠️ 警告: 请求包含图片但无渠道支持 vision，可能失败")
+		}
 	}
 	log.Printf("[GLM52路由] 候选渠道数=%d", len(candidates))
 
