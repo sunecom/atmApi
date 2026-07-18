@@ -1114,6 +1114,15 @@ modelAllowed:
 	}
 processResult:
 	defer result.Response.Body.Close()
+	// V1.7: 生成规范模型名用于偏好缓存
+	canonicalModel := service.CanonicalModelName(result.ActualModel)
+	if canonicalModel == "" {
+		canonicalModel = service.CanonicalModelName(actualModel)
+	}
+	// 如果 actualModel 已经是规范名（SmartRoute 直接返回的），直接用
+	if service.IsValidPreferenceModel(actualModel) {
+		canonicalModel = actualModel
+	}
 	// ===== 流式响应分支：逐 chunk 转发 =====
 	if isStream {
 		duration := time.Since(startTime).Milliseconds()
@@ -1209,7 +1218,7 @@ processResult:
 			apiToken.Name, actualModel, result.ChannelName, result.Response.StatusCode, duration)
 		// V1.5: 流式合法终态判断
 		if result.Response.StatusCode >= 200 && result.Response.StatusCode < 300 && sseTerm.IsLegalSuccess() {
-			commitSessionPreference(sessCtx, req.Model, actualModel)
+			commitSessionPreference(sessCtx, req.Model, canonicalModel)
 		}
 		return
 	}
@@ -1296,7 +1305,7 @@ processResult:
 	if result.Response.StatusCode == 200 && len(respBody) > 10 {
 		nonStream := service.ParseNonStreamResponse(respBody)
 		if nonStream.IsLegalSuccess() {
-			commitSessionPreference(sessCtx, req.Model, actualModel)
+			commitSessionPreference(sessCtx, req.Model, canonicalModel)
 		}
 	}
 	c.Data(result.Response.StatusCode, result.Response.Header.Get("Content-Type"), respBody)
@@ -2327,8 +2336,8 @@ func getTokenCost(c *gin.Context) {
 
 // actualModelForLog 返回实际发给渠道的模型名（如果可用），否则回退到路由决策的模型名
 // commitSessionPreference 在确认合法终态后写入会话偏好
-// V1.5: 使用 IsValidPreferenceModel 禁止写入元模型
-func commitSessionPreference(sessCtx *service.SessionContext, reqModel, actualModel string) {
+// V1.7: 偏好使用 CanonicalModel（内部规范名），日志使用 ActualModel（provider 原生名）
+func commitSessionPreference(sessCtx *service.SessionContext, reqModel, canonicalModel string) {
 	if service.GlobalModelPref == nil {
 		return
 	}
@@ -2339,11 +2348,11 @@ func commitSessionPreference(sessCtx *service.SessionContext, reqModel, actualMo
 	if !strings.EqualFold(reqModel, "deepseek-a4") {
 		return
 	}
-	if !service.IsValidPreferenceModel(actualModel) {
+	if !service.IsValidPreferenceModel(canonicalModel) {
 		return
 	}
-	service.GlobalModelPref.SetPreferredModel(prefKey, actualModel)
-	log.Printf("[偏好] ✅ 写入: model=%s session=%s...", actualModel, sessCtx.SessionHash[:min(8, len(sessCtx.SessionHash))])
+	service.GlobalModelPref.SetPreferredModel(prefKey, canonicalModel)
+	log.Printf("[偏好] ✅ 写入: model=%s session=%s...", canonicalModel, sessCtx.SessionHash[:min(8, len(sessCtx.SessionHash))])
 }
 
 func actualModelForLog(result *service.RouteRequestResult, fallback string) string {

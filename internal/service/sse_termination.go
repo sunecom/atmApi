@@ -8,11 +8,12 @@ import (
 // SSETermination 流式响应终态分类
 // V1.5/V1.6: 柯大侠要求统一终态判断
 type SSETermination struct {
-	SawDone      bool // 出现 data: [DONE]
-	SawContent   bool // 至少一个 chunk 有非空 content
-	SawToolCalls bool // 至少一个 chunk 有非空 tool_calls
-	SawRefusal   bool // 至少一个 chunk 有 refusal
-	ReadError    bool // 读取中断（io.ErrUnexpectedEOF 等）
+	SawDone       bool // 出现 data: [DONE]
+	SawContent    bool // 至少一个 chunk 有非空 content
+	SawToolCalls  bool // 至少一个 chunk 有非空 tool_calls
+	SawRefusal    bool // 至少一个 chunk 有 refusal
+	ReadError     bool // 读取中断（io.ErrUnexpectedEOF 等）
+	ProtocolError bool // V1.7: SSE JSON 损坏
 }
 
 // IsLegalSuccess 判断是否为合法成功终态
@@ -23,7 +24,8 @@ type SSETermination struct {
 func (s SSETermination) IsLegalSuccess() bool {
 	return s.SawDone &&
 		(s.SawContent || s.SawToolCalls || s.SawRefusal) &&
-		!s.ReadError
+		!s.ReadError &&
+		!s.ProtocolError
 }
 
 // ParseSSEChunk 解析单个 SSE data 行，更新终态
@@ -46,7 +48,9 @@ func (s *SSETermination) ParseSSEChunk(data string) {
 	}
 
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-		return // 损坏的 JSON 不影响终态
+		// V1.7: 损坏 JSON 标记 ProtocolError
+		s.ProtocolError = true
+		return
 	}
 
 	for _, choice := range chunk.Choices {

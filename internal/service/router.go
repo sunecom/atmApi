@@ -25,7 +25,7 @@ var (
 func acquireConcurrency(channelID uint, maxConcurrent int) bool {
 	concurrencyMutex.Lock()
 	defer concurrencyMutex.Unlock()
-	
+
 	current := channelConcurrency[channelID]
 	if current >= maxConcurrent {
 		return false
@@ -38,7 +38,7 @@ func acquireConcurrency(channelID uint, maxConcurrent int) bool {
 func releaseConcurrency(channelID uint) {
 	concurrencyMutex.Lock()
 	defer concurrencyMutex.Unlock()
-	
+
 	if current, ok := channelConcurrency[channelID]; ok && current > 0 {
 		channelConcurrency[channelID] = current - 1
 	}
@@ -46,10 +46,11 @@ func releaseConcurrency(channelID uint) {
 
 // RouteRequestResult 路由请求结果
 type RouteRequestResult struct {
-	Response    *http.Response
-	ChannelName string
-	AtmModel    string
-	ActualModel string // 实际发给渠道的模型名
+	Response       *http.Response
+	ChannelName    string
+	AtmModel       string
+	ActualModel    string // 实际发给渠道的模型名（provider 原生名）
+	CanonicalModel string // 内部规范模型名（deepseek-v4-flash/pro），用于偏好缓存
 }
 
 // ModelRoute 模型路由表
@@ -57,15 +58,15 @@ type RouteRequestResult struct {
 // 每个条目：[channel_id, model_override, priority]
 // 数字越大越优先，失败就 fallback 到下一个
 type ModelRouteEntry struct {
-	ChannelID uint
-	ChannelName string
+	ChannelID     uint
+	ChannelName   string
 	ModelOverride string // 空字符串表示用原模型名
-	Priority int
+	Priority      int
 }
 
 type ModelRouteConfig struct {
 	VisibleModel string // 对外暴露的模型名
-	Routes []ModelRouteEntry
+	Routes       []ModelRouteEntry
 }
 
 // modelRouter 路由策略配置（已移除 glm-5.2，改走聚合组 model_group）
@@ -82,13 +83,13 @@ var modelRouter = map[string][]ModelRouteEntry{
 	// OpenRouter 优先（便宜+稳定），DeepSeek 官方兜底
 	"deepseek-v4-flash": {
 		{ChannelID: 20, ModelOverride: "deepseek/deepseek-v4-flash", Priority: 120}, // OpenRouter
-		{ChannelID: 14, ModelOverride: "", Priority: 100}, // DeepSeek [151]
-		{ChannelID: 2, ModelOverride: "", Priority: 80},  // DeepSeek [048]
+		{ChannelID: 14, ModelOverride: "", Priority: 100},                           // DeepSeek [151]
+		{ChannelID: 2, ModelOverride: "", Priority: 80},                             // DeepSeek [048]
 	},
 	"deepseek-v4-pro": {
 		{ChannelID: 21, ModelOverride: "deepseek/deepseek-v4-pro", Priority: 120}, // OpenRouter
-		{ChannelID: 17, ModelOverride: "", Priority: 100}, // DeepSeek [151]
-		{ChannelID: 16, ModelOverride: "", Priority: 80},  // DeepSeek [048]
+		{ChannelID: 17, ModelOverride: "", Priority: 100},                         // DeepSeek [151]
+		{ChannelID: 16, ModelOverride: "", Priority: 80},                          // DeepSeek [048]
 	},
 	"qwen3.7-plus": {
 		{ChannelID: 1, ModelOverride: "", Priority: 100}, // 通义千问
@@ -193,11 +194,11 @@ func RouteRequest(targetModel string, requestBody []byte, tokenKey string) (*Rou
 
 		// 更新配额
 		updateQuota(token, 1)
-		RecordRequest(token.ID) // 记录滑动窗口
-		GlobalRPMLimiter.RecordRPM(token.ID) // 记录 RPM
+		RecordRequest(token.ID)                                       // 记录滑动窗口
+		GlobalRPMLimiter.RecordRPM(token.ID)                          // 记录 RPM
 		GlobalChannelLimiter.RecordChannelRPM(token.ID, channel.Name) // 记录渠道 RPM
 
-		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel}, nil
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel, CanonicalModel: CanonicalModelName(actualSentModel)}, nil
 	}
 
 	return nil, fmt.Errorf("所有渠道均失败：%w", lastErr)
@@ -246,7 +247,7 @@ func routeToModelGroup(channels []model.Channel, requestBody []byte, token *mode
 		}
 		updateQuota(token, 1)
 		RecordRequest(token.ID) // 记录滑动窗口
-		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel}, nil
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel, CanonicalModel: CanonicalModelName(actualSentModel)}, nil
 	}
 
 	// 聚合组全挂 → 直接报错（不偷偷换模型）
@@ -278,7 +279,7 @@ func routeToBestChannel(originalModel string, requestBody []byte, token *model.T
 
 		log.Printf("[路由] 尝试: %s → %s", entry.ChannelName, entry.ModelOverride)
 		resp, actualSentModel, err := trySingleChannel(channel, entry.ModelOverride, requestBody)
-		
+
 		if err != nil {
 			// BUG-005 修复：失败时立即释放并发槽位
 			if acquired {
@@ -294,7 +295,7 @@ func routeToBestChannel(originalModel string, requestBody []byte, token *model.T
 		}
 		updateQuota(token, 1)
 		RecordRequest(token.ID) // 记录滑动窗口
-		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel}, nil
+		return &RouteRequestResult{Response: resp, ChannelName: channel.Name, AtmModel: channel.AtmModel, ActualModel: actualSentModel, CanonicalModel: CanonicalModelName(actualSentModel)}, nil
 	}
 
 	return nil, fmt.Errorf("路由策略无可用渠道：%w", lastErr)
@@ -339,7 +340,7 @@ func trySingleChannel(channel model.Channel, targetModel string, originalBody []
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		log.Printf("渠道 %s 返回 HTTP %d: %s", channel.Name, resp.StatusCode, string(bodyBytes))
-		
+
 		if shouldFastFail(resp.StatusCode) {
 			// 4xx 客户端错误 → 快速失败，不继续 fallback
 			// 消息格式问题（如 tool_calls 不匹配）换个渠道也一样，不要浪费时间
@@ -387,8 +388,8 @@ func validateToken(key string) (*model.Token, error) {
 		// 过期时间 = 激活时刻 + 1个自然月
 		tk.ExpiredTime = now.AddDate(0, 1, 0).Unix()
 		model.DB.Save(tk)
-		log.Printf("[激活] token %s 首次使用，激活时间=%s，过期时间=%s", 
-			tk.Name, 
+		log.Printf("[激活] token %s 首次使用，激活时间=%s，过期时间=%s",
+			tk.Name,
 			now.Format("2006-01-02 15:04:05"),
 			now.AddDate(0, 1, 0).Format("2006-01-02 15:04:05"))
 	}
@@ -406,7 +407,7 @@ func validateToken(key string) (*model.Token, error) {
 func getChannelsForModel(modelName string) ([]model.Channel, error) {
 	// 统一转小写，兼容不同大小写写法的模型名
 	modelName = strings.ToLower(modelName)
-	
+
 	var channels []model.Channel
 	result := model.DB.Where(
 		"LOWER(models) LIKE ? AND status = ?",
@@ -445,6 +446,23 @@ func limitTokenUsage(body []byte) []byte {
 }
 
 // replaceModelInRequest 替换请求体中的模型名
+// CanonicalModelName 从 provider 原生模型名提取内部规范名
+// V1.7: 柯大侠指出 ActualModel 是 provider 原生名（如 deepseek/deepseek-v4-pro）
+// 偏好白名单需要内部规范名（deepseek-v4-flash/pro）
+func CanonicalModelName(actualModel string) string {
+	lower := strings.ToLower(actualModel)
+	if strings.Contains(lower, "flash") {
+		return "deepseek-v4-flash"
+	}
+	if strings.Contains(lower, "pro") && !strings.Contains(lower, "provider") {
+		return "deepseek-v4-pro"
+	}
+	if strings.Contains(lower, "qwen") {
+		return "qwen3.7-plus"
+	}
+	return lower
+}
+
 func replaceModelInRequest(body []byte, newModel string) []byte {
 	var req map[string]interface{}
 	if err := json.Unmarshal(body, &req); err != nil {
