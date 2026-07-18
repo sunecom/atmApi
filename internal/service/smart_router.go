@@ -94,76 +94,86 @@ func recordRequest(tokenKey string, isPro bool) {
 	}
 }
 
+// SmartRoute 智能路由（P0-3 修复：会话级模型粘性）
+// 路由优先级：
+// 1. 显式模型（非 deepseek-a4）→ 直接返回
+// 2. 图片内容 → qwen3.7-plus（临时，不改文本会话偏好）
+// 3. 活跃工具事务 → 强制复用偏好模型（更强约束）
+// 4. 会话文本粘性 → 复用上次模型（TTL 内滑动续期）
+// 5. 首轮/无 session → 复杂度分析决定模型
 func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenKey string, planName string, sessionHash string) string {
 	requestedModel = strings.ToLower(requestedModel)
 	if requestedModel != "deepseek-a4" {
 		return requestedModel
 	}
 
+	// 优先级 2：图片内容 → 临时路由视觉模型
 	if HasImageContent(messages) {
-		log.Printf("[路由] 图片内容 → qwen3.7-plus")
+		log.Printf("[路由] 图片内容 → qwen3.7-plus（临时，不改文本偏好）")
 		return "qwen3.7-plus"
 	}
 
 	prefKey := PreferenceCacheKey(sessionHash)
-	hasTC := hasToolCalls(messages)
-	log.Printf("[路由] hasToolCalls=%v, GlobalModelPref=%v, session=%s", hasTC, GlobalModelPref != nil, sessionHash[:min(8, len(sessionHash))])
-	if hasTC && GlobalModelPref != nil {
-		if preferred := GlobalModelPref.GetPreferredModel(prefKey); preferred != "" {
-			log.Printf("[路由] tool_calls活跃 → 复用偏好模型: %s", preferred)
-			return preferred
-		}
-		log.Printf("[路由] tool_calls活跃 → 无偏好缓存，走复杂度分析")
+	sessionMissing := IsSessionMissing(sessionHash)
+
+	// P0-2/P0-3：缺失 session 时禁用粘性，直接走复杂度分析
+	if sessionMissing || prefKey == "" {
+		log.Printf("[路由] 无 session ID → 自然路由（无粘性）")
+		return routeByComplexity(messages, tokenKey, planName)
 	}
 
+	// 优先级 3：活跃工具事务 → 强制复用偏好模型
+	toolActive := HasActiveToolTransaction(messages)
+	if toolActive && GlobalModelPref != nil {
+		if preferred := GlobalModelPref.GetPreferredModel(prefKey); preferred != "" {
+			log.Printf("[路由] 🔒 工具事务活跃 → 强制复用: %s", preferred)
+			return preferred
+		}
+		// 工具事务活跃但无偏好 → 首次工具调用，按复杂度选模型并记录
+		log.Printf("[路由] 工具事务首次调用 → 按复杂度选模型")
+		selected := routeByComplexity(messages, tokenKey, planName)
+		GlobalModelPref.SetPreferredModel(prefKey, selected)
+		return selected
+	}
+
+	// 优先级 4：会话文本粘性 → 复用上次模型
+	if GlobalModelPref != nil {
+		if preferred := GlobalModelPref.GetPreferredModel(prefKey); preferred != "" {
+			log.Printf("[路由] 📌 会话粘性 → 复用模型: %s", preferred)
+			return preferred
+		}
+	}
+
+	// 优先级 5：首轮请求 → 按复杂度选模型
+	selected := routeByComplexity(messages, tokenKey, planName)
+	// 记录到会话偏好（后续追问会复用）
+	if GlobalModelPref != nil && prefKey != "" {
+		GlobalModelPref.SetPreferredModel(prefKey, selected)
+		log.Printf("[路由] 📌 首轮模型已记录: %s (session=%s)", selected, sessionHash[:min(8, len(sessionHash))])
+	}
+	return selected
+}
+
+// routeByComplexity 按复杂度选模型（内部函数）
+func routeByComplexity(messages []map[string]interface{}, tokenKey string, planName string) string {
 	complexity := analyzeComplexityV2(messages)
 	log.Printf("[路由] 复杂度=%s plan=%s", complexity, planName)
-	selectedModel := "deepseek-v4-flash"
 	switch complexity {
 	case "simple":
 		recordRequest(tokenKey, false)
-		selectedModel = "deepseek-v4-flash"
+		return "deepseek-v4-flash"
 	case "complex":
-		// 检查 Pro 比例限制
 		if !CheckProAllowed(tokenKey, planName) {
 			log.Printf("[Pro限制] token=%s plan=%s 超限，静默降级Flash", tokenKey[:min(8, len(tokenKey))], planName)
 			recordRequest(tokenKey, false)
-			selectedModel = "deepseek-v4-flash"
-		} else {
-			recordRequest(tokenKey, true)
-			selectedModel = "deepseek-v4-pro"
+			return "deepseek-v4-flash"
 		}
+		recordRequest(tokenKey, true)
+		return "deepseek-v4-pro"
 	default:
 		recordRequest(tokenKey, false)
-		selectedModel = "deepseek-v4-flash"
+		return "deepseek-v4-flash"
 	}
-
-	// 工具事务活跃时，记录模型偏好（会话级）
-	if hasTC && GlobalModelPref != nil {
-		GlobalModelPref.SetPreferredModel(prefKey, selectedModel)
-	}
-
-	return selectedModel
-}
-
-// hasToolCalls 判断当前是否有活跃的工具调用
-// 只看最后一条消息：tool=等待结果, assistant(tool_calls)=刚发出调用
-// 历史 assistant(tool_calls) 不算活跃，避免永久锁定
-func hasToolCalls(messages []map[string]interface{}) bool {
-	if len(messages) == 0 {
-		return false
-	}
-	last := messages[len(messages)-1]
-	role, _ := last["role"].(string)
-	if role == "tool" {
-		return true
-	}
-	if role == "assistant" {
-		if _, ok := last["tool_calls"]; ok {
-			return true
-		}
-	}
-	return false
 }
 
 func HasImageContent(messages []map[string]interface{}) bool {

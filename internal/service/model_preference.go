@@ -1,6 +1,8 @@
 package service
 
 import (
+	"log"
+	"os"
 	"sync"
 	"time"
 )
@@ -24,13 +26,22 @@ type ModelPreferenceCache struct {
 var GlobalModelPref *ModelPreferenceCache
 
 // InitModelPreferenceCache 初始化会话级模型偏好缓存
-// ttlMinutes: 过期时间（Phase 1: 30 分钟）
+// ttlMinutes: 过期时间（P0-4 修复：从环境变量读取，默认 30 分钟）
 func InitModelPreferenceCache(ttlMinutes int) {
+	// P0-4: 从环境变量覆盖 TTL
+	if envTTL := os.Getenv("DEEPSEEK_SESSION_STICKY_TTL"); envTTL != "" {
+		if parsed, err := time.ParseDuration(envTTL); err == nil {
+			ttlMinutes = int(parsed.Minutes())
+			log.Printf("[Preference] TTL 从环境变量覆盖: %s (%d 分钟)", envTTL, ttlMinutes)
+		}
+	}
+
 	GlobalModelPref = &ModelPreferenceCache{
 		items:   make(map[string]*ModelPreference),
 		ttl:     time.Duration(ttlMinutes) * time.Minute,
 		maxSize: 10000, // LRU 上限
 	}
+	log.Printf("[Preference] 初始化完成: TTL=%d分钟, maxSize=%d", ttlMinutes, 10000)
 	go GlobalModelPref.cleanupLoop()
 }
 

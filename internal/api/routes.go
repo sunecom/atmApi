@@ -766,13 +766,8 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 	// ===== 会话 ID 接入（Phase 0/1: SmartRoute 之前需要）=====
-	headers := map[string]string{}
-	for k, v := range c.Request.Header {
-		if len(v) > 0 {
-			headers[k] = v[0]
-		}
-	}
-	sessCtx := service.ResolveSession(headers, apiToken.ID)
+	// P0-1 修复：直接传递 http.Header，使用 Get() 方法（大小写不敏感）
+	sessCtx := service.ResolveSession(c.Request.Header, apiToken.ID)
 
 	// ===== 智能路由：根据请求复杂度选择模型 =====
 	// 调试：打印最后3条消息角色

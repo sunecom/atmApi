@@ -46,8 +46,8 @@ func main() {
 	// 初始化图片缓存（TTL 5分钟）
 	service.InitImageCache(5)
 
-	// 初始化模型偏好缓存（TTL 5分钟）
-	service.InitModelPreferenceCache(5)
+	// 初始化模型偏好缓存（P0-4 修复：TTL 30 分钟，支持环境变量覆盖）
+	service.InitModelPreferenceCache(30)
 
 	// 初始化图片分析缓存
 	service.InitImageAnalysisCache()
