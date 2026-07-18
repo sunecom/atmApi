@@ -1093,16 +1093,20 @@ modelAllowed:
 		}
 	}
 processResult:
-	// 会话模型偏好生命周期（P0-3 V1.2 修复）
-	// 柯大侠核心发现：旧代码在普通文本请求时 ClearPreferredModel，导致会话粘性失效
-	// 新规则：
-	// - 成功请求 → 刷新偏好（滑动续期）
-	// - 工具事务活跃 → 强制保持当前模型
-	// - 不因 "本轮没有 tool_calls" 清除偏好
-	// - 偏好仅在 TTL 到期、新会话、显式覆盖时自然消退
-	if service.GlobalModelPref != nil && result.Response.StatusCode < 500 {
+	// 会话模型偏好生命周期（V1.3 修复）
+	// 柯大侠 V1.2 核心发现：
+	// - 400/401/403/429 错误响应不应刷新偏好
+	// - fallback 后应缓存最终有效模型
+	// - 图片和显式模型不应污染文本偏好
+	//
+	// 规则：
+	// 1. 只有 2xx 成功才写入偏好
+	// 2. 只缓存 deepseek-a4 路由出来的模型（flash/pro）
+	// 3. 图片请求(qwen3.7-plus)和显式模型不写偏好
+	// 4. actualModel 在 fallback 后已经是最终有效模型
+	if service.GlobalModelPref != nil && result.Response.StatusCode >= 200 && result.Response.StatusCode < 300 {
 		prefKey := service.PreferenceCacheKey(sessCtx.SessionHash)
-		if prefKey != "" { // 有有效 session才刷新
+		if prefKey != "" && strings.EqualFold(req.Model, "deepseek-a4") && actualModel != "qwen3.7-plus" {
 			service.GlobalModelPref.SetPreferredModel(prefKey, actualModel)
 		}
 	}

@@ -165,24 +165,29 @@ func TestHasActiveToolTransaction_ToolResponse(t *testing.T) {
 }
 
 // TestSmartRoute_SessionStickiness P0-3: 测试会话粘性
+// V1.3: SmartRoute 首轮不写偏好，由 processResult 写入
+// 这里模拟: 首轮手动 SetPreferredModel，二轮应该复用
 func TestSmartRoute_SessionStickiness(t *testing.T) {
-	// 初始化缓存
 	InitModelPreferenceCache(30)
+	prefKey := PreferenceCacheKey("session-stick-test")
 
 	messages := []map[string]interface{}{
 		{"role": "user", "content": "帮我写一个 Python 脚本"},
 	}
 
-	// 第一次调用：应该按复杂度分析
-	model1 := SmartRoute("deepseek-a4", messages, "test-token", "pro", "session-abc")
+	// 首轮：按复杂度选模
+	model1 := SmartRoute("deepseek-a4", messages, "test-token", "pro", "session-stick-test")
 
-	// 第二次调用：应该复用上次模型
+	// 模拟 processResult 写入偏好（V1.3: SmartRoute 不再自己写）
+	GlobalModelPref.SetPreferredModel(prefKey, model1)
+
+	// 第二轮：应该复用
 	messages2 := []map[string]interface{}{
 		{"role": "user", "content": "好的"},
 		{"role": "assistant", "content": "好的，我来帮你写"},
 		{"role": "user", "content": "继续"},
 	}
-	model2 := SmartRoute("deepseek-a4", messages2, "test-token", "pro", "session-abc")
+	model2 := SmartRoute("deepseek-a4", messages2, "test-token", "pro", "session-stick-test")
 
 	if model1 != model2 {
 		t.Errorf("会话粘性失败: %s != %s", model1, model2)
@@ -207,11 +212,11 @@ func TestSmartRoute_NoSession(t *testing.T) {
 }
 
 // TestSmartRoute_ToolTransaction P0-5: 测试工具事务锁定
+// V1.3: 偏好需要外部预设
 func TestSmartRoute_ToolTransaction(t *testing.T) {
 	InitModelPreferenceCache(30)
 
-	// 先设置一个偏好
-	prefKey := "pref:session-tool-test"
+	prefKey := PreferenceCacheKey("session-tool-test")
 	GlobalModelPref.SetPreferredModel(prefKey, "deepseek-v4-pro")
 
 	// 工具事务中
@@ -229,11 +234,11 @@ func TestSmartRoute_ToolTransaction(t *testing.T) {
 }
 
 // TestSmartRoute_ImageTemporary P0-3: 测试图片路由是临时的
+// V1.3: SmartRoute 首轮不写偏好，图片不写偏好
 func TestSmartRoute_ImageTemporary(t *testing.T) {
 	InitModelPreferenceCache(30)
 
-	// 先设置文本偏好
-	prefKey := "pref:session-image-test"
+	prefKey := PreferenceCacheKey("session-image-test")
 	GlobalModelPref.SetPreferredModel(prefKey, "deepseek-v4-flash")
 
 	// 发送图片

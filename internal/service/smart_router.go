@@ -94,29 +94,30 @@ func recordRequest(tokenKey string, isPro bool) {
 	}
 }
 
-// SmartRoute 智能路由（P0-3 修复：会话级模型粘性）
+// SmartRoute 智能路由（V1.3：首轮不提前写偏好，让任务模式有机会参与）
 // 路由优先级：
-// 1. 显式模型（非 deepseek-a4）→ 直接返回
-// 2. 图片内容 → qwen3.7-plus（临时，不改文本会话偏好）
-// 3. 活跃工具事务 → 强制复用偏好模型（更强约束）
-// 4. 会话文本粘性 → 复用上次模型（TTL 内滑动续期）
-// 5. 首轮/无 session → 复杂度分析决定模型
+//  1. 显式模型（非 deepseek-a4）→ 直接返回，不写偏好
+//  2. 图片内容 → qwen3.7-plus（临时，不写偏好）
+//  3. 活跃工具事务 → 强制复用偏好模型
+//  4. 会话文本粘性 → 复用上次模型
+//  5. 首轮/无 session → 复杂度分析，**不在此处写偏好**
+//     偏好在 routes.go processResult 中按最终有效模型写入
 func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenKey string, planName string, sessionHash string) string {
 	requestedModel = strings.ToLower(requestedModel)
 	if requestedModel != "deepseek-a4" {
 		return requestedModel
 	}
 
-	// 优先级 2：图片内容 → 临时路由视觉模型
+	// 优先级 2：图片内容 → 临时路由视觉模型（不写偏好）
 	if HasImageContent(messages) {
-		log.Printf("[路由] 图片内容 → qwen3.7-plus（临时，不改文本偏好）")
+		log.Printf("[路由] 图片内容 → qwen3.7-plus（临时，不写偏好）")
 		return "qwen3.7-plus"
 	}
 
 	prefKey := PreferenceCacheKey(sessionHash)
 	sessionMissing := IsSessionMissing(sessionHash)
 
-	// P0-2/P0-3：缺失 session 时禁用粘性，直接走复杂度分析
+	// P0-2/P0-3：缺失 session 时禁用粘性
 	if sessionMissing || prefKey == "" {
 		log.Printf("[路由] 无 session ID → 自然路由（无粘性）")
 		return routeByComplexity(messages, tokenKey, planName)
@@ -129,11 +130,8 @@ func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenK
 			log.Printf("[路由] 🔒 工具事务活跃 → 强制复用: %s", preferred)
 			return preferred
 		}
-		// 工具事务活跃但无偏好 → 首次工具调用，按复杂度选模型并记录
 		log.Printf("[路由] 工具事务首次调用 → 按复杂度选模型")
-		selected := routeByComplexity(messages, tokenKey, planName)
-		GlobalModelPref.SetPreferredModel(prefKey, selected)
-		return selected
+		return routeByComplexity(messages, tokenKey, planName)
 	}
 
 	// 优先级 4：会话文本粘性 → 复用上次模型
@@ -144,14 +142,10 @@ func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenK
 		}
 	}
 
-	// 优先级 5：首轮请求 → 按复杂度选模型
-	selected := routeByComplexity(messages, tokenKey, planName)
-	// 记录到会话偏好（后续追问会复用）
-	if GlobalModelPref != nil && prefKey != "" {
-		GlobalModelPref.SetPreferredModel(prefKey, selected)
-		log.Printf("[路由] 📌 首轮模型已记录: %s (session=%s)", selected, sessionHash[:min(8, len(sessionHash))])
-	}
-	return selected
+	// 优先级 5：首轮请求 → 按复杂度选模型（不提前写偏好）
+	// V1.3 修复：偏好由 routes.go processResult 在上游成功后写入
+	// 这样任务模式覆盖后，最终有效模型才会被缓存
+	return routeByComplexity(messages, tokenKey, planName)
 }
 
 // routeByComplexity 按复杂度选模型（内部函数）

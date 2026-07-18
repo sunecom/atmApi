@@ -22,40 +22,45 @@ type SessionContext struct {
 	RawSessionID   string // 仅用于本次请求，不持久化
 }
 
-// GetServerSecret 从环境变量读取服务端密钥
-// P0-6 V1.2 修复：真正的 fail-closed
-// - 生产环境缺失时拒绝启动
-// - 只有显式 APP_ENV=development 才允许临时密钥
-// - 临时密钥使用 crypto/rand 生成，每个进程只生成一次
+// P0-6 V1.3: 密钥校验移到启动阶段
 var devSecretOnce sync.Once
 var devSecret []byte
 
-func getServerSecret() []byte {
+// ValidateServerSecret 启动时一次性校验密钥配置
+// P0-6 V1.3 修复：密钥校验移到启动阶段，不在首个请求时才检查
+// 在 main.go 的 InitDB 之后调用
+func ValidateServerSecret() {
 	secret := os.Getenv("ATM_SERVER_SECRET")
 	if secret != "" {
 		if len(secret) < 16 {
 			log.Fatalf("[会话] 🔴 ATM_SERVER_SECRET 长度不足 16 字符，拒绝启动")
 		}
-		return []byte(secret)
+		return
 	}
 
-	// 没有设置密钥，检查是否显式声明开发环境
 	appEnv := os.Getenv("APP_ENV")
 	if strings.ToLower(appEnv) == "development" || strings.ToLower(appEnv) == "dev" {
 		devSecretOnce.Do(func() {
 			devSecret = make([]byte, 32)
-			// 使用 crypto/rand 生成随机密钥
 			if _, err := rand.Read(devSecret); err != nil {
 				log.Fatalf("[会话] 🔴 开发环境密钥生成失败: %v", err)
 			}
 			log.Printf("[会话] ⚠️ 开发环境：已生成随机临时密钥（重启后会话隔离失效）")
 		})
-		return devSecret
+		return
 	}
 
-	// 生产环境：fail-closed，拒绝启动
 	log.Fatalf("[会话] 🔴 ATM_SERVER_SECRET 未设置，生产环境拒绝启动。请设置 ATM_SERVER_SECRET 或 APP_ENV=development")
-	return nil
+}
+
+// GetServerSecret 从环境变量读取服务端密钥（已由 ValidateServerSecret 校验）
+func getServerSecret() []byte {
+	secret := os.Getenv("ATM_SERVER_SECRET")
+	if secret != "" {
+		return []byte(secret)
+	}
+	// 开发环境随机密钥（ValidateServerSecret 已确保 devSecret 被初始化）
+	return devSecret
 }
 
 // ResolveSession 从 HTTP 请求头解析会话上下文
