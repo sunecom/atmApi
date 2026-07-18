@@ -930,9 +930,11 @@ modelAllowed:
 	}
 
 	// ===== 上下文压缩引擎 v2 =====
-	// 两级策略：> 100K 无损截断，> 200K 摘要替换
+	// Phase 0: shadow 模式默认不修改 messages
+	var contextDecision service.ContextDecision
 	{
-		compressedMsgs := service.CompressContext(req.Messages, tokenKey)
+		compressedMsgs, dec := service.CompressContext(req.Messages, tokenKey)
+		contextDecision = dec
 		if len(compressedMsgs) != len(req.Messages) {
 			var reqMapCC map[string]interface{}
 			json.Unmarshal(body, &reqMapCC)
@@ -945,6 +947,38 @@ modelAllowed:
 			req.Messages = compressedMsgs
 		}
 	}
+
+	// ===== 上下文决策响应头 =====
+	c.Writer.Header().Set("X-ATM-Context-Mode", string(contextDecision.Mode))
+	c.Writer.Header().Set("X-ATM-Context-Original-Messages", fmt.Sprintf("%d", contextDecision.OriginalCount))
+	c.Writer.Header().Set("X-ATM-Context-Final-Messages", fmt.Sprintf("%d", contextDecision.FinalCount))
+
+	// ===== 会话 ID 接入（Phase 0）=====
+	headers := map[string]string{}
+	for k, v := range c.Request.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+	sessCtx := service.ResolveSession(headers, apiToken.ID)
+
+	// ===== 上下文决策日志（Phase 0）=====
+	service.LogContextDecision(service.ContextLogEntry{
+		SessionHash:        sessCtx.SessionHash,
+		TokenID:            sessCtx.TokenID,
+		SessionIDMissing:   sessCtx.SessionMissing,
+		OriginalMessages:   contextDecision.OriginalCount,
+		FinalMessages:      contextDecision.FinalCount,
+		EstimatedTokens:    contextDecision.EstTokens,
+		ContextMode:        string(contextDecision.Mode),
+		WouldDropGroups:    contextDecision.WouldDropGroups,
+		WouldSummarize:     contextDecision.WouldSummarize,
+		SelectedModel:      actualModel,
+		ToolTransactionAct: service.HasActiveToolTransaction(req.Messages),
+	})
+
+	// 模型切换原因响应头
+	c.Writer.Header().Set("X-ATM-Model-Switch-Reason", "")
 	// ===== 行为修正引擎 v2（Phase 2） =====
 	// 检测低效对话模式，注入 system hint 减少冗余轮次
 	// 安全补丁：用户要求分步确认时跳过（Phase 2C）

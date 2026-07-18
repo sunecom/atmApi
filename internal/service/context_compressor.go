@@ -7,14 +7,16 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"atmapi/internal/model"
 )
 
-// ===== 上下文压缩引擎 v3（成本感知） =====
-// 两级策略，阈值根据套餐 MaxInputTokens 按比例计算：
+// ===== 上下文压缩引擎 v3（成本感知）+ Phase 0 shadow 模式 =====
+// Phase 0（2026-07-18）：默认 shadow-only，不修改 messages
+// 两级策略（enforce 模式才生效），阈值根据套餐 MaxInputTokens 按比例计算：
 //   > 50% MaxInputTokens → 无损截断
 //   > 80% MaxInputTokens → 摘要替换
 //   MaxInputTokens=0（不限量）→ 回退默认硬编码阈值
@@ -30,9 +32,43 @@ const (
 	SummaryTimeout    = 30     // 摘要请求超时秒数
 )
 
-// CompressContext 上下文压缩入口（成本感知 v3）
-// 根据套餐 MaxInputTokens 按比例计算阈值，更高配的套餐推迟压缩
-func CompressContext(messages []map[string]interface{}, tokenKey string) []map[string]interface{} {
+// ContextMode 控制上下文压缩行为
+// shadow: 只观察记录，不修改 messages（Phase 0 默认）
+// enforce: 执行压缩逻辑（仅测试用）
+type ContextMode string
+
+const (
+	ContextModeShadow  ContextMode = "shadow"
+	ContextModeEnforce ContextMode = "enforce"
+)
+
+// GetContextMode 从环境变量读取上下文模式
+func GetContextMode() ContextMode {
+	mode := strings.ToLower(os.Getenv("DEEPSEEK_CONTEXT_MODE"))
+	if mode == "enforce" {
+		return ContextModeEnforce
+	}
+	return ContextModeShadow // 默认 shadow
+}
+
+// ContextDecision 记录上下文决策（不含正文）
+type ContextDecision struct {
+	Mode            ContextMode `json:"context_mode"`
+	OriginalCount   int         `json:"original_messages"`
+	FinalCount      int         `json:"final_messages"`
+	EstTokens       int         `json:"estimated_tokens"`
+	WouldDropGroups int         `json:"would_drop_groups"`
+	WouldSummarize  bool        `json:"would_summarize"`
+	TruncateAt      int         `json:"truncate_threshold"`
+	SummaryAt       int         `json:"summary_threshold"`
+}
+
+// CompressContext 上下文压缩入口（成本感知 v3 + Phase 0 shadow）
+// shadow 模式（默认）：只观察记录，不修改 messages
+// enforce 模式：执行压缩逻辑
+// 返回 (处理后的messages, ContextDecision)
+func CompressContext(messages []map[string]interface{}, tokenKey string) ([]map[string]interface{}, ContextDecision) {
+	mode := GetContextMode()
 	estTokens := estimateTokens(messages)
 
 	// ===== 成本感知阈值计算 =====
@@ -43,7 +79,6 @@ func CompressContext(messages []map[string]interface{}, tokenKey string) []map[s
 		pTruncate := int(float64(plan.MaxInputTokens) * TruncateRatio)
 		pSummary := int(float64(plan.MaxInputTokens) * SummaryRatio)
 
-		// 防止阈值过低导致误触发
 		if pTruncate < MinTruncateEst {
 			pTruncate = MinTruncateEst
 		}
@@ -53,33 +88,54 @@ func CompressContext(messages []map[string]interface{}, tokenKey string) []map[s
 
 		truncateThreshold = pTruncate
 		summaryThreshold = pSummary
-		log.Printf("[压缩] 成本感知: plan=%s MaxInputTokens=%d → truncate@%d summary@%d (est=%d)",
-			plan.Name, plan.MaxInputTokens, truncateThreshold, summaryThreshold, estTokens)
+		log.Printf("[压缩] 成本感知: plan=%s MaxInputTokens=%d → truncate@%d summary@%d (est=%d) mode=%s",
+			plan.Name, plan.MaxInputTokens, truncateThreshold, summaryThreshold, estTokens, mode)
 	} else {
-		log.Printf("[压缩] 默认阈值: truncate@%d summary@%d (est=%d)", truncateThreshold, summaryThreshold, estTokens)
+		log.Printf("[压缩] 默认阈值: truncate@%d summary@%d (est=%d) mode=%s", truncateThreshold, summaryThreshold, estTokens, mode)
+	}
+
+	// 构建决策记录
+	decision := ContextDecision{
+		Mode:          mode,
+		OriginalCount: len(messages),
+		FinalCount:    len(messages),
+		EstTokens:     estTokens,
+		TruncateAt:    truncateThreshold,
+		SummaryAt:     summaryThreshold,
 	}
 
 	if estTokens <= truncateThreshold {
 		log.Printf("[压缩] 无需压缩: est=%d ≤ truncate=%d", estTokens, truncateThreshold)
-		return messages
+		return messages, decision
 	}
 
 	systemMsgs, middleMsgs, tailMsgs := splitMessagesSafe(messages, TailKeepMessages)
+	decision.WouldDropGroups = len(middleMsgs)
+	decision.WouldSummarize = estTokens > summaryThreshold
 
-	log.Printf("[压缩] estTokens=%d system=%d middle=%d tail=%d",
-		estTokens, len(systemMsgs), len(middleMsgs), len(tailMsgs))
+	log.Printf("[压缩] estTokens=%d system=%d middle=%d tail=%d mode=%s",
+		estTokens, len(systemMsgs), len(middleMsgs), len(tailMsgs), mode)
 
 	if len(middleMsgs) == 0 {
-		return messages
+		return messages, decision
 	}
 
+	// ===== shadow 模式：只记录，不修改 =====
+	if mode == ContextModeShadow {
+		log.Printf("[压缩] ⚡ SHADOW 模式: 不修改消息 (would_drop=%d, would_summarize=%v)",
+			decision.WouldDropGroups, decision.WouldSummarize)
+		return messages, decision
+	}
+
+	// ===== enforce 模式：执行压缩 =====
 	// > summaryThreshold → 摘要替换
 	if estTokens > summaryThreshold {
 		summary := generateSummary(middleMsgs)
 		if summary != "" {
 			result := mergeWithSummary(systemMsgs, summary, tailMsgs, len(middleMsgs))
 			log.Printf("[压缩] ✓ 摘要替换完成: %d 条中间消息 → 1 条摘要", len(middleMsgs))
-			return result
+			decision.FinalCount = len(result)
+			return result, decision
 		}
 		log.Printf("[压缩] 摘要生成失败，降级为无损截断")
 	}
@@ -87,7 +143,8 @@ func CompressContext(messages []map[string]interface{}, tokenKey string) []map[s
 	// > truncateThreshold → 无损截断
 	result := mergeTruncated(systemMsgs, tailMsgs, len(middleMsgs))
 	log.Printf("[压缩] ✓ 无损截断完成: 丢弃 %d 条中间消息", len(middleMsgs))
-	return result
+	decision.FinalCount = len(result)
+	return result, decision
 }
 
 // estimateTokens 粗估 token 数
