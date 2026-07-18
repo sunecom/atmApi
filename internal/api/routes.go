@@ -599,9 +599,9 @@ func chatCompletions(c *gin.Context) {
 				// === 纯图 → 后台异步分析 + 立即返回 ===
 				if service.GlobalImageAnalysis != nil {
 					// v2: 直接转发原始 messages，不需要提取图片
-					msgHash := service.HashMessages(req.Messages)
-					dbgLog("[IMG] msgHash=%s", msgHash)
-					service.GlobalImageAnalysis.AnalyzeAsync(msgHash, req.Messages)
+					imgHashes := service.HashMessages(req.Messages)
+					dbgLog("[IMG] hashes=%v", imgHashes)
+					service.GlobalImageAnalysis.AnalyzeAsync(imgHashes, req.Messages)
 				}
 				// 记录日志
 				duration := time.Since(startTime).Milliseconds()

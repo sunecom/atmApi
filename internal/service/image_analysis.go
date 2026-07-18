@@ -52,8 +52,36 @@ func InitImageAnalysisCache() {
 	log.Printf("[图片分析] 初始化完成，TTL=%v", AnalysisTTL)
 }
 
-// HashMessages 计算最后一条 user 消息的 hash
-func HashMessages(messages []map[string]interface{}) string {
+// HashMessages 计算最后一条 user 消息中每个图片 part 的 hash 列表
+// Phase 1 修复：与 hashFromContent 使用同一算法
+func HashMessages(messages []map[string]interface{}) []string {
+	var hashes []string
+	for i := len(messages) - 1; i >= 0; i-- {
+		if role, _ := messages[i]["role"].(string); role != "user" {
+			continue
+		}
+		content := messages[i]["content"]
+		if parts, ok := content.([]interface{}); ok {
+			for _, part := range parts {
+				if pm, ok := part.(map[string]interface{}); ok {
+					if typ, _ := pm["type"].(string); typ == "image_url" || typ == "image" {
+						hashes = append(hashes, hashFromContent(pm))
+					}
+				}
+			}
+		}
+		break // 只看最后一条 user 消息
+	}
+	return hashes
+}
+
+// HashMessagesLegacy 旧版接口兼容（返回第一个图片的 hash，或整条消息 hash）
+func HashMessagesLegacy(messages []map[string]interface{}) string {
+	hashes := HashMessages(messages)
+	if len(hashes) > 0 {
+		return hashes[0]
+	}
+	// 没有图片，回退到旧行为
 	for i := len(messages) - 1; i >= 0; i-- {
 		if role, _ := messages[i]["role"].(string); role == "user" {
 			bytes, _ := json.Marshal(messages[i])
@@ -65,29 +93,56 @@ func HashMessages(messages []map[string]interface{}) string {
 }
 
 // AnalyzeAsync v2: 直接转发原始 messages 给 Qwen
-func (c *ImageAnalysisCache) AnalyzeAsync(hash string, messages []map[string]interface{}) {
+// Phase 1 修复：按单个图片 hash 存储
+func (c *ImageAnalysisCache) AnalyzeAsync(hashes []string, messages []map[string]interface{}) {
 	c.mu.Lock()
-	if _, exists := c.items[hash]; exists {
+	allExist := true
+	for _, h := range hashes {
+		if _, exists := c.items[h]; !exists && !c.pending[h] {
+			allExist = false
+			break
+		}
+	}
+	if allExist {
 		c.mu.Unlock()
 		return
 	}
-	if c.pending[hash] {
+	// 用第一个 hash 作为 pending 键
+	pendingKey := ""
+	if len(hashes) > 0 {
+		pendingKey = hashes[0]
+	}
+	if pendingKey != "" && c.pending[pendingKey] {
 		c.mu.Unlock()
 		return
 	}
-	c.pending[hash] = true
+	if pendingKey != "" {
+		c.pending[pendingKey] = true
+	}
 	ch := make(chan bool, 1)
-	c.notify[hash] = ch
+	if pendingKey != "" {
+		c.notify[pendingKey] = ch
+	}
 	c.mu.Unlock()
 
 	go func() {
 		desc := callQwenAnalyzeMessages(messages)
 		c.mu.Lock()
-		c.items[hash] = &AnalysisEntry{Description: desc, AnalyzedAt: time.Now()}
-		delete(c.pending, hash)
+		now := time.Now()
+		// 为每个图片 hash 存储同一描述
+		for _, h := range hashes {
+			c.items[h] = &AnalysisEntry{Description: desc, AnalyzedAt: now}
+		}
+		// 如果只有一个 hash（旧兼容），也存一份
+		if len(hashes) == 0 {
+			c.items[pendingKey] = &AnalysisEntry{Description: desc, AnalyzedAt: now}
+		}
+		delete(c.pending, pendingKey)
 		close(ch)
 		c.mu.Unlock()
-		log.Printf("[图片分析] 完成: hash=%s... desc=%s...", hash[:min2(12, len(hash))], desc[:min2(50, len(desc))])
+		if len(hashes) > 0 {
+			log.Printf("[图片分析] 完成: hash=%s... desc=%s...", hashes[0][:min2(12, len(hashes[0]))], desc[:min2(50, len(desc))])
+		}
 	}()
 }
 

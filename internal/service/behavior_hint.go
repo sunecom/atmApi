@@ -272,19 +272,21 @@ func CompressToolOutput(messages []map[string]interface{}) []map[string]interfac
 	return result
 }
 
-// compressToolOutputContent 压缩单条工具输出内容
+// compressToolOutputContent 压缩单条工具输出内容（Phase 1: UTF-8 安全 + 保留更多证据）
 func compressToolOutputContent(content string) string {
 	lines := strings.Split(content, "\n")
 
 	// 1. 提取关键信息
 	var keyInfo []string
 
-	// 错误信息（包含 error/fail/exception）
+	// 错误信息（包含 error/fail/exception/panic/fatal）
 	for _, line := range lines {
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "error") ||
 			strings.Contains(lower, "fail") ||
-			strings.Contains(lower, "exception") {
+			strings.Contains(lower, "exception") ||
+			strings.Contains(lower, "panic") ||
+			strings.Contains(lower, "fatal") {
 			keyInfo = append(keyInfo, line)
 		}
 	}
@@ -300,7 +302,7 @@ func compressToolOutputContent(content string) string {
 		keyInfo = append(keyInfo, "文件: "+strings.Join(uniquePaths, ", "))
 	}
 
-	// 退出码（exit code: X 或 exit=X）
+	// 退出码
 	exitRegex := regexp.MustCompile(`(?i)(exit\s*(code)?[=:]\s*(\d+)|返回码[=:]\s*(\d+))`)
 	if matches := exitRegex.FindStringSubmatch(content); len(matches) > 1 {
 		for _, m := range matches[1:] {
@@ -309,6 +311,13 @@ func compressToolOutputContent(content string) string {
 				break
 			}
 		}
+	}
+
+	// Phase 1 新增：保留前 10 行（可能包含关键摘要/表格头）
+	if len(lines) > 60 {
+		headLines := lines[:10]
+		keyInfo = append(keyInfo, "--- 开头 10 行 ---")
+		keyInfo = append(keyInfo, headLines...)
 	}
 
 	// 2. 保留最后 50 行
@@ -323,9 +332,14 @@ func compressToolOutputContent(content string) string {
 	}
 	result += strings.Join(lines, "\n")
 
-	// 4. 截断到 2000 字
+	// 4. UTF-8 安全截断到 2000 字
 	if len(result) > 2000 {
-		result = result[:2000] + "\n... [已截断]"
+		// 向前回退到完整 UTF-8 字符边界
+		cutAt := 2000
+		for cutAt > 0 && (result[cutAt-1]&0xC0) == 0x80 {
+			cutAt--
+		}
+		result = result[:cutAt] + "\n... [已截断]"
 	}
 
 	return result
