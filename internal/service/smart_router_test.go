@@ -78,6 +78,92 @@ func TestModelPreferenceCache_LRUEviction(t *testing.T) {
 	}
 }
 
+// TestModelPreferenceCache_RealSlidingTTL P0-4 V1.2: 测试真滑动 TTL（Get 命中时续期）
+func TestModelPreferenceCache_RealSlidingTTL(t *testing.T) {
+	cache := &ModelPreferenceCache{
+		items:   make(map[string]*ModelPreference),
+		ttl:     100 * time.Millisecond,
+		maxSize: 100,
+	}
+
+	key := "pref:test-sliding"
+	cache.SetPreferredModel(key, "deepseek-v4-flash")
+
+	// 等待 60ms（超过一半 TTL）
+	time.Sleep(60 * time.Millisecond)
+
+	// Get 命中应该刷新时间戳
+	if got := cache.GetPreferredModel(key); got != "deepseek-v4-flash" {
+		t.Errorf("期望 deepseek-v4-flash, got %s", got)
+	}
+
+	// 再等待 60ms（如果没有续期，总共 120ms > 100ms，应该过期）
+	time.Sleep(60 * time.Millisecond)
+
+	// 因为 Get 时续期了，应该还能读到
+	if got := cache.GetPreferredModel(key); got != "deepseek-v4-flash" {
+		t.Errorf("滑动续期失败: 期望 deepseek-v4-flash, got %s", got)
+	}
+}
+
+// TestHasActiveToolTransaction_ToolResponse P0-5 V1.2: tool 响应后事务仍活跃
+func TestHasActiveToolTransaction_ToolResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		messages []map[string]interface{}
+		want     bool
+	}{
+		{
+			name: "assistant(tool_calls) → tool 响应 → 事务仍活跃",
+			messages: []map[string]interface{}{
+				{"role": "user", "content": "查天气"},
+				{"role": "assistant", "tool_calls": []interface{}{map[string]interface{}{"id": "c1"}}},
+				{"role": "tool", "content": "晴天 25°C"},
+			},
+			want: true,
+		},
+		{
+			name: "多轮 tool_calls → tool 响应 → tool 响应 → 仍活跃",
+			messages: []map[string]interface{}{
+				{"role": "user", "content": "查天气"},
+				{"role": "assistant", "tool_calls": []interface{}{}},
+				{"role": "tool", "content": "结果1"},
+				{"role": "assistant", "tool_calls": []interface{}{}},
+				{"role": "tool", "content": "结果2"},
+			},
+			want: true,
+		},
+		{
+			name: "assistant(tool_calls) → tool 响应 → assistant(无tool_calls) → 事务完成",
+			messages: []map[string]interface{}{
+				{"role": "user", "content": "查天气"},
+				{"role": "assistant", "tool_calls": []interface{}{}},
+				{"role": "tool", "content": "晴天"},
+				{"role": "assistant", "content": "今天是晴天"},
+			},
+			want: false,
+		},
+		{
+			name: "OpenClaw 伪 user 工具结果",
+			messages: []map[string]interface{}{
+				{"role": "user", "content": "查天气"},
+				{"role": "assistant", "tool_calls": []interface{}{}},
+				{"role": "user", "content": "[tool result] 晴天 25°C"},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := HasActiveToolTransaction(tt.messages)
+			if got != tt.want {
+				t.Errorf("HasActiveToolTransaction() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestSmartRoute_SessionStickiness P0-3: 测试会话粘性
 func TestSmartRoute_SessionStickiness(t *testing.T) {
 	// 初始化缓存

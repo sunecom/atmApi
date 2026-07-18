@@ -14,7 +14,7 @@ const baseURL = "http://localhost:3300"
 const testToken = "atm-1778491177466775297"
 
 func main() {
-	fmt.Println("=== Phase 2C 集成测试 ===\n")
+	fmt.Print("...")
 
 	// 测试 1: 安全补丁 - 用户要求分步确认
 	test1()
@@ -34,7 +34,7 @@ func main() {
 	// 测试 6: 单 token 成本 API（需要 JWT）
 	test6()
 
-	fmt.Println("\n=== Phase 2C 测试完成 ===")
+	fmt.Println("=== Phase 2C 测试完成 ===")
 }
 
 func test1() {

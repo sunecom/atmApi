@@ -1,8 +1,13 @@
 package api
+
 import (
+	"atmapi/internal/middleware"
+	"atmapi/internal/model"
+	"atmapi/internal/service"
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/gin-gonic/gin"
 	"io"
 	"log"
 	"net/http"
@@ -11,12 +16,10 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"atmapi/internal/middleware"
-	"atmapi/internal/model"
-	"atmapi/internal/service"
-	"github.com/gin-gonic/gin"
 )
+
 var dbgFile *os.File
+
 func initDbgLog() {
 	dbgFile, _ = os.OpenFile("/tmp/atmapi-img-debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 }
@@ -28,8 +31,10 @@ func dbgLog(format string, args ...interface{}) {
 	}
 	log.Printf(format, args...) // 也输出到 stderr
 }
+
 // ===== 标准化错误码体系 =====
 type ErrorCode string
+
 const (
 	ErrInvalidRequest    ErrorCode = "INVALID_REQUEST"
 	ErrUnauthorized      ErrorCode = "UNAUTHORIZED"
@@ -44,12 +49,14 @@ const (
 	ErrPaymentRequired   ErrorCode = "PAYMENT_REQUIRED"
 	ErrOrderNotFound     ErrorCode = "ORDER_NOT_FOUND"
 )
+
 // APIError 标准化错误响应
 type APIError struct {
 	Code    ErrorCode   `json:"code"`
 	Message string      `json:"message"`
 	Details interface{} `json:"details,omitempty"`
 }
+
 // respondError 统一错误响应格式
 func respondError(c *gin.Context, httpStatus int, code ErrorCode, message string, details ...interface{}) {
 	errResp := APIError{
@@ -61,6 +68,7 @@ func respondError(c *gin.Context, httpStatus int, code ErrorCode, message string
 	}
 	c.JSON(httpStatus, gin.H{"error": errResp})
 }
+
 // RegisterRoutes 注册所有路由
 func RegisterRoutes(r *gin.Engine) {
 	initDbgLog()
@@ -139,7 +147,7 @@ func RegisterRoutes(r *gin.Engine) {
 		v1.POST("/register", register)
 		v1.GET("/models", listModels)
 		v1.GET("/token-info", tokenInfo) // 客户查询 token 信息
-		v1.GET("/stats", publicStats) // 公开统计（监控中心用）
+		v1.GET("/stats", publicStats)    // 公开统计（监控中心用）
 		managed := v1.Group("")
 		managed.Use(middleware.AuthRequired())
 		{
@@ -213,7 +221,7 @@ func RegisterRoutes(r *gin.Engine) {
 		}
 	}
 }
-func indexPage(c *gin.Context)     { c.File("./web/static/index.html") }
+func indexPage(c *gin.Context) { c.File("./web/static/index.html") }
 func healthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "version": "2.1.0", "time": time.Now().Format("2006-01-02 15:04:05")})
 }
@@ -221,6 +229,7 @@ func cacheStats(c *gin.Context) {
 	stats := service.GetCacheStats()
 	c.JSON(http.StatusOK, gin.H{"data": stats})
 }
+
 // ===== 登录认证 =====
 func login(c *gin.Context) {
 	// 防暴力登录：检查 IP 限流
@@ -299,6 +308,7 @@ func register(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, gin.H{"message": "注册成功", "user_id": user.ID})
 }
+
 // ===== Token 管理 =====
 func getTokens(c *gin.Context) {
 	var tokens []model.Token
@@ -316,14 +326,14 @@ func getTokens(c *gin.Context) {
 }
 func createToken(c *gin.Context) {
 	var req struct {
-		UserID           uint   `json:"user_id" binding:"required"`
-		Name             string `json:"name" binding:"required"`
-		RemainQuota      int64  `json:"remain_quota"`
-		UnlimitedQuota   bool   `json:"unlimited_quota"`
-		ExpiredTime      int64  `json:"expired_time"`
-		RateLimitGroup   string `json:"rate_limit_group"`
-		PlanGroup        string `json:"plan_group"`        // 套餐线：dp-a4/glm-5.2
-		PlanName         string `json:"plan_name"`         // 套餐名：basic/pro/openclaw-pro
+		UserID         uint   `json:"user_id" binding:"required"`
+		Name           string `json:"name" binding:"required"`
+		RemainQuota    int64  `json:"remain_quota"`
+		UnlimitedQuota bool   `json:"unlimited_quota"`
+		ExpiredTime    int64  `json:"expired_time"`
+		RateLimitGroup string `json:"rate_limit_group"`
+		PlanGroup      string `json:"plan_group"` // 套餐线：dp-a4/glm-5.2
+		PlanName       string `json:"plan_name"`  // 套餐名：basic/pro/openclaw-pro
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -350,7 +360,7 @@ func createToken(c *gin.Context) {
 		RateLimitGroup: req.RateLimitGroup,
 		PlanGroup:      req.PlanGroup,
 		PlanName:       req.PlanName,
-		CreatedTime: time.Now().Unix(),
+		CreatedTime:    time.Now().Unix(),
 	}
 	if err := model.DB.Create(&token).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
@@ -397,6 +407,7 @@ func deleteToken(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
+
 // ===== 渠道管理 =====
 func getChannels(c *gin.Context) {
 	var channels []model.Channel
@@ -462,6 +473,7 @@ func testChannel(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "channel": channel.Name, "status_code": statusCode, "duration_ms": duration})
 }
+
 // ===== 模型路由（核心功能） =====
 func chatCompletions(c *gin.Context) {
 	startTime := time.Now()
@@ -475,13 +487,13 @@ func chatCompletions(c *gin.Context) {
 		respondError(c, http.StatusUnauthorized, ErrTokenNotFound, "token 不存在或已禁用")
 		return
 	}
-	
+
 	// 验证 token 是否有效（在图片缓存逻辑之前）
 	if apiToken.ID == 0 {
 		respondError(c, http.StatusUnauthorized, ErrTokenNotFound, "token 不存在或已禁用")
 		return
 	}
-	
+
 	// 限流检查（5h/日/周/月/图片次数）
 	rlResult := service.CheckRateLimit(apiToken)
 	if !rlResult.Allowed {
@@ -515,7 +527,7 @@ func chatCompletions(c *gin.Context) {
 			defer service.ConcurrencyLimiter.Release(apiToken.ID)
 		}
 	}
-	
+
 	body, err := service.ReadBody(c.Request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": ErrInvalidRequest, "message": "读取请求失败"}})
@@ -580,7 +592,9 @@ func chatCompletions(c *gin.Context) {
 		if hasImage {
 			for i, msg := range req.Messages {
 				role, _ := msg["role"].(string)
-				if role != "user" { continue }
+				if role != "user" {
+					continue
+				}
 				contentBytes, _ := json.Marshal(msg["content"])
 				contentStr := string(contentBytes)
 				if len(contentStr) > 2000 {
@@ -594,7 +608,7 @@ func chatCompletions(c *gin.Context) {
 		if hasImage {
 			service.RecordImageUsage(apiToken.ID)
 			userText := extractUserQuestion(req.Messages)
-			dbgLog("[IMG] userText=%q", userText[:min(50,len(userText))])
+			dbgLog("[IMG] userText=%q", userText[:min(50, len(userText))])
 			if userText == "" {
 				// === 纯图 → 后台异步分析 + 立即返回 ===
 				if service.GlobalImageAnalysis != nil {
@@ -615,7 +629,9 @@ func chatCompletions(c *gin.Context) {
 				var reqMapChk map[string]interface{}
 				json.Unmarshal(body, &reqMapChk)
 				isStreamReq := false
-				if v, ok := reqMapChk["stream"]; ok { isStreamReq, _ = v.(bool) }
+				if v, ok := reqMapChk["stream"]; ok {
+					isStreamReq, _ = v.(bool)
+				}
 				if isStreamReq {
 					c.Header("Content-Type", "text/event-stream")
 					c.Header("Cache-Control", "no-cache")
@@ -787,23 +803,25 @@ func chatCompletions(c *gin.Context) {
 	log.Printf("[路由] 最后3条: %s", lastRoles)
 	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey, apiToken.PlanName, sessCtx.SessionHash)
 
-	// ===== 任务模式路由（Phase 2C + Phase 1 修复）=====
-	// Phase 1 修复：任务模式不能覆盖工具链锁定
+	// ===== 任务模式路由（P0-3 V1.2 修复：已有会话偏好的不被覆盖）=====
 	taskModeResult := service.ClassifyTaskMode(req.Messages)
 	if taskModeResult.Model != "" && taskModeResult.Mode != service.TaskModeUnknown {
-		// 关键修复：如果工具事务活跃，任务模式不能覆盖模型
-		toolActive := service.HasActiveToolTransaction(req.Messages)
 		prefKey := service.PreferenceCacheKey(sessCtx.SessionHash)
-		hasPreferred := service.GlobalModelPref != nil && service.GlobalModelPref.GetPreferredModel(prefKey) != ""
+		toolActive := service.HasActiveToolTransaction(req.Messages)
+		hasPreferred := service.GlobalModelPref != nil && prefKey != "" && service.GlobalModelPref.GetPreferredModel(prefKey) != ""
 
 		if toolActive && hasPreferred {
-			log.Printf("[模式路由] ⚡ 工具事务活跃，任务模式不能覆盖 (mode=%s, 保持=%s)", taskModeResult.Mode, actualModel)
+			// 工具事务活跃 + 有偏好 → 任务模式绝对不能覆盖
+			log.Printf("[模式路由] 🔒 工具事务活跃，任务模式不能覆盖 (mode=%s, 保持=%s)", taskModeResult.Mode, actualModel)
+		} else if hasPreferred {
+			// 有会话偏好 → 任务模式不能覆盖（柯大侠 V1.2 要求）
+			log.Printf("[模式路由] 📌 已有会话偏好，任务模式不能覆盖 (mode=%s, 保持=%s)", taskModeResult.Mode, actualModel)
 		} else if actualModel != taskModeResult.Model {
-			// 检查套餐 Pro 限制
+			// 无偏好（首轮）→ 任务模式可以参与选模
 			if taskModeResult.Model == "deepseek-v4-pro" && !service.CheckProAllowed(tokenKey, apiToken.PlanName) {
 				log.Printf("[模式路由] 套餐 %s 不允许 Pro，跳过覆盖 (mode=%s)", apiToken.PlanName, taskModeResult.Mode)
 			} else {
-				log.Printf("[模式路由] 覆盖模型: %s → %s (mode=%s)", actualModel, taskModeResult.Model, taskModeResult.Mode)
+				log.Printf("[模式路由] 首轮覆盖模型: %s → %s (mode=%s)", actualModel, taskModeResult.Model, taskModeResult.Mode)
 				actualModel = taskModeResult.Model
 			}
 		}
@@ -867,7 +885,7 @@ modelAllowed:
 	if streamVal, ok := reqMap["stream"]; ok {
 		isStream, _ = streamVal.(bool)
 	}
-	
+
 	var cacheKey string
 	if !isStream && service.GlobalCache != nil {
 		// 从 reqMap 中提取 temperature 和 max_tokens
@@ -879,7 +897,7 @@ modelAllowed:
 		if m, ok := reqMap["max_tokens"].(float64); ok {
 			maxTokens = int(m)
 		}
-		
+
 		// 只对 temperature=0 的请求启用缓存
 		log.Printf("[缓存检查] temperature=%v, shouldCache=%v", temperature, service.ShouldCache(temperature))
 		if service.ShouldCache(temperature) {
@@ -1046,7 +1064,7 @@ modelAllowed:
 				}
 			}
 		}
-		
+
 		// 备选也失败时，尝试用原始模型重试
 		if err != nil {
 			retryModel := req.Model
@@ -1055,7 +1073,7 @@ modelAllowed:
 			} else {
 				log.Printf("[路由] 原始模型 %s 失败，重试一次", req.Model)
 			}
-			
+
 			var retryReqMap map[string]interface{}
 			if err := json.Unmarshal(body, &retryReqMap); err == nil {
 				retryReqMap["model"] = retryModel
@@ -1063,7 +1081,7 @@ modelAllowed:
 				result, err = service.RouteRequest(retryModel, retryBody, tokenKey)
 			}
 		}
-		
+
 		if err != nil {
 			duration := time.Since(startTime).Milliseconds()
 			model.DB.Create(&model.RequestLog{
@@ -1075,16 +1093,17 @@ modelAllowed:
 		}
 	}
 processResult:
-	// 保存/清除会话模型偏好（Phase 1: 会话级隔离）
-	// 有活跃 tool_calls → 缓存模型（保持格式兼容）
-	// 无活跃 tool_calls → 清除缓存（即时回落 flash，不等 TTL）
-	if service.GlobalModelPref != nil {
+	// 会话模型偏好生命周期（P0-3 V1.2 修复）
+	// 柯大侠核心发现：旧代码在普通文本请求时 ClearPreferredModel，导致会话粘性失效
+	// 新规则：
+	// - 成功请求 → 刷新偏好（滑动续期）
+	// - 工具事务活跃 → 强制保持当前模型
+	// - 不因 "本轮没有 tool_calls" 清除偏好
+	// - 偏好仅在 TTL 到期、新会话、显式覆盖时自然消退
+	if service.GlobalModelPref != nil && result.Response.StatusCode < 500 {
 		prefKey := service.PreferenceCacheKey(sessCtx.SessionHash)
-		hasActiveTC := service.HasActiveToolTransaction(req.Messages)
-		if hasActiveTC {
+		if prefKey != "" { // 有有效 session才刷新
 			service.GlobalModelPref.SetPreferredModel(prefKey, actualModel)
-		} else {
-			service.GlobalModelPref.ClearPreferredModel(prefKey)
 		}
 	}
 	defer result.Response.Body.Close()
@@ -1125,14 +1144,14 @@ processResult:
 			}
 		}
 		c.Writer.Flush()
-		
+
 		// 从流式最后一个 chunk 提取 usage 并记录
 		if lastChunk != "" {
 			var lastResp struct {
 				Usage struct {
-					PromptTokens     int64 `json:"prompt_tokens"`
-					CompletionTokens int64 `json:"completion_tokens"`
-					TotalTokens      int64 `json:"total_tokens"`
+					PromptTokens        int64 `json:"prompt_tokens"`
+					CompletionTokens    int64 `json:"completion_tokens"`
+					TotalTokens         int64 `json:"total_tokens"`
 					PromptTokensDetails struct {
 						CachedTokens int64 `json:"cached_tokens"`
 					} `json:"prompt_tokens_details"`
@@ -1170,7 +1189,7 @@ processResult:
 					apiToken.Name, actualModel, lastResp.Usage.TotalTokens, cachedTokens, usageLog.EstimatedCost)
 			}
 		}
-		
+
 		log.Printf("[流式] token=%s model=%s channel=%s status=%d duration=%dms",
 			apiToken.Name, actualModel, result.ChannelName, result.Response.StatusCode, duration)
 		return
@@ -1193,9 +1212,9 @@ processResult:
 	if result.Response.StatusCode == 200 {
 		var upstreamResp struct {
 			Usage struct {
-				PromptTokens     int64 `json:"prompt_tokens"`
-				CompletionTokens int64 `json:"completion_tokens"`
-				TotalTokens      int64 `json:"total_tokens"`
+				PromptTokens        int64 `json:"prompt_tokens"`
+				CompletionTokens    int64 `json:"completion_tokens"`
+				TotalTokens         int64 `json:"total_tokens"`
 				PromptTokensDetails struct {
 					CachedTokens int64 `json:"cached_tokens"`
 				} `json:"prompt_tokens_details"`
@@ -1256,20 +1275,22 @@ processResult:
 	}
 	c.Data(result.Response.StatusCode, result.Response.Header.Get("Content-Type"), respBody)
 }
+
 // ===== 请求日志 =====
 func getLogs(c *gin.Context) {
 	var logs []model.RequestLog
 	model.DB.Order("id DESC").Limit(100).Find(&logs)
 	c.JSON(http.StatusOK, gin.H{"data": logs})
 }
+
 // ===== 成本分析（基于 UsageLog） =====
 // getCostSummary 成本总览
 func getCostSummary(c *gin.Context) {
 	type CostRow struct {
-		InputTokens  int64   `json:"input_tokens"`
-		OutputTokens int64   `json:"output_tokens"`
-		Model        string  `json:"model"`
-		Count        int64   `json:"count"`
+		InputTokens  int64  `json:"input_tokens"`
+		OutputTokens int64  `json:"output_tokens"`
+		Model        string `json:"model"`
+		Count        int64  `json:"count"`
 	}
 	var rows []CostRow
 	model.DB.Raw(`SELECT model, sum(input_tokens) as input_tokens,
@@ -1334,17 +1355,18 @@ func getCostSummary(c *gin.Context) {
 		monthCost += model.CalculateCost(r.Input, r.Output, 0, r.Model)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"total_cost":    totalCost,
-		"total_tokens":  totalTokens,
-		"today_cost":    todayCost,
-		"today_tokens":  todayTokens,
-		"week_cost":     weekCost,
-		"week_tokens":   weekTokens,
-		"month_cost":    monthCost,
-		"month_tokens":  monthTokens,
-		"by_model":      summary,
+		"total_cost":   totalCost,
+		"total_tokens": totalTokens,
+		"today_cost":   todayCost,
+		"today_tokens": todayTokens,
+		"week_cost":    weekCost,
+		"week_tokens":  weekTokens,
+		"month_cost":   monthCost,
+		"month_tokens": monthTokens,
+		"by_model":     summary,
 	}})
 }
+
 // getCostByPlan 按套餐维度统计
 func getCostByPlan(c *gin.Context) {
 	type PlanRow struct {
@@ -1377,13 +1399,14 @@ func getCostByPlan(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }
+
 // getCostTrend 近 7 天成本趋势
 func getCostTrend(c *gin.Context) {
 	type DayRow struct {
-		Date         string  `json:"date"`
-		InputTokens  int64   `json:"input_tokens"`
-		OutputTokens int64   `json:"output_tokens"`
-		Count        int64   `json:"count"`
+		Date         string `json:"date"`
+		InputTokens  int64  `json:"input_tokens"`
+		OutputTokens int64  `json:"output_tokens"`
+		Count        int64  `json:"count"`
 	}
 	var rows []DayRow
 	model.DB.Raw(`SELECT date(created_at) as date,
@@ -1412,6 +1435,7 @@ func getCostTrend(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": trend})
 }
+
 // ===== 模型列表 =====
 func listModels(c *gin.Context) {
 	// 按 token 套餐过滤：只返回当前套餐允许的模型
@@ -1453,6 +1477,7 @@ func listModels(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"data": allowedList})
 }
+
 // ===== 用量统计 =====
 func getUsageStats(c *gin.Context) {
 	type DailyStat struct {
@@ -1485,6 +1510,7 @@ func getUsageStats(c *gin.Context) {
 		"by_token": tokenStats, "by_channel": channelStats,
 	}})
 }
+
 // ===== Token 查询（客户用）=====
 // publicStats 公开统计接口（无需登录，给监控中心 iframe 用）
 func publicStats(c *gin.Context) {
@@ -1522,29 +1548,30 @@ func publicStats(c *gin.Context) {
 		FROM usage_logs GROUP BY model ORDER BY count DESC LIMIT 10`).Scan(&modelStats)
 	// 最近请求
 	type RecentLog struct {
-		CreatedAt  string `json:"created_at"`
-		TokenName  string `json:"token_name"`
-		Model      string `json:"model"`
+		CreatedAt   string `json:"created_at"`
+		TokenName   string `json:"token_name"`
+		Model       string `json:"model"`
 		ChannelName string `json:"channel_name"`
-		StatusCode int    `json:"status_code"`
-		DurationMs int64  `json:"duration_ms"`
+		StatusCode  int    `json:"status_code"`
+		DurationMs  int64  `json:"duration_ms"`
 	}
 	var recent []RecentLog
 	model.DB.Raw(`SELECT created_at, token_name, model, channel_name, status_code, duration_ms
 		FROM request_logs ORDER BY id DESC LIMIT 20`).Scan(&recent)
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"total_requests": totalCount,
-		"total_errors":  totalErrors,
-		"today_count":   todayCount,
-		"today_errors":  todayErrors,
-		"avg_duration":  avgDuration,
-		"active_tokens": activeTokens,
-		"total_tokens":  totalTokens,
-		"daily":         dailyStats,
-		"by_model":      modelStats,
-		"recent":        recent,
+		"total_errors":   totalErrors,
+		"today_count":    todayCount,
+		"today_errors":   todayErrors,
+		"avg_duration":   avgDuration,
+		"active_tokens":  activeTokens,
+		"total_tokens":   totalTokens,
+		"daily":          dailyStats,
+		"by_model":       modelStats,
+		"recent":         recent,
 	}})
 }
+
 // getTokenUsage OpenAI 兼容的用量查询 API
 // GET /v1/usage
 // Authorization: Bearer atm-xxx
@@ -1582,27 +1609,27 @@ func getTokenUsage(c *gin.Context) {
 		remainingDays = -1
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"token_name":    apiToken.Name,
-		"plan":          apiToken.RateLimitGroup,
-		"status":        status,
+		"token_name": apiToken.Name,
+		"plan":       apiToken.RateLimitGroup,
+		"status":     status,
 		"quota_5h": gin.H{
-			"used":  rlResult.Used5h,
-			"limit": rlResult.Limit5h,
+			"used":      rlResult.Used5h,
+			"limit":     rlResult.Limit5h,
 			"remaining": rlResult.Limit5h - rlResult.Used5h,
 		},
 		"quota_daily": gin.H{
-			"used":  rlResult.UsedDaily,
-			"limit": rlResult.LimitDaily,
+			"used":      rlResult.UsedDaily,
+			"limit":     rlResult.LimitDaily,
 			"remaining": rlResult.LimitDaily - rlResult.UsedDaily,
 		},
 		"quota_weekly": gin.H{
-			"used":  rlResult.UsedWeekly,
-			"limit": rlResult.LimitWeekly,
+			"used":      rlResult.UsedWeekly,
+			"limit":     rlResult.LimitWeekly,
 			"remaining": rlResult.LimitWeekly - rlResult.UsedWeekly,
 		},
 		"quota_monthly": gin.H{
-			"used":  rlResult.UsedMonthly,
-			"limit": rlResult.LimitMonthly,
+			"used":      rlResult.UsedMonthly,
+			"limit":     rlResult.LimitMonthly,
 			"remaining": rlResult.LimitMonthly - rlResult.UsedMonthly,
 		},
 		"expired_at":     expireDate,
@@ -1701,28 +1728,28 @@ func tokenInfo(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"status":        status,
-		"token_name":    token.Name,
-		"plan":          token.RateLimitGroup,
-		"plan_name":     planDisplayName,
-		"plan_desc":     planDesc,
-		"plan_price":    planPrice,
-		"all_plans":     allPlansList,
-		"skip_hourly":   skipHourly,
-		"limit_5h":      limit5h,
-		"used_5h":       count5h,
-		"remaining_5h":  limit5h - count5h,
-		"limit_daily":   dailyMax,
-		"used_daily":    countDaily,
-		"weekly_max":    weeklyMax,
-		"used_7d":       count7d,
-		"monthly_max":   monthlyMax,
-		"monthly_used":  count30d,
-		"max_qps":       maxQPS,
-		"total_calls":   total.Calls,
-		"total_tokens":  total.Toks,
-		"week_calls":    week.Calls,
-		"week_tokens":   week.Toks,
+		"status":       status,
+		"token_name":   token.Name,
+		"plan":         token.RateLimitGroup,
+		"plan_name":    planDisplayName,
+		"plan_desc":    planDesc,
+		"plan_price":   planPrice,
+		"all_plans":    allPlansList,
+		"skip_hourly":  skipHourly,
+		"limit_5h":     limit5h,
+		"used_5h":      count5h,
+		"remaining_5h": limit5h - count5h,
+		"limit_daily":  dailyMax,
+		"used_daily":   countDaily,
+		"weekly_max":   weeklyMax,
+		"used_7d":      count7d,
+		"monthly_max":  monthlyMax,
+		"monthly_used": count30d,
+		"max_qps":      maxQPS,
+		"total_calls":  total.Calls,
+		"total_tokens": total.Toks,
+		"week_calls":   week.Calls,
+		"week_tokens":  week.Toks,
 		"activated_at": func() string {
 			if token.ActivatedAt == 0 {
 				return "未激活"
@@ -1733,12 +1760,14 @@ func tokenInfo(c *gin.Context) {
 		"remaining_days": remainingDays,
 	})
 }
+
 // ===== 辅助函数 =====
 // 注册限流：每 IP 每分钟最多 3 次注册
 var registerRateLimit = struct {
 	sync.RWMutex
 	records map[string][]time.Time
 }{records: make(map[string][]time.Time)}
+
 func checkRegisterRateLimit(ip string) bool {
 	registerRateLimit.Lock()
 	defer registerRateLimit.Unlock()
@@ -1762,11 +1791,13 @@ func checkRegisterRateLimit(ip string) bool {
 	registerRateLimit.records[ip] = append(registerRateLimit.records[ip], now)
 	return true
 }
+
 // 登录限流：每 IP 每分钟最多 10 次登录
 var loginRateLimit = struct {
 	sync.RWMutex
 	records map[string][]time.Time
 }{records: make(map[string][]time.Time)}
+
 func checkLoginRateLimit(ip string) bool {
 	loginRateLimit.Lock()
 	defer loginRateLimit.Unlock()
@@ -1867,10 +1898,10 @@ func batchCreateTokens(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":  fmt.Sprintf("成功生产 %d 个 token", len(results)),
-		"tokens":   results,
-		"plan":     plan.DisplayName,
-		"quota":    plan.MonthlyMax,
+		"message": fmt.Sprintf("成功生产 %d 个 token", len(results)),
+		"tokens":  results,
+		"plan":    plan.DisplayName,
+		"quota":   plan.MonthlyMax,
 	})
 }
 
@@ -1895,14 +1926,15 @@ func containsString(slice []string, target string) bool {
 	}
 	return false
 }
+
 // 导出日志为 CSV
 func exportLogs(c *gin.Context) {
 	var logs []model.RequestLog
 	model.DB.Order("id DESC").Limit(1000).Find(&logs)
-	
+
 	c.Header("Content-Type", "text/csv")
 	c.Header("Content-Disposition", "attachment; filename=atmapi_logs.csv")
-	
+
 	c.Writer.WriteString("ID,Time,Token,Channel,Model,Status,Duration(ms)\n")
 	for _, log := range logs {
 		c.Writer.WriteString(fmt.Sprintf("%d,%s,%s,%s,%s,%d,%d\n",
@@ -1911,21 +1943,23 @@ func exportLogs(c *gin.Context) {
 			log.StatusCode, log.DurationMs))
 	}
 }
+
 // 系统设置
 func getSystemSettings(c *gin.Context) {
 	settings := gin.H{
-		"version": "2.0.0",
-		"database": "SQLite",
-		"port": 3002,
-		"jwt_auth": true,
-		"cors": true,
+		"version":        "2.0.0",
+		"database":       "SQLite",
+		"port":           3002,
+		"jwt_auth":       true,
+		"cors":           true,
 		"channels_count": func() int64 { var c int64; model.DB.Model(&model.Channel{}).Count(&c); return c }(),
-		"tokens_count": func() int64 { var c int64; model.DB.Model(&model.Token{}).Count(&c); return c }(),
-		"users_count": func() int64 { var c int64; model.DB.Model(&model.User{}).Count(&c); return c }(),
-		"logs_count": func() int64 { var c int64; model.DB.Model(&model.RequestLog{}).Count(&c); return c }(),
+		"tokens_count":   func() int64 { var c int64; model.DB.Model(&model.Token{}).Count(&c); return c }(),
+		"users_count":    func() int64 { var c int64; model.DB.Model(&model.User{}).Count(&c); return c }(),
+		"logs_count":     func() int64 { var c int64; model.DB.Model(&model.RequestLog{}).Count(&c); return c }(),
 	}
 	c.JSON(http.StatusOK, gin.H{"data": settings})
 }
+
 // ===== 支付相关（已迁移到 payment_handler.go）=====
 // createOrder    → payment_handler.go
 // alipayNotify   → payment_handler.go
@@ -2045,12 +2079,15 @@ func isMetadataLabel(s string) bool {
 	}
 	return false
 }
+
 // hasOpenClawImageMetadata 检查消息中是否有 OpenClaw 图片元数据标记
 // OpenClaw 发图时 text 内容是 Conversation info + Sender + [media attached:] 等元数据
 func hasOpenClawImageMetadata(messages []map[string]interface{}) bool {
 	for _, msg := range messages {
 		role, _ := msg["role"].(string)
-		if role != "user" { continue }
+		if role != "user" {
+			continue
+		}
 		content := msg["content"]
 		switch c := content.(type) {
 		case string:
@@ -2063,7 +2100,7 @@ func hasOpenClawImageMetadata(messages []map[string]interface{}) bool {
 					if typ, _ := partMap["type"].(string); typ == "text" {
 						if text, ok := partMap["text"].(string); ok {
 							if strings.Contains(text, "[media attached:") || strings.Contains(text, "- Images:") {
-										dbgLog("[IMG-DBG] FOUND media tag, caching")
+								dbgLog("[IMG-DBG] FOUND media tag, caching")
 								return true
 							}
 						}
@@ -2074,6 +2111,7 @@ func hasOpenClawImageMetadata(messages []map[string]interface{}) bool {
 	}
 	return false
 }
+
 // extractUserQuestion 提取最后一条 user 消息中的实质性问题
 // 过滤掉 OpenClaw 元数据（[media attached:], Conversation info 等）
 func extractUserQuestion(messages []map[string]interface{}) string {
@@ -2254,10 +2292,10 @@ func getTokenCost(c *gin.Context) {
 	isLoss, profit, _ := service.CheckTokenLoss(uint(tokenID))
 
 	c.JSON(http.StatusOK, gin.H{
-		"data":       summary,
-		"period":     period,
-		"is_loss":    isLoss,
-		"profit":     profit,
+		"data":    summary,
+		"period":  period,
+		"is_loss": isLoss,
+		"profit":  profit,
 	})
 }
 

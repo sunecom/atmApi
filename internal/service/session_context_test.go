@@ -2,8 +2,14 @@ package service
 
 import (
 	"net/http"
+	"os"
 	"testing"
 )
+
+func init() {
+	// 测试环境设置开发模式
+	os.Setenv("APP_ENV", "development")
+}
 
 // TestResolveSession_HeaderCaseInsensitive P0-1: 测试请求头大小写不敏感
 func TestResolveSession_HeaderCaseInsensitive(t *testing.T) {
@@ -130,13 +136,13 @@ func TestHasActiveToolTransaction(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "tool 响应后等待",
+			name: "tool 响应后等待 assistant 完成",
 			messages: []map[string]interface{}{
 				{"role": "user", "content": "帮我查天气"},
 				{"role": "assistant", "tool_calls": []interface{}{}},
 				{"role": "tool", "content": "晴天"},
 			},
-			want: false, // tool 响应后，事务完成
+			want: true, // P0-5 V1.2: tool 响应后事务仍活跃，等待 assistant 完成
 		},
 		{
 			name: "用户新问题",

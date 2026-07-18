@@ -23,13 +23,13 @@ Sender (untrusted metadata):
 			expected: "这是用户消息",
 		},
 		{
-			name: "JSON 代码块 envelope",
-			input: "```json\n{\"chat_id\": \"123\"}\n```\n\nSender (untrusted metadata):\n{\"role\": \"user\"}\n\n用户内容",
+			name:     "JSON 代码块 envelope",
+			input:    "```json\n{\"chat_id\": \"123\"}\n```\n\nSender (untrusted metadata):\n{\"role\": \"user\"}\n\n用户内容",
 			expected: "用户内容",
 		},
 		{
-			name: "多个 JSON 块",
-			input: "```json\n{\"conversation info\": \"test\"}\n```\n\n```json\n{\"sender\": \"metadata\"}\n```\n\n用户消息",
+			name:     "多个 JSON 块",
+			input:    "```json\n{\"conversation info\": \"test\"}\n```\n\n```json\n{\"sender\": \"metadata\"}\n```\n\n用户消息",
 			expected: "用户消息",
 		},
 		{

@@ -17,9 +17,9 @@ type ModelPreference struct {
 // 键：PreferenceCacheKey(sessionHash) = "pref:" + sessionHash
 // 逻辑：有 tool_calls 时优先复用上次模型，tool_calls 消失后恢复智能路由
 type ModelPreferenceCache struct {
-	mu    sync.RWMutex
-	items map[string]*ModelPreference // key = "pref:" + sessionHash
-	ttl   time.Duration
+	mu      sync.RWMutex
+	items   map[string]*ModelPreference // key = "pref:" + sessionHash
+	ttl     time.Duration
 	maxSize int
 }
 
@@ -46,13 +46,15 @@ func InitModelPreferenceCache(ttlMinutes int) {
 }
 
 // GetPreferredModel 获取会话的上次使用模型（如果未过期）
+// P0-4 V1.2 修复：命中时刷新时间戳，实现真正的滑动 TTL
 // key 应为 PreferenceCacheKey(sessionHash)
 func (c *ModelPreferenceCache) GetPreferredModel(key string) string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if pref, exists := c.items[key]; exists {
 		if time.Since(pref.Timestamp) < c.ttl {
+			pref.Timestamp = time.Now() // 滑动续期：命中时刷新
 			return pref.Model
 		}
 	}

@@ -13,7 +13,7 @@ const baseURL = "http://localhost:3300"
 const testToken = "atm-1778491177466775297"
 
 func main() {
-	fmt.Println("=== Phase 2A+ 本地测试 ===\n")
+	fmt.Print("...")
 
 	// 测试 1: 默认行为策略（开发类任务）
 	test1()
@@ -24,7 +24,7 @@ func main() {
 	// 测试 3: 咨询类任务不注入默认策略
 	test3()
 
-	fmt.Println("\n=== 测试完成 ===")
+	fmt.Println("=== 测试完成 ===")
 }
 
 func test1() {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 )
 
 // SessionContext 会话上下文（不含原始 Token 和会话 ID）
@@ -21,28 +23,39 @@ type SessionContext struct {
 }
 
 // GetServerSecret 从环境变量读取服务端密钥
-// P0-6 修复：生产环境 fail-closed，必须显式设置 APP_ENV=development 才允许默认值
+// P0-6 V1.2 修复：真正的 fail-closed
+// - 生产环境缺失时拒绝启动
+// - 只有显式 APP_ENV=development 才允许临时密钥
+// - 临时密钥使用 crypto/rand 生成，每个进程只生成一次
+var devSecretOnce sync.Once
+var devSecret []byte
+
 func getServerSecret() []byte {
 	secret := os.Getenv("ATM_SERVER_SECRET")
 	if secret != "" {
+		if len(secret) < 16 {
+			log.Fatalf("[会话] 🔴 ATM_SERVER_SECRET 长度不足 16 字符，拒绝启动")
+		}
 		return []byte(secret)
 	}
 
 	// 没有设置密钥，检查是否显式声明开发环境
 	appEnv := os.Getenv("APP_ENV")
 	if strings.ToLower(appEnv) == "development" || strings.ToLower(appEnv) == "dev" {
-		log.Println("[会话] ⚠️ 开发环境：使用临时密钥（请设置 ATM_SERVER_SECRET）")
-		return []byte("atmapi-dev-secret-2026")
+		devSecretOnce.Do(func() {
+			devSecret = make([]byte, 32)
+			// 使用 crypto/rand 生成随机密钥
+			if _, err := rand.Read(devSecret); err != nil {
+				log.Fatalf("[会话] 🔴 开发环境密钥生成失败: %v", err)
+			}
+			log.Printf("[会话] ⚠️ 开发环境：已生成随机临时密钥（重启后会话隔离失效）")
+		})
+		return devSecret
 	}
 
-	// 生产环境：fail-closed，使用启动时生成的随机密钥
-	log.Println("[会话] 🔴 ATM_SERVER_SECRET 未设置，生成随机密钥（重启后会话隔离失效）")
-	// 生成一个基于进程的随机密钥
-	b := make([]byte, 32)
-	for i := range b {
-		b[i] = byte(i + 1) // 占位，实际应该用 crypto/rand
-	}
-	return b
+	// 生产环境：fail-closed，拒绝启动
+	log.Fatalf("[会话] 🔴 ATM_SERVER_SECRET 未设置，生产环境拒绝启动。请设置 ATM_SERVER_SECRET 或 APP_ENV=development")
+	return nil
 }
 
 // ResolveSession 从 HTTP 请求头解析会话上下文
@@ -71,7 +84,7 @@ func ResolveSession(header http.Header, tokenID uint) *SessionContext {
 	// HMAC(token_id + session_id)
 	mac := hmac.New(sha256.New, getServerSecret())
 	mac.Write([]byte(fmt.Sprintf("%d:%s", tokenID, sessionID)))
-	ctx.SessionHash = hex.EncodeToString(mac.Sum(nil))[:16] // 前 16 字符够用
+	ctx.SessionHash = hex.EncodeToString(mac.Sum(nil))[:32] // 32 hex = 128 bit
 	ctx.RawSessionID = sessionID
 
 	return ctx
@@ -115,10 +128,15 @@ func IsSessionMissing(sessionHash string) bool {
 }
 
 // HasActiveToolTransaction 检查当前是否在工具事务中
-// P0-5 修复：统一工具事务检测逻辑
-// 工具事务活跃条件：
-// 1. 最后一条消息是 tool role（等待处理结果）
-// 2. 最后一条 assistant 消息有 tool_calls 且后面没有 tool 响应
+// P0-5 V1.2 修复：柯大侠指出旧代码把 tool 响应视为事务结束，
+// 但在 Chat Completions 协议中，带 tool 结果的请求还需要模型读取并生成回答，
+// 此时仍必须保持原模型。
+//
+// 状态机规则：
+// 1. assistant(tool_calls) → tool 结果 → 事务仍活跃（等待 assistant 完成）
+// 2. assistant(tool_calls) 后无 tool 结果 → 事务活跃
+// 3. 不含 tool_calls 的 assistant 回答 → 事务完成
+// 4. 新真实 user 请求 → 事务结束，转入会话粘性
 func HasActiveToolTransaction(messages []map[string]interface{}) bool {
 	if len(messages) == 0 {
 		return false
@@ -130,28 +148,51 @@ func HasActiveToolTransaction(messages []map[string]interface{}) bool {
 
 		switch role {
 		case "tool":
-			// 找到 tool 响应，继续往前找对应的 assistant tool_calls
-			continue
+			// tool 结果 → 事务仍活跃，等待 assistant 完成
+			return true
 		case "assistant":
 			if _, ok := messages[i]["tool_calls"]; ok {
-				// 找到 assistant 发起的 tool_calls
-				// 检查后面是否有对应的 tool 响应
-				hasToolResponse := false
-				for j := i + 1; j < len(messages); j++ {
-					if r, _ := messages[j]["role"].(string); r == "tool" {
-						hasToolResponse = true
-						break
-					}
-				}
-				// 如果有 tool 响应，事务已完成；否则事务活跃
-				return !hasToolResponse
+				// assistant 发起了 tool_calls → 事务活跃
+				// 无论后面有没有 tool 响应，都是事务活跃
+				return true
 			}
-			// 普通 assistant 消息，没有 tool_calls
+			// 普通 assistant 消息（无 tool_calls）→ 事务完成
 			return false
 		case "user":
-			// 用户新消息，事务结束
+			// P0-5: 检查是否是 OpenClaw 伪 user 工具结果
+			// OpenClaw 以 role=user 注入工具结果，通常以 [tool result] 或类似格式开头
+			content := getUserText(messages[i])
+			if isOpenClawToolResult(content) {
+				return true
+			}
+			// 真实用户新问题 → 事务结束
 			return false
 		}
 	}
+	return false
+}
+
+// isOpenClawToolResult 检查是否是 OpenClaw 伪 user 工具结果
+// OpenClaw 工具结果特征：通常包含特定标记
+func isOpenClawToolResult(content string) bool {
+	if content == "" {
+		return false
+	}
+	// OpenClaw 工具结果通常有这些标记
+	markers := []string{
+		"[tool result",
+		"[tool_result",
+		"[Tool Result",
+		"Tool result:",
+		"--- Tool Result",
+		"--- Tool Output",
+	}
+	for _, marker := range markers {
+		if strings.HasPrefix(strings.TrimSpace(content), marker) {
+			return true
+		}
+	}
+	// 另一种模式：非常大的 user 消息（>2000 字节），前面有 assistant(tool_calls)
+	// 这种情况下难以准确判断，先不做启发式检测
 	return false
 }
