@@ -94,7 +94,7 @@ func recordRequest(tokenKey string, isPro bool) {
 	}
 }
 
-func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenKey string, planName string) string {
+func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenKey string, planName string, sessionHash string) string {
 	requestedModel = strings.ToLower(requestedModel)
 	if requestedModel != "deepseek-a4" {
 		return requestedModel
@@ -105,10 +105,11 @@ func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenK
 		return "qwen3.7-plus"
 	}
 
+	prefKey := PreferenceCacheKey(sessionHash)
 	hasTC := hasToolCalls(messages)
-	log.Printf("[路由] hasToolCalls=%v, GlobalModelPref=%v", hasTC, GlobalModelPref != nil)
+	log.Printf("[路由] hasToolCalls=%v, GlobalModelPref=%v, session=%s", hasTC, GlobalModelPref != nil, sessionHash[:min(8, len(sessionHash))])
 	if hasTC && GlobalModelPref != nil {
-		if preferred := GlobalModelPref.GetPreferredModel(tokenKey); preferred != "" {
+		if preferred := GlobalModelPref.GetPreferredModel(prefKey); preferred != "" {
 			log.Printf("[路由] tool_calls活跃 → 复用偏好模型: %s", preferred)
 			return preferred
 		}
@@ -117,23 +118,32 @@ func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenK
 
 	complexity := analyzeComplexityV2(messages)
 	log.Printf("[路由] 复杂度=%s plan=%s", complexity, planName)
+	selectedModel := "deepseek-v4-flash"
 	switch complexity {
 	case "simple":
 		recordRequest(tokenKey, false)
-		return "deepseek-v4-flash"
+		selectedModel = "deepseek-v4-flash"
 	case "complex":
 		// 检查 Pro 比例限制
 		if !CheckProAllowed(tokenKey, planName) {
 			log.Printf("[Pro限制] token=%s plan=%s 超限，静默降级Flash", tokenKey[:min(8, len(tokenKey))], planName)
 			recordRequest(tokenKey, false)
-			return "deepseek-v4-flash"
+			selectedModel = "deepseek-v4-flash"
+		} else {
+			recordRequest(tokenKey, true)
+			selectedModel = "deepseek-v4-pro"
 		}
-		recordRequest(tokenKey, true)
-		return "deepseek-v4-pro"
 	default:
 		recordRequest(tokenKey, false)
-		return "deepseek-v4-flash"
+		selectedModel = "deepseek-v4-flash"
 	}
+
+	// 工具事务活跃时，记录模型偏好（会话级）
+	if hasTC && GlobalModelPref != nil {
+		GlobalModelPref.SetPreferredModel(prefKey, selectedModel)
+	}
+
+	return selectedModel
 }
 
 // hasToolCalls 判断当前是否有活跃的工具调用

@@ -765,6 +765,15 @@ func chatCompletions(c *gin.Context) {
 			}
 		}
 	}
+	// ===== 会话 ID 接入（Phase 0/1: SmartRoute 之前需要）=====
+	headers := map[string]string{}
+	for k, v := range c.Request.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+	sessCtx := service.ResolveSession(headers, apiToken.ID)
+
 	// ===== 智能路由：根据请求复杂度选择模型 =====
 	// 调试：打印最后3条消息角色
 	lastRoles := ""
@@ -781,14 +790,21 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 	log.Printf("[路由] 最后3条: %s", lastRoles)
-	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey, apiToken.PlanName)
+	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey, apiToken.PlanName, sessCtx.SessionHash)
 
-	// ===== 任务模式路由（Phase 2C） =====
+	// ===== 任务模式路由（Phase 2C + Phase 1 修复）=====
+	// Phase 1 修复：任务模式不能覆盖工具链锁定
 	taskModeResult := service.ClassifyTaskMode(req.Messages)
 	if taskModeResult.Model != "" && taskModeResult.Mode != service.TaskModeUnknown {
-		// 任务模式覆盖路由结果（调试→pro，咨询→flash，闲聊→flash）
-		if actualModel != taskModeResult.Model {
-			// 检查套餐 Pro 限制：如果覆盖目标是 pro 但套餐不允许，不覆盖
+		// 关键修复：如果工具事务活跃，任务模式不能覆盖模型
+		toolActive := service.HasActiveToolTransaction(req.Messages)
+		prefKey := service.PreferenceCacheKey(sessCtx.SessionHash)
+		hasPreferred := service.GlobalModelPref != nil && service.GlobalModelPref.GetPreferredModel(prefKey) != ""
+
+		if toolActive && hasPreferred {
+			log.Printf("[模式路由] ⚡ 工具事务活跃，任务模式不能覆盖 (mode=%s, 保持=%s)", taskModeResult.Mode, actualModel)
+		} else if actualModel != taskModeResult.Model {
+			// 检查套餐 Pro 限制
 			if taskModeResult.Model == "deepseek-v4-pro" && !service.CheckProAllowed(tokenKey, apiToken.PlanName) {
 				log.Printf("[模式路由] 套餐 %s 不允许 Pro，跳过覆盖 (mode=%s)", apiToken.PlanName, taskModeResult.Mode)
 			} else {
@@ -953,15 +969,6 @@ modelAllowed:
 	c.Writer.Header().Set("X-ATM-Context-Original-Messages", fmt.Sprintf("%d", contextDecision.OriginalCount))
 	c.Writer.Header().Set("X-ATM-Context-Final-Messages", fmt.Sprintf("%d", contextDecision.FinalCount))
 
-	// ===== 会话 ID 接入（Phase 0）=====
-	headers := map[string]string{}
-	for k, v := range c.Request.Header {
-		if len(v) > 0 {
-			headers[k] = v[0]
-		}
-	}
-	sessCtx := service.ResolveSession(headers, apiToken.ID)
-
 	// ===== 上下文决策日志（Phase 0）=====
 	service.LogContextDecision(service.ContextLogEntry{
 		SessionHash:        sessCtx.SessionHash,
@@ -1073,24 +1080,16 @@ modelAllowed:
 		}
 	}
 processResult:
-	// 保存/清除会话模型偏好
+	// 保存/清除会话模型偏好（Phase 1: 会话级隔离）
 	// 有活跃 tool_calls → 缓存模型（保持格式兼容）
 	// 无活跃 tool_calls → 清除缓存（即时回落 flash，不等 TTL）
 	if service.GlobalModelPref != nil {
-		lastRole := ""
-		if len(req.Messages) > 0 {
-			lastRole, _ = req.Messages[len(req.Messages)-1]["role"].(string)
-		}
-		hasActiveTC := lastRole == "tool"
-		if !hasActiveTC && lastRole == "assistant" {
-			if _, ok := req.Messages[len(req.Messages)-1]["tool_calls"]; ok {
-				hasActiveTC = true
-			}
-		}
+		prefKey := service.PreferenceCacheKey(sessCtx.SessionHash)
+		hasActiveTC := service.HasActiveToolTransaction(req.Messages)
 		if hasActiveTC {
-			service.GlobalModelPref.SetPreferredModel(tokenKey, actualModel)
+			service.GlobalModelPref.SetPreferredModel(prefKey, actualModel)
 		} else {
-			service.GlobalModelPref.ClearPreferredModel(tokenKey)
+			service.GlobalModelPref.ClearPreferredModel(prefKey)
 		}
 	}
 	defer result.Response.Body.Close()
@@ -1940,36 +1939,82 @@ func getSystemSettings(c *gin.Context) {
 // getPayments    → payment_handler.go
 // refundPayment  → payment_handler.go
 // stripMetadata 过滤 OpenClaw 图片消息的元数据头
+// stripMetadata 安全版：只解析开头的 OpenClaw envelope，不扫描用户正文
+// Phase 1 重写（柯大侠 P0-6）：
+// - 只删除开头的 ```json ... ``` 块（如果它包含 Conversation info / untrusted metadata）
+// - 只删除开头的元数据标签行（直到遇到用户正文）
+// - 不删除用户正文中的 JSON / timestamp / chat_id 等
 func stripMetadata(s string) string {
-	// 去掉 ```json ... ``` 块
-	for {
-		idx := strings.Index(s, "```json")
-		if idx < 0 { break }
-		end := strings.Index(s[idx:], "```\n")
-		if end < 0 { break }
-		s = s[:idx] + s[idx+end+4:]
+	// Phase 1: 安全解析 — 只处理开头 envelope
+	// OpenClaw 的 envelope 格式：
+	// ```json\n{...Conversation info...}\n```\n\nSender (untrusted metadata):\n```json\n{...}\n```\n\n[用户真实正文]
+
+	pos := 0
+
+	// 1. 跳过开头的空行
+	for pos < len(s) && (s[pos] == '\n' || s[pos] == '\r' || s[pos] == ' ') {
+		pos++
 	}
-	// 去掉元数据标签行
-	lines := strings.Split(s, "\n")
-	var clean []string
-	for _, line := range lines {
-		t := strings.TrimSpace(line)
-		if t == "" { continue }
-		l := strings.ToLower(t)
-		if strings.Contains(l, "untrusted metadata") ||
-		   strings.Contains(l, "conversation info") ||
-		   strings.Contains(l, "sender (") ||
-		   strings.Contains(l, "chat_id") ||
-		   strings.Contains(l, "message_id") ||
-		   strings.Contains(l, "sender_id") ||
-		   strings.Contains(l, "inbound") ||
-		   strings.Contains(l, "timestamp") ||
-		   strings.Contains(l, "channel_account") {
-			continue
+
+	// 2. 检查开头是否有 ```json envelope 块
+	// 最多处理 3 个连续的 json 块（Conversation info + Sender metadata）
+	for i := 0; i < 3; i++ {
+		if !strings.HasPrefix(s[pos:], "```json") {
+			break
 		}
-		clean = append(clean, line)
+		endMarker := "```\n"
+		endIdx := strings.Index(s[pos+7:], endMarker)
+		if endIdx < 0 {
+			break
+		}
+		// 检查这个 json 块是否是元数据（包含特征词）
+		blockContent := s[pos+7 : pos+7+endIdx]
+		blockLower := strings.ToLower(blockContent)
+		isMetadata := strings.Contains(blockLower, "conversation info") ||
+			strings.Contains(blockLower, "untrusted metadata") ||
+			strings.Contains(blockLower, "chat_id") ||
+			strings.Contains(blockLower, "sender") ||
+			strings.Contains(blockLower, "inbound")
+
+		if !isMetadata {
+			break // 不是元数据，停止
+		}
+
+		pos = pos + 7 + endIdx + len(endMarker)
+		// 跳过空行
+		for pos < len(s) && (s[pos] == '\n' || s[pos] == '\r' || s[pos] == ' ') {
+			pos++
+		}
 	}
-	return strings.TrimSpace(strings.Join(clean, "\n"))
+
+	// 3. 跳过 "Sender (untrusted metadata):" 标签行
+	if strings.HasPrefix(s[pos:], "Sender (") {
+		newlineIdx := strings.Index(s[pos:], "\n")
+		if newlineIdx >= 0 {
+			pos += newlineIdx + 1
+			for pos < len(s) && (s[pos] == '\n' || s[pos] == '\r' || s[pos] == ' ') {
+				pos++
+		}
+		}
+	}
+
+	// 4. 跳过 "Conversation info" 标签行
+	if strings.HasPrefix(s[pos:], "Conversation info") {
+		newlineIdx := strings.Index(s[pos:], "\n")
+		if newlineIdx >= 0 {
+			pos += newlineIdx + 1
+			for pos < len(s) && (s[pos] == '\n' || s[pos] == '\r' || s[pos] == ' ') {
+				pos++
+		}
+		}
+	}
+
+	result := s[pos:]
+	result = strings.TrimSpace(result)
+	if result == "" {
+		return s // 不返回空，回退原文
+	}
+	return result
 }
 // hasOpenClawImageMetadata 检查消息中是否有 OpenClaw 图片元数据标记
 // OpenClaw 发图时 text 内容是 Conversation info + Sender + [media attached:] 等元数据
