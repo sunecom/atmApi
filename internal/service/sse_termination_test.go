@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -30,6 +29,17 @@ func TestSSETermination_ToolCallsDone(t *testing.T) {
 	}
 }
 
+// TestSSETermination_EmptyToolCalls V1.6: 空 tool_calls 不算合法终态
+func TestSSETermination_EmptyToolCalls(t *testing.T) {
+	s := SSETermination{}
+	s.ParseSSEChunk(`{"choices":[{"delta":{"tool_calls":[]}}]}`)
+	s.ParseSSEChunk("[DONE]")
+
+	if s.IsLegalSuccess() {
+		t.Error("空 tool_calls + [DONE] 不应该合法成功")
+	}
+}
+
 // TestSSETermination_ReasoningOnly V1.5: reasoning-only + [DONE] = 非合法
 func TestSSETermination_ReasoningOnly(t *testing.T) {
 	s := SSETermination{}
@@ -45,7 +55,6 @@ func TestSSETermination_ReasoningOnly(t *testing.T) {
 func TestSSETermination_NoDone(t *testing.T) {
 	s := SSETermination{}
 	s.ParseSSEChunk(`{"choices":[{"delta":{"content":"hello"}}]}`)
-	// 没有 [DONE]
 
 	if s.IsLegalSuccess() {
 		t.Error("有 data 但无 [DONE] 不应该合法成功")
@@ -76,6 +85,17 @@ func TestSSETermination_RefusalDone(t *testing.T) {
 	}
 }
 
+// TestSSETermination_CorruptedJSON V1.6: 损坏 SSE 不算合法终态
+func TestSSETermination_CorruptedJSON(t *testing.T) {
+	s := SSETermination{}
+	s.ParseSSEChunk(`{broken json`)
+	s.ParseSSEChunk("[DONE]")
+
+	if s.IsLegalSuccess() {
+		t.Error("损坏 JSON + [DONE] 不应该合法成功")
+	}
+}
+
 // TestParseNonStreamResponse_Content V1.5: 非流式有 content
 func TestParseNonStreamResponse_Content(t *testing.T) {
 	body := []byte(`{"choices":[{"message":{"content":"hello world"}}]}`)
@@ -96,6 +116,16 @@ func TestParseNonStreamResponse_ToolCalls(t *testing.T) {
 	}
 }
 
+// TestParseNonStreamResponse_EmptyToolCalls V1.6: 非流式空 tool_calls
+func TestParseNonStreamResponse_EmptyToolCalls(t *testing.T) {
+	body := []byte(`{"choices":[{"message":{"content":"","tool_calls":[]}}]}`)
+	n := ParseNonStreamResponse(body)
+
+	if n.IsLegalSuccess() {
+		t.Error("空 tool_calls 不应该合法成功")
+	}
+}
+
 // TestParseNonStreamResponse_Empty V1.5: 非流式空响应
 func TestParseNonStreamResponse_Empty(t *testing.T) {
 	body := []byte(`{"choices":[{"message":{"content":"","tool_calls":null}}]}`)
@@ -106,10 +136,10 @@ func TestParseNonStreamResponse_Empty(t *testing.T) {
 	}
 }
 
-// TestIsValidPreferenceModel V1.5: 禁止写入元模型
+// TestIsValidPreferenceModel V1.6: 白名单制
 func TestIsValidPreferenceModel(t *testing.T) {
-	valid := []string{"deepseek-v4-flash", "deepseek-v4-pro", "glm-5.2"}
-	invalid := []string{"", "deepseek-a4", "qwen3.7-plus", "qwen3.6-plus", "qwen3.5-plus"}
+	valid := []string{"deepseek-v4-flash", "deepseek-v4-pro"}
+	invalid := []string{"", "deepseek-a4", "qwen3.7-plus", "qwen3.6-plus", "glm-5.2", "unknown-model"}
 
 	for _, m := range valid {
 		if !IsValidPreferenceModel(m) {
@@ -123,121 +153,74 @@ func TestIsValidPreferenceModel(t *testing.T) {
 	}
 }
 
-// TestInitServerSecret_ProductionMissing V1.5: 生产环境缺失密钥报错
+// --- 密钥测试 V1.6: 调用真实 InitServerSecret() ---
+
+// withEnv 临时设置环境变量并恢复
+func withEnv(t *testing.T, env map[string]string, fn func(t *testing.T)) {
+	t.Helper()
+	orig := map[string]string{}
+	for k, v := range env {
+		orig[k] = os.Getenv(k)
+		os.Setenv(k, v)
+	}
+	defer func() {
+		for k, v := range orig {
+			os.Setenv(k, v)
+		}
+	}()
+	fn(t)
+}
+
+// TestInitServerSecret_ProductionMissing V1.6: 真实调用 InitServerSecret
 func TestInitServerSecret_ProductionMissing(t *testing.T) {
-	origEnv := os.Getenv("APP_ENV")
-	origSecret := os.Getenv("ATM_SERVER_SECRET")
-	defer func() {
-		os.Setenv("APP_ENV", origEnv)
-		os.Setenv("ATM_SERVER_SECRET", origSecret)
-	}()
-
-	os.Setenv("APP_ENV", "production")
-	os.Setenv("ATM_SERVER_SECRET", "")
-
-	// 保存和恢复全局状态
-	origInit := serverSecretInitialized
-	origSecret2 := serverSecret
-	defer func() {
-		serverSecretInitialized = origInit
-		serverSecret = origSecret2
-	}()
-
-	// 重置状态
-	serverSecretInitialized = false
-	serverSecret = nil
-
-	err := initServerSecretForTest()
-	if err == nil {
-		t.Error("生产环境缺失密钥应该报错")
-	}
+	withEnv(t, map[string]string{
+		"APP_ENV":           "production",
+		"ATM_SERVER_SECRET": "",
+	}, func(t *testing.T) {
+		ResetServerSecret()
+		err := InitServerSecret()
+		if err == nil {
+			t.Error("生产环境缺失密钥应该报错")
+		}
+		if !strings.Contains(err.Error(), "ATM_SERVER_SECRET") {
+			t.Errorf("错误信息应该包含 ATM_SERVER_SECRET, got: %v", err)
+		}
+	})
 }
 
-// TestInitServerSecret_ShortSecret V1.5: 短密钥报错
+// TestInitServerSecret_ShortSecret V1.6: 短密钥报错
 func TestInitServerSecret_ShortSecret(t *testing.T) {
-	origEnv := os.Getenv("APP_ENV")
-	origSecret := os.Getenv("ATM_SERVER_SECRET")
-	defer func() {
-		os.Setenv("APP_ENV", origEnv)
-		os.Setenv("ATM_SERVER_SECRET", origSecret)
-	}()
-
-	os.Setenv("APP_ENV", "production")
-	os.Setenv("ATM_SERVER_SECRET", "short")
-
-	origInit := serverSecretInitialized
-	origSecretVal := serverSecret
-	defer func() {
-		serverSecretInitialized = origInit
-		serverSecret = origSecretVal
-	}()
-
-	serverSecretInitialized = false
-	serverSecret = nil
-
-	err := initServerSecretForTest()
-	if err == nil {
-		t.Error("短密钥应该报错")
-	}
+	withEnv(t, map[string]string{
+		"APP_ENV":           "production",
+		"ATM_SERVER_SECRET": "short",
+	}, func(t *testing.T) {
+		ResetServerSecret()
+		err := InitServerSecret()
+		if err == nil {
+			t.Error("短密钥应该报错")
+		}
+		if !strings.Contains(err.Error(), "16") {
+			t.Errorf("错误信息应该提到长度不足, got: %v", err)
+		}
+	})
 }
 
-// TestInitServerSecret_ValidSecret V1.5: 合法密钥成功
+// TestInitServerSecret_ValidSecret V1.6: 合法密钥成功
 func TestInitServerSecret_ValidSecret(t *testing.T) {
-	origEnv := os.Getenv("APP_ENV")
-	origSecret := os.Getenv("ATM_SERVER_SECRET")
-	defer func() {
-		os.Setenv("APP_ENV", origEnv)
-		os.Setenv("ATM_SERVER_SECRET", origSecret)
-	}()
-
 	validSecret := "this-is-a-valid-production-secret-32chars!"
-	os.Setenv("APP_ENV", "production")
-	os.Setenv("ATM_SERVER_SECRET", validSecret)
-
-	origInit := serverSecretInitialized
-	origSecretVal := serverSecret
-	defer func() {
-		serverSecretInitialized = origInit
-		serverSecret = origSecretVal
-	}()
-
-	serverSecretInitialized = false
-	serverSecret = nil
-
-	err := initServerSecretForTest()
-	if err != nil {
-		t.Errorf("合法密钥应该成功, got error: %v", err)
-	}
-	if !serverSecretInitialized {
-		t.Error("应该标记为已初始化")
-	}
-}
-
-// initServerSecretForTest 是 InitServerSecret 的测试版本
-// 不受 sync.Once 影响（用于测试中重复调用）
-func initServerSecretForTest() error {
-	secret := os.Getenv("ATM_SERVER_SECRET")
-	if secret != "" {
-		if len(secret) < 16 {
-			return fmt.Errorf("ATM_SERVER_SECRET 长度不足 16 字符")
+	withEnv(t, map[string]string{
+		"APP_ENV":           "production",
+		"ATM_SERVER_SECRET": validSecret,
+	}, func(t *testing.T) {
+		ResetServerSecret()
+		err := InitServerSecret()
+		if err != nil {
+			t.Errorf("合法密钥应该成功, got: %v", err)
 		}
-		serverSecret = []byte(secret)
-		serverSecretInitialized = true
-		return nil
-	}
-
-	appEnv := os.Getenv("APP_ENV")
-	if strings.ToLower(appEnv) == "development" || strings.ToLower(appEnv) == "dev" {
-		if len(devSecret) == 0 {
-			devSecret = make([]byte, 32)
-			json.Marshal(devSecret) // 占位，crypto/rand 在 Once 中已生成
+		if !serverSecretInitialized {
+			t.Error("应该标记为已初始化")
 		}
-		serverSecret = devSecret
-		serverSecretInitialized = true
-		return nil
-	}
-
-	return fmt.Errorf("ATM_SERVER_SECRET 未设置")
+	})
 }
 
 // 确保引入了需要的包

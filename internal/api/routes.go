@@ -1046,8 +1046,12 @@ modelAllowed:
 				respondError(c, http.StatusBadRequest, ErrInvalidRequest, err.Error())
 				return
 			}
-			// V1.4: 快速失败切 Qwen 成功 → 更新 actualModel
-			actualModel = "qwen3.7-plus"
+			// V1.6: 快速失败切 Qwen 成功 → 从 result 获取最终模型
+			if result.ActualModel != "" {
+				actualModel = result.ActualModel
+			} else {
+				actualModel = "qwen3.7-plus"
+			}
 			// Qwen 成功了，继续往下走到正常响应
 			goto processResult
 		}
@@ -1062,8 +1066,12 @@ modelAllowed:
 				result, err = service.RouteRequest(altModel, altBody, tokenKey)
 				if err == nil {
 					log.Printf("[路由] 降级 %s 失败，备选 %s 成功", actualModel, altModel)
-					// V1.4: fallback 成功 → 更新 actualModel 为最终有效模型
-					actualModel = altModel
+					// V1.6: 优先从 result.ActualModel 获取最终有效模型
+					if result.ActualModel != "" {
+						actualModel = result.ActualModel
+					} else {
+						actualModel = altModel
+					}
 					break
 				}
 			}
@@ -1084,8 +1092,10 @@ modelAllowed:
 				retryBody, _ := json.Marshal(retryReqMap)
 				result, err = service.RouteRequest(retryModel, retryBody, tokenKey)
 				if err == nil {
-					// V1.5: retry 成功 → 只有非元模型才更新 actualModel
-					if service.IsValidPreferenceModel(retryModel) {
+					// V1.6: retry 成功 → 优先从 result 获取最终有效模型
+					if result.ActualModel != "" && service.IsValidPreferenceModel(result.ActualModel) {
+						actualModel = result.ActualModel
+					} else if service.IsValidPreferenceModel(retryModel) {
 						actualModel = retryModel
 					}
 				}

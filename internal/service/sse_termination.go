@@ -6,11 +6,11 @@ import (
 )
 
 // SSETermination 流式响应终态分类
-// V1.5: 柯大侠要求统一终态判断
+// V1.5/V1.6: 柯大侠要求统一终态判断
 type SSETermination struct {
 	SawDone      bool // 出现 data: [DONE]
 	SawContent   bool // 至少一个 chunk 有非空 content
-	SawToolCalls bool // 至少一个 chunk 有 tool_calls
+	SawToolCalls bool // 至少一个 chunk 有非空 tool_calls
 	SawRefusal   bool // 至少一个 chunk 有 refusal
 	ReadError    bool // 读取中断（io.ErrUnexpectedEOF 等）
 }
@@ -27,6 +27,7 @@ func (s SSETermination) IsLegalSuccess() bool {
 }
 
 // ParseSSEChunk 解析单个 SSE data 行，更新终态
+// V1.6: 空 tool_calls 数组和损坏 JSON 不算合法终态
 func (s *SSETermination) ParseSSEChunk(data string) {
 	if strings.TrimSpace(data) == "[DONE]" {
 		s.SawDone = true
@@ -45,7 +46,7 @@ func (s *SSETermination) ParseSSEChunk(data string) {
 	}
 
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-		return
+		return // 损坏的 JSON 不影响终态
 	}
 
 	for _, choice := range chunk.Choices {
@@ -55,8 +56,11 @@ func (s *SSETermination) ParseSSEChunk(data string) {
 		if choice.Delta.Refusal != "" {
 			s.SawRefusal = true
 		}
+		// V1.6: 空 tool_calls 数组不算
 		if choice.Delta.ToolCalls != nil {
-			s.SawToolCalls = true
+			if tcArr, ok := choice.Delta.ToolCalls.([]interface{}); ok && len(tcArr) > 0 {
+				s.SawToolCalls = true
+			}
 		}
 	}
 }
@@ -75,6 +79,7 @@ func (n NonStreamTermination) IsLegalSuccess() bool {
 }
 
 // ParseNonStreamResponse 解析非流式响应体
+// V1.6: 空 tool_calls 不算合法
 func ParseNonStreamResponse(body []byte) NonStreamTermination {
 	var resp struct {
 		Choices []struct {
@@ -95,26 +100,27 @@ func ParseNonStreamResponse(body []byte) NonStreamTermination {
 	}
 
 	choice := resp.Choices[0]
+	hasTC := false
+	if choice.Message.ToolCalls != nil {
+		if tcArr, ok := choice.Message.ToolCalls.([]interface{}); ok && len(tcArr) > 0 {
+			hasTC = true
+		}
+	}
 	return NonStreamTermination{
 		HasContent:   choice.Message.Content != "",
-		HasToolCalls: choice.Message.ToolCalls != nil,
+		HasToolCalls: hasTC,
 		HasRefusal:   choice.Message.Refusal != "",
-		IsEmpty:      choice.Message.Content == "" && choice.Message.ToolCalls == nil && choice.Message.Refusal == "",
+		IsEmpty:      choice.Message.Content == "" && !hasTC && choice.Message.Refusal == "",
 	}
 }
 
 // IsValidPreferenceModel 判断模型名是否可写入偏好缓存
-// V1.5: 禁止写入元模型、空字符串、临时视觉模型
+// V1.6: 改为白名单制，只允许 flash/pro
 func IsValidPreferenceModel(model string) bool {
 	if model == "" {
 		return false
 	}
 	lower := strings.ToLower(model)
-	if lower == "deepseek-a4" {
-		return false // 元模型，不能写入
-	}
-	if lower == "qwen3.7-plus" || lower == "qwen3.6-plus" || lower == "qwen3.5-plus" {
-		return false // 临时视觉模型
-	}
-	return true
+	// 白名单：只有 flash/pro 能写入偏好
+	return lower == "deepseek-v4-flash" || lower == "deepseek-v4-pro"
 }

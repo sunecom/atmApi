@@ -22,11 +22,17 @@ type SessionContext struct {
 	RawSessionID   string // 仅用于本次请求，不持久化
 }
 
-// P0-6 V1.4: 密钥初始化返回 error，不用 log.Fatal
+// P0-6 V1.6: 密钥初始化可重置，支持测试重复调用
 var devSecretOnce sync.Once
 var devSecret []byte
 var serverSecret []byte
 var serverSecretInitialized bool
+
+// ResetServerSecret 重置密钥状态（仅测试用）
+func ResetServerSecret() {
+	serverSecret = nil
+	serverSecretInitialized = false
+}
 
 // InitServerSecret 启动时一次性初始化密钥
 // 返回 error 由 main() 决定如何处理
