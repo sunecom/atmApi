@@ -1046,6 +1046,8 @@ modelAllowed:
 				respondError(c, http.StatusBadRequest, ErrInvalidRequest, err.Error())
 				return
 			}
+			// V1.4: 快速失败切 Qwen 成功 → 更新 actualModel
+			actualModel = "qwen3.7-plus"
 			// Qwen 成功了，继续往下走到正常响应
 			goto processResult
 		}
@@ -1060,6 +1062,8 @@ modelAllowed:
 				result, err = service.RouteRequest(altModel, altBody, tokenKey)
 				if err == nil {
 					log.Printf("[路由] 降级 %s 失败，备选 %s 成功", actualModel, altModel)
+					// V1.4: fallback 成功 → 更新 actualModel 为最终有效模型
+					actualModel = altModel
 					break
 				}
 			}
@@ -1079,6 +1083,10 @@ modelAllowed:
 				retryReqMap["model"] = retryModel
 				retryBody, _ := json.Marshal(retryReqMap)
 				result, err = service.RouteRequest(retryModel, retryBody, tokenKey)
+				if err == nil {
+					// V1.4: retry 成功 → 更新 actualModel
+					actualModel = retryModel
+				}
 			}
 		}
 
@@ -1093,23 +1101,6 @@ modelAllowed:
 		}
 	}
 processResult:
-	// 会话模型偏好生命周期（V1.3 修复）
-	// 柯大侠 V1.2 核心发现：
-	// - 400/401/403/429 错误响应不应刷新偏好
-	// - fallback 后应缓存最终有效模型
-	// - 图片和显式模型不应污染文本偏好
-	//
-	// 规则：
-	// 1. 只有 2xx 成功才写入偏好
-	// 2. 只缓存 deepseek-a4 路由出来的模型（flash/pro）
-	// 3. 图片请求(qwen3.7-plus)和显式模型不写偏好
-	// 4. actualModel 在 fallback 后已经是最终有效模型
-	if service.GlobalModelPref != nil && result.Response.StatusCode >= 200 && result.Response.StatusCode < 300 {
-		prefKey := service.PreferenceCacheKey(sessCtx.SessionHash)
-		if prefKey != "" && strings.EqualFold(req.Model, "deepseek-a4") && actualModel != "qwen3.7-plus" {
-			service.GlobalModelPref.SetPreferredModel(prefKey, actualModel)
-		}
-	}
 	defer result.Response.Body.Close()
 	// ===== 流式响应分支：逐 chunk 转发 =====
 	if isStream {
@@ -1196,6 +1187,10 @@ processResult:
 
 		log.Printf("[流式] token=%s model=%s channel=%s status=%d duration=%dms",
 			apiToken.Name, actualModel, result.ChannelName, result.Response.StatusCode, duration)
+		// V1.4: 流式完整结束且有合法内容 → 写入偏好
+		if lastChunk != "" && result.Response.StatusCode >= 200 && result.Response.StatusCode < 300 {
+			commitSessionPreference(sessCtx, req.Model, actualModel)
+		}
 		return
 	}
 	// ===== 非流式：原有逻辑 =====
@@ -1276,6 +1271,19 @@ processResult:
 	// 写入缓存（非流式且成功）
 	if !isStream && result.Response.StatusCode == 200 && service.GlobalCache != nil && cacheKey != "" {
 		service.GlobalCache.Set(cacheKey, respBody)
+	}
+	// V1.4: 非流式偏好写入 — 确认有合法内容后才写
+	if result.Response.StatusCode == 200 && len(respBody) > 10 {
+		var contentCheck struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal(respBody, &contentCheck) == nil && len(contentCheck.Choices) > 0 && contentCheck.Choices[0].Message.Content != "" {
+			commitSessionPreference(sessCtx, req.Model, actualModel)
+		}
 	}
 	c.Data(result.Response.StatusCode, result.Response.Header.Get("Content-Type"), respBody)
 }
@@ -2304,6 +2312,31 @@ func getTokenCost(c *gin.Context) {
 }
 
 // actualModelForLog 返回实际发给渠道的模型名（如果可用），否则回退到路由决策的模型名
+// commitSessionPreference 在确认合法终态后写入会话偏好
+// V1.4: 柯大侠要求偏好写入移到 SSE 完整结束/非流式解析成功后
+// 只有以下条件全满足才写入：
+// 1. 有效 session
+// 2. 请求模型是 deepseek-a4
+// 3. 最终模型不是 qwen3.7-plus（图片临时路由）
+// 4. 有合法内容（调用方负责确认）
+func commitSessionPreference(sessCtx *service.SessionContext, reqModel, actualModel string) {
+	if service.GlobalModelPref == nil {
+		return
+	}
+	prefKey := service.PreferenceCacheKey(sessCtx.SessionHash)
+	if prefKey == "" {
+		return
+	}
+	if !strings.EqualFold(reqModel, "deepseek-a4") {
+		return
+	}
+	if actualModel == "qwen3.7-plus" {
+		return
+	}
+	service.GlobalModelPref.SetPreferredModel(prefKey, actualModel)
+	log.Printf("[偏好] ✅ 写入: model=%s session=%s...", actualModel, sessCtx.SessionHash[:min(8, len(sessCtx.SessionHash))])
+}
+
 func actualModelForLog(result *service.RouteRequestResult, fallback string) string {
 	if result.ActualModel != "" {
 		return result.ActualModel

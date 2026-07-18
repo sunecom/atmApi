@@ -129,7 +129,7 @@ func getAdminJWT() string {
 
 func test5() {
 	fmt.Println("【测试 5】成本仪表盘 API")
-	
+
 	jwt := getAdminJWT()
 	if jwt == "" {
 		fmt.Println("  跳过: 无法获取 admin JWT")
@@ -139,20 +139,20 @@ func test5() {
 
 	req, _ := http.NewRequest("GET", baseURL+"/api/v1/dashboard?period=today", nil)
 	req.Header.Set("Authorization", "Bearer "+jwt)
-	
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fmt.Printf("  错误: %v\n\n", err)
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	body, _ := io.ReadAll(resp.Body)
 	fmt.Printf("  状态: %d\n", resp.StatusCode)
-	
+
 	var result map[string]interface{}
 	json.Unmarshal(body, &result)
-	
+
 	if data, ok := result["data"]; ok {
 		prettyJSON, _ := json.MarshalIndent(data, "  ", "  ")
 		fmt.Printf("  数据: %s\n", truncate(string(prettyJSON), 500))
@@ -165,7 +165,7 @@ func test5() {
 
 func test6() {
 	fmt.Println("【测试 6】单 token 成本 API")
-	
+
 	jwt := getAdminJWT()
 	if jwt == "" {
 		fmt.Println("  跳过: 无法获取 admin JWT")
@@ -176,37 +176,37 @@ func test6() {
 	// 先获取 token 列表
 	req, _ := http.NewRequest("GET", baseURL+"/api/v1/tokens", nil)
 	req.Header.Set("Authorization", "Bearer "+jwt)
-	
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fmt.Printf("  错误: %v\n\n", err)
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	body, _ := io.ReadAll(resp.Body)
 	var result map[string]interface{}
 	json.Unmarshal(body, &result)
-	
+
 	if tokens, ok := result["data"].([]interface{}); ok && len(tokens) > 0 {
 		firstToken := tokens[0].(map[string]interface{})
 		tokenID := fmt.Sprintf("%.0f", firstToken["id"])
-		
+
 		// 查询该 token 的成本
 		costReq, _ := http.NewRequest("GET", baseURL+"/api/v1/token/"+tokenID+"/cost?period=today", nil)
 		costReq.Header.Set("Authorization", "Bearer "+jwt)
-		
+
 		costResp, err := http.DefaultClient.Do(costReq)
 		if err != nil {
 			fmt.Printf("  错误: %v\n\n", err)
 			return
 		}
 		defer costResp.Body.Close()
-		
+
 		costBody, _ := io.ReadAll(costResp.Body)
 		fmt.Printf("  Token ID: %s\n", tokenID)
 		fmt.Printf("  状态: %d\n", costResp.StatusCode)
-		
+
 		var costResult map[string]interface{}
 		json.Unmarshal(costBody, &costResult)
 		if data, ok := costResult["data"]; ok {

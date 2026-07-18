@@ -37,8 +37,10 @@ func main() {
 	// 初始化数据库
 	model.InitDB(cfg)
 
-	// P0-6 V1.3: 启动时校验密钥配置（而非首个请求时）
-	service.ValidateServerSecret()
+	// P0-6 V1.4: 启动时初始化密钥（返回 error，不用 log.Fatal）
+	if err := service.InitServerSecret(); err != nil {
+		log.Fatalf("[会话] 🔴 %v", err)
+	}
 
 	// 初始化响应缓存（TTL 10分钟，最大 1000 条）
 	service.InitCache(10*time.Minute, 1000)

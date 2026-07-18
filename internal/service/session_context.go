@@ -22,20 +22,24 @@ type SessionContext struct {
 	RawSessionID   string // 仅用于本次请求，不持久化
 }
 
-// P0-6 V1.3: 密钥校验移到启动阶段
+// P0-6 V1.4: 密钥初始化返回 error，不用 log.Fatal
 var devSecretOnce sync.Once
 var devSecret []byte
+var serverSecret []byte
+var serverSecretInitialized bool
 
-// ValidateServerSecret 启动时一次性校验密钥配置
-// P0-6 V1.3 修复：密钥校验移到启动阶段，不在首个请求时才检查
-// 在 main.go 的 InitDB 之后调用
-func ValidateServerSecret() {
+// InitServerSecret 启动时一次性初始化密钥
+// 返回 error 由 main() 决定如何处理
+func InitServerSecret() error {
 	secret := os.Getenv("ATM_SERVER_SECRET")
 	if secret != "" {
 		if len(secret) < 16 {
-			log.Fatalf("[会话] 🔴 ATM_SERVER_SECRET 长度不足 16 字符，拒绝启动")
+			return fmt.Errorf("ATM_SERVER_SECRET 长度不足 16 字符")
 		}
-		return
+		serverSecret = []byte(secret)
+		serverSecretInitialized = true
+		log.Printf("[会话] ✅ ATM_SERVER_SECRET 已加载 (%d 字符)", len(secret))
+		return nil
 	}
 
 	appEnv := os.Getenv("APP_ENV")
@@ -43,24 +47,26 @@ func ValidateServerSecret() {
 		devSecretOnce.Do(func() {
 			devSecret = make([]byte, 32)
 			if _, err := rand.Read(devSecret); err != nil {
-				log.Fatalf("[会话] 🔴 开发环境密钥生成失败: %v", err)
+				log.Fatalf("[会话] 开发环境密钥生成失败: %v", err)
 			}
-			log.Printf("[会话] ⚠️ 开发环境：已生成随机临时密钥（重启后会话隔离失效）")
+			log.Printf("[会话] ⚠️ 开发环境：已生成随机临时密钥")
 		})
-		return
+		serverSecret = devSecret
+		serverSecretInitialized = true
+		return nil
 	}
 
-	log.Fatalf("[会话] 🔴 ATM_SERVER_SECRET 未设置，生产环境拒绝启动。请设置 ATM_SERVER_SECRET 或 APP_ENV=development")
+	return fmt.Errorf("ATM_SERVER_SECRET 未设置，请设置该环境变量或 APP_ENV=development")
 }
 
-// GetServerSecret 从环境变量读取服务端密钥（已由 ValidateServerSecret 校验）
+// GetServerSecret 返回已初始化的密钥
 func getServerSecret() []byte {
-	secret := os.Getenv("ATM_SERVER_SECRET")
-	if secret != "" {
-		return []byte(secret)
+	if !serverSecretInitialized {
+		// 未初始化 → 返回 nil，HMAC 会用空 key
+		// 这不应该发生，因为 main.go 会调用 InitServerSecret
+		return nil
 	}
-	// 开发环境随机密钥（ValidateServerSecret 已确保 devSecret 被初始化）
-	return devSecret
+	return serverSecret
 }
 
 // ResolveSession 从 HTTP 请求头解析会话上下文
