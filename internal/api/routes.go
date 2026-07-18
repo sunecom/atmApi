@@ -1934,82 +1934,116 @@ func getSystemSettings(c *gin.Context) {
 // getPayments    → payment_handler.go
 // refundPayment  → payment_handler.go
 // stripMetadata 过滤 OpenClaw 图片消息的元数据头
-// stripMetadata 安全版：只解析开头的 OpenClaw envelope，不扫描用户正文
-// Phase 1 重写（柯大侠 P0-6）：
-// - 只删除开头的 ```json ... ``` 块（如果它包含 Conversation info / untrusted metadata）
-// - 只删除开头的元数据标签行（直到遇到用户正文）
-// - 不删除用户正文中的 JSON / timestamp / chat_id 等
+// stripMetadata 安全版 v3（P1-1 修复）：小型前缀解析器
+// 按「标签 / 代码块 / 空行」循环消费，遇到第一个非元数据块立即停止
+// 不扫描用户正文中的任何内容
 func stripMetadata(s string) string {
-	// Phase 1: 安全解析 — 只处理开头 envelope
-	// OpenClaw 的 envelope 格式：
-	// ```json\n{...Conversation info...}\n```\n\nSender (untrusted metadata):\n```json\n{...}\n```\n\n[用户真实正文]
-
+	lines := strings.Split(s, "\n")
 	pos := 0
+	consumed := false
 
-	// 1. 跳过开头的空行
-	for pos < len(s) && (s[pos] == '\n' || s[pos] == '\r' || s[pos] == ' ') {
-		pos++
-	}
+	for pos < len(lines) {
+		line := lines[pos]
+		trimmed := strings.TrimSpace(line)
 
-	// 2. 检查开头是否有 ```json envelope 块
-	// 最多处理 3 个连续的 json 块（Conversation info + Sender metadata）
-	for i := 0; i < 3; i++ {
-		if !strings.HasPrefix(s[pos:], "```json") {
-			break
-		}
-		endMarker := "```\n"
-		endIdx := strings.Index(s[pos+7:], endMarker)
-		if endIdx < 0 {
-			break
-		}
-		// 检查这个 json 块是否是元数据（包含特征词）
-		blockContent := s[pos+7 : pos+7+endIdx]
-		blockLower := strings.ToLower(blockContent)
-		isMetadata := strings.Contains(blockLower, "conversation info") ||
-			strings.Contains(blockLower, "untrusted metadata") ||
-			strings.Contains(blockLower, "chat_id") ||
-			strings.Contains(blockLower, "sender") ||
-			strings.Contains(blockLower, "inbound")
-
-		if !isMetadata {
-			break // 不是元数据，停止
-		}
-
-		pos = pos + 7 + endIdx + len(endMarker)
-		// 跳过空行
-		for pos < len(s) && (s[pos] == '\n' || s[pos] == '\r' || s[pos] == ' ') {
+		// 1. 跳过空行
+		if trimmed == "" {
 			pos++
+			continue
 		}
-	}
 
-	// 3. 跳过 "Sender (untrusted metadata):" 标签行
-	if strings.HasPrefix(s[pos:], "Sender (") {
-		newlineIdx := strings.Index(s[pos:], "\n")
-		if newlineIdx >= 0 {
-			pos += newlineIdx + 1
-			for pos < len(s) && (s[pos] == '\n' || s[pos] == '\r' || s[pos] == ' ') {
+		// 2. 检查是否是 ``` 代码块
+		if strings.HasPrefix(trimmed, "```") {
+			// 找到代码块结束位置
+			endPos := pos + 1
+			for endPos < len(lines) {
+				if strings.HasPrefix(strings.TrimSpace(lines[endPos]), "```") {
+					break
+				}
+				endPos++
+			}
+			if endPos >= len(lines) {
+				break // 没有结束标记
+			}
+
+			// 提取代码块内容
+			blockLines := lines[pos+1 : endPos]
+			blockContent := strings.Join(blockLines, "\n")
+			blockLower := strings.ToLower(blockContent)
+
+			// 检查是否是元数据
+			isMeta := strings.Contains(blockLower, "conversation info") ||
+				strings.Contains(blockLower, "untrusted metadata") ||
+				strings.Contains(blockLower, "chat_id") ||
+				strings.Contains(blockLower, "sender") ||
+				strings.Contains(blockLower, "inbound") ||
+				strings.Contains(blockLower, "message_id") ||
+				strings.Contains(blockLower, "channel_account")
+
+			if !isMeta {
+				break // 不是元数据代码块，停止
+			}
+
+			pos = endPos + 1
+			consumed = true
+			continue
+		}
+
+		// 3. 检查是否是元数据标签行
+		if isMetadataLabel(trimmed) {
+			pos++
+			consumed = true
+
+			// 标签行后面可能跟着：内容行、代码块、裸 JSON
+			for pos < len(lines) {
+				nextTrimmed := strings.TrimSpace(lines[pos])
+				if nextTrimmed == "" {
+					break // 空行结束
+				}
+				if strings.HasPrefix(nextTrimmed, "```") {
+					break // 代码块开始，回到主循环处理
+				}
+				if isMetadataLabel(nextTrimmed) {
+					break // 新标签行，回到主循环处理
+				}
+				// 消费这一行（key:value 行、裸 JSON 等）
 				pos++
+				consumed = true
+			}
+			continue
 		}
-		}
+
+		// 4. 不是元数据，停止
+		break
 	}
 
-	// 4. 跳过 "Conversation info" 标签行
-	if strings.HasPrefix(s[pos:], "Conversation info") {
-		newlineIdx := strings.Index(s[pos:], "\n")
-		if newlineIdx >= 0 {
-			pos += newlineIdx + 1
-			for pos < len(s) && (s[pos] == '\n' || s[pos] == '\r' || s[pos] == ' ') {
-				pos++
-		}
-		}
+	if !consumed {
+		return s
 	}
 
-	result := s[pos:]
-	result = strings.TrimSpace(result)
+	result := strings.TrimSpace(strings.Join(lines[pos:], "\n"))
 	if result == "" {
-		return s // 不返回空，回退原文
+		return s
 	}
 	return result
+}
+
+// isMetadataLabel 检查是否是元数据标签行
+func isMetadataLabel(s string) bool {
+	labels := []string{
+		"Sender (",
+		"Sender(",
+		"Conversation info",
+		"Conversation Info",
+		"[media attached:",
+		"[Media attached:",
+	}
+	for _, label := range labels {
+		if strings.HasPrefix(s, label) {
+			return true
+		}
+	}
+	return false
 }
 // hasOpenClawImageMetadata 检查消息中是否有 OpenClaw 图片元数据标记
 // OpenClaw 发图时 text 内容是 Conversation info + Sender + [media attached:] 等元数据
