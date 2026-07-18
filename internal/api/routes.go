@@ -1084,8 +1084,10 @@ modelAllowed:
 				retryBody, _ := json.Marshal(retryReqMap)
 				result, err = service.RouteRequest(retryModel, retryBody, tokenKey)
 				if err == nil {
-					// V1.4: retry 成功 → 更新 actualModel
-					actualModel = retryModel
+					// V1.5: retry 成功 → 只有非元模型才更新 actualModel
+					if service.IsValidPreferenceModel(retryModel) {
+						actualModel = retryModel
+					}
 				}
 			}
 		}
@@ -1122,6 +1124,7 @@ processResult:
 		flusher, hasFlusher := c.Writer.(interface{ Flush() })
 		bufReader := bufio.NewReader(result.Response.Body)
 		var lastChunk string
+		sseTerm := service.SSETermination{}
 		for {
 			line, err := bufReader.ReadString('\n')
 			if line != "" {
@@ -1129,12 +1132,19 @@ processResult:
 				if hasFlusher {
 					flusher.Flush()
 				}
-				// 记录最后一条非空 data: 行（含 usage 信息）
-				if strings.HasPrefix(line, "data: ") && !strings.Contains(line, "[DONE]") {
-					lastChunk = strings.TrimPrefix(line, "data: ")
+				if strings.HasPrefix(line, "data: ") {
+					data := strings.TrimPrefix(line, "data: ")
+					data = strings.TrimSpace(data)
+					sseTerm.ParseSSEChunk(data)
+					if data != "[DONE]" {
+						lastChunk = data
+					}
 				}
 			}
 			if err != nil {
+				if err != io.EOF {
+					sseTerm.ReadError = true
+				}
 				break
 			}
 		}
@@ -1187,8 +1197,8 @@ processResult:
 
 		log.Printf("[流式] token=%s model=%s channel=%s status=%d duration=%dms",
 			apiToken.Name, actualModel, result.ChannelName, result.Response.StatusCode, duration)
-		// V1.4: 流式完整结束且有合法内容 → 写入偏好
-		if lastChunk != "" && result.Response.StatusCode >= 200 && result.Response.StatusCode < 300 {
+		// V1.5: 流式合法终态判断
+		if result.Response.StatusCode >= 200 && result.Response.StatusCode < 300 && sseTerm.IsLegalSuccess() {
 			commitSessionPreference(sessCtx, req.Model, actualModel)
 		}
 		return
@@ -1272,16 +1282,10 @@ processResult:
 	if !isStream && result.Response.StatusCode == 200 && service.GlobalCache != nil && cacheKey != "" {
 		service.GlobalCache.Set(cacheKey, respBody)
 	}
-	// V1.4: 非流式偏好写入 — 确认有合法内容后才写
+	// V1.5: 非流式偏好写入 — 使用统一终态分类
 	if result.Response.StatusCode == 200 && len(respBody) > 10 {
-		var contentCheck struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
-		}
-		if json.Unmarshal(respBody, &contentCheck) == nil && len(contentCheck.Choices) > 0 && contentCheck.Choices[0].Message.Content != "" {
+		nonStream := service.ParseNonStreamResponse(respBody)
+		if nonStream.IsLegalSuccess() {
 			commitSessionPreference(sessCtx, req.Model, actualModel)
 		}
 	}
@@ -2313,12 +2317,7 @@ func getTokenCost(c *gin.Context) {
 
 // actualModelForLog 返回实际发给渠道的模型名（如果可用），否则回退到路由决策的模型名
 // commitSessionPreference 在确认合法终态后写入会话偏好
-// V1.4: 柯大侠要求偏好写入移到 SSE 完整结束/非流式解析成功后
-// 只有以下条件全满足才写入：
-// 1. 有效 session
-// 2. 请求模型是 deepseek-a4
-// 3. 最终模型不是 qwen3.7-plus（图片临时路由）
-// 4. 有合法内容（调用方负责确认）
+// V1.5: 使用 IsValidPreferenceModel 禁止写入元模型
 func commitSessionPreference(sessCtx *service.SessionContext, reqModel, actualModel string) {
 	if service.GlobalModelPref == nil {
 		return
@@ -2330,7 +2329,7 @@ func commitSessionPreference(sessCtx *service.SessionContext, reqModel, actualMo
 	if !strings.EqualFold(reqModel, "deepseek-a4") {
 		return
 	}
-	if actualModel == "qwen3.7-plus" {
+	if !service.IsValidPreferenceModel(actualModel) {
 		return
 	}
 	service.GlobalModelPref.SetPreferredModel(prefKey, actualModel)

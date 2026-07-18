@@ -44,13 +44,18 @@ func InitServerSecret() error {
 
 	appEnv := os.Getenv("APP_ENV")
 	if strings.ToLower(appEnv) == "development" || strings.ToLower(appEnv) == "dev" {
+		var initErr error
 		devSecretOnce.Do(func() {
 			devSecret = make([]byte, 32)
 			if _, err := rand.Read(devSecret); err != nil {
-				log.Fatalf("[会话] 开发环境密钥生成失败: %v", err)
+				initErr = fmt.Errorf("开发环境密钥生成失败: %w", err)
+				return
 			}
 			log.Printf("[会话] ⚠️ 开发环境：已生成随机临时密钥")
 		})
+		if initErr != nil {
+			return initErr
+		}
 		serverSecret = devSecret
 		serverSecretInitialized = true
 		return nil
@@ -59,12 +64,11 @@ func InitServerSecret() error {
 	return fmt.Errorf("ATM_SERVER_SECRET 未设置，请设置该环境变量或 APP_ENV=development")
 }
 
-// GetServerSecret 返回已初始化的密钥
+// getServerSecret 返回已初始化的密钥
+// V1.5: 未初始化时 panic（编程错误，不应到达此处）
 func getServerSecret() []byte {
-	if !serverSecretInitialized {
-		// 未初始化 → 返回 nil，HMAC 会用空 key
-		// 这不应该发生，因为 main.go 会调用 InitServerSecret
-		return nil
+	if !serverSecretInitialized || len(serverSecret) == 0 {
+		panic("getServerSecret called before InitServerSecret")
 	}
 	return serverSecret
 }
