@@ -110,8 +110,8 @@ func SmartRoute(requestedModel string, messages []map[string]interface{}, tokenK
 
 	// 优先级 2：图片内容 → 临时路由视觉模型（不写偏好）
 	if HasImageContent(messages) {
-		log.Printf("[路由] 图片内容 → qwen3.7-plus（临时，不写偏好）")
-		return "qwen3.7-plus"
+		log.Printf("[路由] 图片内容 → qwen3-vl-plus（临时，不写偏好）")
+		return "qwen3-vl-plus"
 	}
 
 	prefKey := PreferenceCacheKey(sessionHash)

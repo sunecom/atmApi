@@ -81,10 +81,11 @@ func getServerSecret() []byte {
 
 // ResolveSession 从 HTTP 请求头解析会话上下文
 // P0-1 修复：使用 http.Header.Get() 而非手动 map 查找（大小写不敏感）
-// 优先级：X-Atm-Session-Id > X-Session-Id > X-Conversation-Id
+// V1.7: 优先级链（柯大侠建议）
+// X-Atm-Session-Id > X-Session-Affinity > X-Session-Id > X-Conversation-Id > 缺失
 func ResolveSession(header http.Header, tokenID uint) *SessionContext {
 	sessionID := ""
-	for _, key := range []string{"X-Atm-Session-Id", "X-Session-Id", "X-Conversation-Id"} {
+	for _, key := range []string{"X-Atm-Session-Id", "X-Session-Affinity", "X-Session-Id", "X-Conversation-Id"} {
 		if val := header.Get(key); val != "" {
 			sessionID = val
 			break

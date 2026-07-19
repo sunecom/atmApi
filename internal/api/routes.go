@@ -801,6 +801,30 @@ func chatCompletions(c *gin.Context) {
 		}
 	}
 	log.Printf("[路由] 最后3条: %s", lastRoles)
+
+	// V1.7 临时调试：捕获 OpenClaw 伪 user 工具结果格式
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if r, _ := req.Messages[i]["role"].(string); r == "user" {
+			preview := ""
+			if s, ok := req.Messages[i]["content"].(string); ok {
+				preview = s
+			} else if arr, ok := req.Messages[i]["content"].([]interface{}); ok {
+				for _, p := range arr {
+					if pm, ok := p.(map[string]interface{}); ok {
+						if t, _ := pm["text"].(string); t != "" {
+							preview += t
+						}
+					}
+				}
+			}
+			if len(preview) > 200 {
+				preview = preview[:200]
+			}
+			log.Printf("[协议采样] 最后user消息前200字: %s", preview)
+			break
+		}
+	}
+
 	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey, apiToken.PlanName, sessCtx.SessionHash)
 
 	// ===== 任务模式路由（P0-3 V1.2 修复：已有会话偏好的不被覆盖）=====

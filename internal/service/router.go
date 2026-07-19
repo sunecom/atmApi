@@ -91,8 +91,12 @@ var modelRouter = map[string][]ModelRouteEntry{
 		{ChannelID: 17, ModelOverride: "", Priority: 100},                         // DeepSeek [151]
 		{ChannelID: 16, ModelOverride: "", Priority: 80},                          // DeepSeek [048]
 	},
+	"qwen3-vl-plus": {
+		{ChannelID: 26, ModelOverride: "qwen3-vl-plus", Priority: 120}, // 百炼 qwen3-vl-plus
+		{ChannelID: 1, ModelOverride: "qwen3.7-plus", Priority: 100},    // 通义千问 qwen3.7-plus（兜底）
+	},
 	"qwen3.7-plus": {
-		{ChannelID: 1, ModelOverride: "", Priority: 100}, // 通义千问
+		{ChannelID: 1, ModelOverride: "qwen3.7-plus", Priority: 100}, // 通义千问 qwen3.7-plus
 	},
 }
 

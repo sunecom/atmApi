@@ -95,6 +95,11 @@ func TestResolveSession_HeaderCaseInsensitive(t *testing.T) {
 			wantHash: "pref:",
 		},
 		{
+			name:     "X-Session-Affinity 备选",
+			header:   http.Header{"X-Session-Affinity": []string{"affinity-test-456"}},
+			wantHash: "pref:",
+		},
+		{
 			name:     "X-Session-Id 备选",
 			header:   http.Header{"X-Session-Id": []string{"test-session-456"}},
 			wantHash: "pref:",
