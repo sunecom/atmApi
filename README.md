@@ -1,336 +1,181 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/status-v2.0.0-success" alt="Status">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-  <img src="https://img.shields.io/badge/go-1.22-purple" alt="Go">
-  <img src="https://img.shields.io/badge/AiToMoney-%F0%9F%A6%90-orange" alt="AiToMoney">
-</p>
+# 🏧 ATM API — AI API 智能网关
 
-<h1 align="center">🏧 ATM API</h1>
-<p align="center"><b>你的 AI 模型自动提款机</b></p>
+> **你的 AI 模型自动提款机**  
+> AiToMoney 出品 🚀
 
-<p align="center">
-  🇨🇳 全中文后台 · 🔄 多渠道自动 Fallback · 🐳 一键部署<br/>
-  <i>One API 的国产替代 Plus — 更贴近中国开发者的使用习惯</i>
-</p>
-
-<p align="center">
-  <a href="#-快速开始">快速开始</a> ·
-  <a href="#-核心功能">核心功能</a> ·
-  <a href="#-技术架构">技术架构</a> ·
-  <a href="#-配置指南">配置指南</a>
-</p>
+[![Status](https://img.shields.io/badge/status-v2.1.0-success)](https://github.com/sunecom/atmApi)
+[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/sunecom/atmApi)
+[![Go](https://img.shields.io/badge/go-1.22-purple)](https://github.com/sunecom/atmApi)
 
 ---
 
-## 📸 截图
+## 📋 项目总览
 
-> 管理后台预览（等待补充截图）：
-> ![后台首页](https://via.placeholder.com/800x500/1e1e2e/4f46e5?text=atmApi+Admin+Dashboard)
+atmApi 是 **AI API 智能网关**，核心能力是模型选择层——不是简单转发，而是根据场景智能路由到最优模型。
+
+### 一句话定位
+
+> 一个 API 入口（`deepseek-a4`），自动选最优模型 + 最低成本。
+
+### 核心能力
+
+| 能力 | 说明 | 效果 |
+|------|------|------|
+| 🧠 **智能路由** | 按图片/复杂度/上下文自动选模型 | 70% flash + 20% pro + 10% 视觉 |
+| 💰 **成本优化** | 多渠道 failover + 缓存 + 压缩 | 节省 60%+ |
+| 🔒 **会话偏好** | session 级模型锁定，不跨会话串扰 | 体验流畅 |
+| 🖼️ **图片路由** | 检测到图片自动切 qwen3-vl-plus | 专业视觉识别 |
+| 🚦 **限流熔断** | 滑动窗口 + 渠道熔断 | 保护上游 |
+| 📊 **成本监控** | 实时仪表盘 + 三级优先级追踪 | 成本透明 |
+
+---
+
+## 🏗️ 架构简图
+
+```
+用户 → deepseek-a4
+    │
+    ▼ SmartRoute
+    ├─ 有图片？ → qwen3-vl-plus（百炼视觉模型）
+    ├─ 有偏好？ → 复用偏好模型
+    ├─ 工具事务？ → pro（深度推理）
+    └─ 简单对话？ → flash（快速便宜）
+```
+
+### 部署架构
+
+```
+Nginx (小龙女) least_conn
+    ↙          ↘
+小龙女:3300   逍遥子:3300
+    ↖          ↗
+  MySQL 8.0 (Docker, 小龙女)
+```
 
 ---
 
 ## 🚀 快速开始
 
-### 方式一：直接运行（推荐）
+### 开发环境
 
 ```bash
-# 1. 下载二进制
-wget https://github.com/sunecom/atmApi/releases/latest/download/atmapi
-chmod +x atmapi
-
-# 2. 启动（默认端口 3000）
-PORT=3300 ./atmapi
-
-# 3. 访问
-open http://localhost:3300
-```
-
-### 方式二：Docker 部署
-
-```bash
-docker run -d --name atmapi -p 3300:3300 \
-  -v ./data:/app/data \
-  sunecom/atmapi:latest
-```
-
-### 方式三：从源码编译
-
-```bash
+# 克隆
 git clone https://github.com/sunecom/atmApi.git
 cd atmApi
+
+# 构建
 go build -o atmapi .
+
+# 运行（需要数据库和 channel 配置）
 ./atmapi
 ```
 
-### 默认账号
+### 测试
 
-```
-用户名：admin
-密码：admin123
+```bash
+# 对话测试
+curl -X POST http://localhost:3300/v1/chat/completions \
+  -H "Authorization: Bearer sk-xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek-a4","messages":[{"role":"user","content":"你好"}]}'
+
+# 图片测试
+curl -X POST http://localhost:3300/v1/chat/completions \
+  -H "Authorization: Bearer sk-xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek-a4","messages":[{"role":"user","content":[{"type":"text","text":"描述图片"},{"type":"image_url","image_url":{"url":"https://example.com/photo.jpg"}}]}]}'
+
+# 健康检查
+curl localhost:3300/health
 ```
 
 ---
 
-## 💡 核心功能
+## 📦 产品套餐
 
-### 1. 多渠道统一接入
+| 套餐 | 价格 | 限额 | 适用场景 |
+|------|------|------|---------|
+| 🥉 基础版 | ¥29.9/月 | 500次/5h, 6000次/月 | 轻度用户 |
+| 🥈 专业版 | ¥49.9/月 | 2000次/5h, 25000次/月 | 个人开发者 |
+| 🥇 旗舰版 | ¥89/月 | 5000次/5h, 60000次/月 | 重度用户 |
 
-将通义千问、DeepSeek、GoToken 等多个上游模型服务统一纳入同一个系统管理。
-
-```
-请求 → ATM API → [通义千问] ← 主渠道
-               → [DeepSeek]  ← 自动 Fallback
-```
-
-**好处**：一个入口管理所有模型，上游切换零成本。
-
-### 2. 自动 Fallback
-
-当主渠道不可用时（4xx/5xx/超时），自动切换到备用渠道。
-
-```
-主渠道通义千问挂了 → 自动切 DeepSeek → 还不行切 GoToken
-```
-
-**效果**：模型服务不稳定时，业务不停。
-
-### 3. 全中文管理后台
-
-- 渠道管理（增删改查 + 编辑 + 在线测试）
-- Token 管理（创建 + 配额控制 + 搜索）
-- 用户管理（角色权限）
-- 请求日志（查看 + 导出 CSV + 时间筛选）
-- 用量统计（含图表）
-- 模型测试（在线调试）
-- 一键启动，开箱即用
-
-### 4. Token 配额管理
-
-- 为每个调用方生成独立的 API Token
-- 支持无限配额 / 有限配额
-- 支持过期时间设置
-- 方便做用量统计和权限控制
+**路由成本**：flash 约 ¥0.55/M → pro 约 ¥3.13/M → 视觉约 ¥1/M
 
 ---
 
-## 🏗 技术架构
+## 📊 项目里程碑
 
-```
-┌──────────────────────┐
-│     HTTP 请求入口     │
-│  localhost:3300       │
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│    Gin 路由层         │
-│  Auth / Middleware    │
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│    业务逻辑层          │
-│  渠道管理 / Token管理  │
-│  模型路由 / Fallback   │
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│    GORM + SQLite     │
-│    (可切换 MySQL)     │
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│   上游模型服务          │
-│ 通义千问/DeepSeek/...  │
-└──────────────────────┘
-```
-
-### 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 后端框架 | Go + Gin |
-| 数据库 | GORM + SQLite（支持 MySQL） |
-| 认证 | JWT Token |
-| 前端 | 原生 HTML + JS |
-| 部署 | 二进制 / Docker |
-
----
-
-## ⚙️ 配置指南
-
-### 环境变量
-
-| 变量 | 默认值 | 说明 |
+| 时间 | 里程碑 | 说明 |
 |------|--------|------|
-| `PORT` | `3000` | 服务端口 |
-| `DB_TYPE` | `sqlite` | 数据库类型（sqlite / mysql） |
-| `DB_PATH` | `./data/atmapi.db` | 数据库路径 |
-| `JWT_SECRET` | `atmapi-jwt-secret-2026` | JWT 签名密钥 |
-| `LOG_LEVEL` | `info` | 日志级别 |
+| 2026-06 初 | v1.0 MVP | 基础路由 + 渠道管理 |
+| 2026-07-07 | deepseek-a4 路由 | 智能路由决策引擎 |
+| 2026-07-11 | MySQL 迁移 | SQLite → MySQL 双节点共享 |
+| 2026-07-12 | OpenRouter 引入 | 三条 OpenRouter 线路 + 2000 并发测试 |
+| 2026-07-14 | GLM-5.2 套餐 | 四渠道路由 + 成本追踪 |
+| 2026-07-18 | **V1.7 关单** ✅ | 7 轮柯大侠复核，38 测试全绿 |
+| 2026-07-19 | qwen3-vl-plus 视觉路由 | 百炼专业视觉模型接入 |
 
-### 添加上游渠道
+### V1.7 核心改进（上下文治理）
 
-1. 登录后台（admin/admin123）
-2. 进入「渠道管理」
-3. 填写：
-   - 渠道名称
-   - API Key
-   - Base URL
-   - 支持的模型列表
-   - 优先级和权重
+| 改进前 | 改进后 |
+|--------|--------|
+| "继续"→模型跳回 Flash 变笨 | 同一会话保持同一模型 |
+| 50% 就删历史→失忆 | shadow 模式不裁剪 |
+| 多群聊互相串线 | 会话级隔离 |
+| 工具调用中途换模型→格式乱 | 工具链全程不切换 |
+| 发图后卡在 Qwen | 图片只是临时路由 |
 
-### 模型映射
+---
 
-支持将请求模型名映射到实际渠道模型：
+## 🧪 测试
 
-```json
-{
-  "qwen3.5-plus": "deepseek-v4-flash",
-  "gpt-4": "qwen-turbo"
-}
+38 个测试全绿（含 race 检测）：
+
+```bash
+go test ./... -count=1 -timeout 120s
 ```
 
-映射在「新增渠道」的「模型映射 JSON」字段中设置。
+关键测试覆盖：
+- SmartRoute 决策（7 个用例）
+- SSE 终态分类（10+ 用例）
+- 会话偏好集成（偏好写入/复用/断流不写）
+- 图片路由（不写偏好）
 
 ---
 
-## 🔄 与 One API 对比
+## 🛠️ 技术栈
 
-| 特性 | One API | ATM API |
-|------|---------|---------|
-| 界面语言 | 英文为主 | 全中文 |
-| Fallback | 需手动配置 | 默认启用 |
-| 部署复杂度 | 中等 | 极简 |
-| 前端框架 | React | 原生 JS（轻量） |
-| 默认数据库 | MySQL | SQLite |
-| 团队品牌 | 无 | AiToMoney 出品 |
-| 渠道在线测试 | 无 | ✅ |
-| 模型映射可视化 | 无 | ✅ |
-
----
-
-## 📝 功能清单
-
-### ✅ 已实现
-- [x] 多渠道管理（CRUD + 测试 + 模型映射可视化）
-- [x] Token 管理（配额 + 过期时间 + 搜索）
-- [x] 用户管理（角色权限）
-- [x] 模型路由 + 自动 Fallback
-- [x] 请求日志（查看 + 导出 CSV + 时间筛选）
-- [x] 用量统计（含图表）
-- [x] 系统设置
-- [x] API 文档页
-- [x] 批量操作
-- [x] 快捷键支持（Ctrl+1-9）
-- [x] 页面加载动画
-
-### 🚧 计划中
-- [ ] 更多图表类型
-- [ ] 性能优化
-- [ ] 单元测试
-- [ ] 国际化支持
-
----
-
-## 🦐 关于 AiToMoney
-
-<p align="center">
-  <b>一个人可以走得很快，一群虾可以折腾得更远</b>
-</p>
-
-**AiToMoney 虾主联盟** — 由一群不满足于打工、用 AI 技术创造真实价值的实践者组成。
-
-| 平台 | 信息 |
+| 层 | 技术 |
 |------|------|
-| **QQ 群** | 242249487 |
-| **入群暗号** | "我是一只虾，正在水里瞎折腾" |
+| 语言 | Go 1.22 |
+| Web 框架 | Gin |
+| 数据库 | MySQL 8.0 (Docker) / GORM |
+| 前端 | 原生 HTML + JS |
+| 部署 | systemd + Nginx |
+| CI | GitHub Actions（计划中） |
 
 ---
 
-## 📄 许可证
+## 📁 相关文档
 
-[MIT License](LICENSE)
-
-<p align="center">
-  Made with 🦐 by <a href="https://www.aitomoney.online">AiToMoney 虾主联盟</a>
-</p>
-
----
-
-## 🚀 生产环境部署
-
-### 快速部署（推荐）
-
-```bash
-# 1. 克隆仓库
-git clone https://github.com/sunecom/atmApi.git
-cd atmApi
-
-# 2. 配置 systemd 服务
-sudo cp deploy/atmapi.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable atmapi
-sudo systemctl start atmapi
-
-# 3. 配置 Nginx 反向代理（HTTPS）
-sudo cp deploy/nginx.conf /etc/nginx/sites-available/atmapi
-sudo ln -s /etc/nginx/sites-available/atmapi /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl restart nginx
-
-# 4. 配置定时备份
-(crontab -l 2>/dev/null; echo "0 2 * * * /path/to/atmApi/deploy/backup.sh") | crontab -
-```
-
-### 性能指标
-
-| 接口 | 100 次请求耗时 | 平均响应时间 |
-|------|--------------|-------------|
-| /health | ~0.7s | ~7ms |
-| /api/v1/login | ~0.4s (50 次) | ~8ms |
-| /api/v1/channels | ~0.7s | ~7ms |
-
-### 监控与维护
-
-```bash
-# 查看服务状态
-sudo systemctl status atmapi
-
-# 查看日志
-tail -f data/atmapi.log
-
-# 手动备份
-./deploy/backup.sh
-
-# 性能压测
-./deploy/benchmark.sh
-```
-
-详细文档见 [deploy/README.md](deploy/README.md)
+| 文档 | 位置 |
+|------|------|
+| 完整架构文档 | `skills/atmapi/ARCHITECTURE.md` |
+| 部署 SOP | `skills/atmapi/DEPLOY-SOP.md` |
+| GLM-5.2 实现总结 | `skills/atmapi/GLM52-COMPLETION.md` |
+| 上下文治理 V1.7 | `skills/atmapi/GLM52-CONTEXT-V1.1.md` |
+| DeepSeek 并发测试 | `skills/atmapi/DEEPSEEK-TEST-REPORT.md` |
 
 ---
 
-## 🔒 高可用保障策略
+## 👥 团队
 
-### 三级保障体系
+- **建国** — 项目指导，决策支持
+- **柯大侠** — 核心代码开发（V1.7 + GLM-5.2）
+- **艾隆** — 独立复核，测试验证，部署维护
 
-| 级别 | 策略 | 效果 |
-|------|------|------|
-| **L1 进程级** | systemd + 守护脚本 | 崩溃 30 秒内自动恢复 |
-| **L2 监控级** | 外部监控 + 告警 | 异常时第一时间通知 |
-| **L3 数据级** | 定时备份 + 日志轮转 | 数据不丢失，磁盘不爆 |
+---
 
-### 已配置项
+## 📄 License
 
-- ✅ systemd 服务（开机自启 + 崩溃重启）
-- ✅ 端口监控（每 5 分钟检查）
-- ✅ 外部监控告警（每 2 分钟检查，连续失败 3 次告警）
-- ✅ 数据库备份（每天凌晨 2 点）
-- ✅ 日志轮转（每天轮转，保留 30 天）
-- ✅ 一键部署脚本
-
-### 可选配置
-
-- HAProxy 负载均衡（多实例部署）
-- Nginx 反向代理（HTTPS）
-- 告警通知（邮件/企微/飞书/短信）
-
-详细文档见 [deploy/README.md](deploy/README.md)
+[MIT](https://github.com/sunecom/atmApi/blob/main/LICENSE)

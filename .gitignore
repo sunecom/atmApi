@@ -48,3 +48,5 @@ main
 atmapi_test
 atmapi.db
 data/
+*.new
+atmapi-backup-*
