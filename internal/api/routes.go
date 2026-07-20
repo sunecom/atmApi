@@ -582,6 +582,23 @@ func chatCompletions(c *gin.Context) {
 			fmt.Sprintf("输入Token超过上限（估算=%d，上限=%d），请减少输入内容", actual, limit))
 		return
 	}
+
+	// ===== 1M 大输入次数检查 =====
+	// 加强版套餐：普通输入上限 32K，超过 32K 的请求消耗 1M 额度
+	if apiToken.RateLimitGroup != "" {
+		plan, planErr := service.GetPlan(apiToken.RateLimitGroup)
+		if planErr == nil && plan.Monthly1MMax > 0 {
+			// 超过 32K 视为大输入
+			if estimatedTokens > 32768 {
+				if apiToken.Used1M >= plan.Monthly1MMax {
+					respondError(c, http.StatusTooManyRequests, ErrRateLimitExceeded,
+						fmt.Sprintf("1M大输入次数已用完（%d/%d），本次请求约%d tokens，超过32K上限。请缩短输入或升级套餐。", apiToken.Used1M, plan.Monthly1MMax, estimatedTokens))
+					return
+				}
+				log.Printf("[1M限流] Token=%s 大输入请求（%d tokens），1M额度 %d/%d", apiToken.Name, estimatedTokens, apiToken.Used1M+1, plan.Monthly1MMax)
+			}
+		}
+	}
 	// ===== 图片分析缓存（deepseek-a4 专属）=====
 	// 逻辑：纯图 → 后台分析 + 返回“图片已收到”
 	//       有图+文字 → 正常路由
@@ -828,8 +845,9 @@ func chatCompletions(c *gin.Context) {
 	actualModel := service.SmartRoute(req.Model, req.Messages, tokenKey, apiToken.PlanName, sessCtx.SessionHash)
 
 	// ===== 任务模式路由（P0-3 V1.2 修复：已有会话偏好的不被覆盖）=====
+	// 任务模式只在 deepseek-a4 入口时生效，显式指定模型（如 kimi-k3）不覆盖
 	taskModeResult := service.ClassifyTaskMode(req.Messages)
-	if taskModeResult.Model != "" && taskModeResult.Mode != service.TaskModeUnknown {
+	if taskModeResult.Model != "" && taskModeResult.Mode != service.TaskModeUnknown && req.Model == "deepseek-a4" {
 		prefKey := service.PreferenceCacheKey(sessCtx.SessionHash)
 		toolActive := service.HasActiveToolTransaction(req.Messages)
 		hasPreferred := service.GlobalModelPref != nil && prefKey != "" && service.GlobalModelPref.GetPreferredModel(prefKey) != ""
@@ -1259,6 +1277,14 @@ processResult:
 	// 请求成功（或至少被上游处理），记录到限流表
 	if result.Response.StatusCode < 500 {
 		service.RecordRequest(apiToken.ID)
+		// 1M 大输入计数：如果估算超过 32K 且套餐有 1M 额度，递增 used_1m
+		if estimatedTokens > 32768 && apiToken.RateLimitGroup != "" {
+			if plan, planErr := service.GetPlan(apiToken.RateLimitGroup); planErr == nil && plan.Monthly1MMax > 0 {
+				apiToken.Used1M++
+				model.DB.Model(&model.Token{}).Where("id = ?", apiToken.ID).Update("used_1m", apiToken.Used1M)
+				log.Printf("[1M限流] Token=%s 大输入已记录 used_1m=%d/%d", apiToken.Name, apiToken.Used1M, plan.Monthly1MMax)
+			}
+		}
 	}
 	// 解析 usage 字段并记录用量日志
 	if result.Response.StatusCode == 200 {
@@ -1732,6 +1758,7 @@ func tokenInfo(c *gin.Context) {
 	// 套餐信息
 	var planDisplayName, planDesc string
 	var limit5h, dailyMax, weeklyMax, monthlyMax, maxQPS int64
+	var monthly1mMax int
 	var skipHourly bool
 	if token.RateLimitGroup != "" {
 		var plan model.Plan
@@ -1742,6 +1769,7 @@ func tokenInfo(c *gin.Context) {
 			monthlyMax = plan.MonthlyMax
 			maxQPS = plan.MaxQPS
 			skipHourly = plan.SkipHourly
+			monthly1mMax = plan.Monthly1MMax
 			planDisplayName = plan.DisplayName
 			planDesc = plan.Description
 		}
@@ -1797,7 +1825,7 @@ func tokenInfo(c *gin.Context) {
 		"skip_hourly":  skipHourly,
 		"limit_5h":     limit5h,
 		"used_5h":      count5h,
-		"remaining_5h": limit5h - count5h,
+		"remaining_5h": func() int64 { r := limit5h - count5h; if r < 0 { return 0 }; return r }(),
 		"limit_daily":  dailyMax,
 		"used_daily":   countDaily,
 		"weekly_max":   weeklyMax,
@@ -1805,6 +1833,8 @@ func tokenInfo(c *gin.Context) {
 		"monthly_max":  monthlyMax,
 		"monthly_used": count30d,
 		"max_qps":      maxQPS,
+		"monthly_1m_max": monthly1mMax,
+		"used_1m":      token.Used1M,
 		"total_calls":  total.Calls,
 		"total_tokens": total.Toks,
 		"week_calls":   week.Calls,
@@ -1907,14 +1937,15 @@ func batchCreateTokens(c *gin.Context) {
 		return
 	}
 
+	// 铁律：Token 创建时为未激活状态
+	// activatedAt = 0, expiredTime = 0
+	// 首次调用 API 时自动激活，expiredTime = 激活时间 + 1个月
 	expiredTime := int64(0)
-	if req.ExpireDays > 0 {
-		expiredTime = time.Now().AddDate(0, 0, req.ExpireDays).Unix()
-	}
-	activatedAt := time.Now().Unix()
+	createdTime := time.Now().Unix()
 
 	type Result struct {
 		Key         string `json:"key"`
+		PlanName    string `json:"plan_name"`
 		PlanDisplay string `json:"plan_display"`
 		ExpiredAt   string `json:"expired_at"`
 	}
@@ -1933,8 +1964,8 @@ func batchCreateTokens(c *gin.Context) {
 			InitQuota:      plan.MonthlyMax,
 			UnlimitedQuota: false,
 			ExpiredTime:    expiredTime,
-			ActivatedAt:    activatedAt,
-			CreatedTime:    activatedAt,
+			ActivatedAt:    0, // 未激活状态
+			CreatedTime:    createdTime,
 			RateLimitGroup: req.PlanName,
 			PlanGroup:      req.PlanGroup,
 			PlanName:       req.PlanName,
@@ -1951,6 +1982,7 @@ func batchCreateTokens(c *gin.Context) {
 
 		results = append(results, Result{
 			Key:         key,
+			PlanName:    req.PlanName,
 			PlanDisplay: plan.DisplayName,
 			ExpiredAt:   expiredStr,
 		})

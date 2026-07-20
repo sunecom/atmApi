@@ -17,6 +17,7 @@ type Plan struct {
 	MaxChannelRPM int64    `gorm:"default:0" json:"max_channel_rpm"`          // 单渠道每分钟请求数，0=不限
 	MaxOutputTokens int   `gorm:"default:0" json:"max_output_tokens"`         // 单次最大输出 token，0=不限
 	MaxInputTokens  int   `gorm:"default:0" json:"max_input_tokens"`          // 单次最大输入 token，0=不限
+	Monthly1MMax    int   `gorm:"column:monthly_1m_max;default:0" json:"monthly_1m_max"`   // 1M大输入次数上限，0=不限
 	DailyImageMax   int64 `gorm:"default:0" json:"daily_image_max"`           // 每日图片次数限制，0=不限
 	ImageEnabled    bool  `gorm:"default:false" json:"image_enabled"`         // 是否启用图片功能
 	AllowedModels   string `gorm:"type:text" json:"allowed_models"`           // 允许的模型列表，JSON数组

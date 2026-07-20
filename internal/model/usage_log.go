@@ -50,6 +50,9 @@ var ModelPricingMap = map[string]struct {
 	"glm-5.2-team":     {InputPrice: 0.008, OutputPrice: 0.028},
 	"glm-4":            {InputPrice: 0.005, OutputPrice: 0.02},
 
+	// ===== Kimi K3（Moonshot 直连）=====
+	"kimi-k3":          {InputPrice: 0.0216, OutputPrice: 0.108},  // $3/$15 per M tokens
+
 	// ===== 默认兜底 =====
 	"default":          {InputPrice: 0.01, OutputPrice: 0.03},
 }

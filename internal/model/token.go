@@ -20,6 +20,7 @@ type Token struct {
 	RateLimitGroup string         `gorm:"size:50;default:''" json:"rate_limit_group"` // 限流组
 	PlanGroup      string         `gorm:"size:50;default:''" json:"plan_group"`       // 套餐线：dp-a4/glm-5.2
 	PlanName       string         `gorm:"size:50;default:''" json:"plan_name"`        // 套餐名：basic/pro/openclaw-pro
+	Used1M         int            `gorm:"default:0" json:"used_1m"`                  // 已用1M大输入次数
 	ActivatedAt    int64          `gorm:"default:0" json:"activated_at"` // 激活时间
 	ExpiredTime    int64          `gorm:"default:0" json:"expired_time"` // 过期时间，-1=永不过期
 	CreatedTime    int64          `json:"created_time"`
@@ -41,7 +42,7 @@ func (t *Token) TableName() string {
 func FindByKey(key string) (*Token, error) {
 	var token Token
 	escaped := strings.ReplaceAll(key, "'", "''")
-	sql := "SELECT id,user_id,name,`key`,CAST(status AS SIGNED) as status,remain_quota,init_quota,unlimited_quota,rate_limit_group,plan_group,plan_name,activated_at,expired_time,created_time,accessed_time,created_at,updated_at,deleted_at FROM tokens WHERE `key` = '" + escaped + "' AND deleted_at IS NULL LIMIT 1"
+	sql := "SELECT id,user_id,name,`key`,CAST(status AS SIGNED) as status,remain_quota,init_quota,unlimited_quota,rate_limit_group,plan_group,plan_name,used_1m,activated_at,expired_time,created_time,accessed_time,created_at,updated_at,deleted_at FROM tokens WHERE `key` = '" + escaped + "' AND deleted_at IS NULL LIMIT 1"
 	log.Printf("[FindByKey] SQL: %s", sql)
 	err := DB.Raw(sql).Scan(&token).Error
 	if err != nil {

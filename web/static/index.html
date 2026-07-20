@@ -354,6 +354,8 @@
         <button onclick="showTab('tester', this)">模型测试</button>
         <button onclick="openExternalTab('monitor', this)">监控中心</button>
         <button onclick="openExternalTab('token-info', this)">Token 查询</button>
+        <button onclick="window.open('/static/cost-dashboard.html', '_blank')">💰 成本监控</button>
+        <button onclick="window.open('/static/cache-analytics.html', '_blank')">📊 缓存分析</button>
       </div>
       <div class="sidebar-footer">
         <div>🦐 <a href="https://www.aitomoney.online" target="_blank" style="color:var(--text-main);text-decoration:none;">AiToMoney</a> 出品</div>
@@ -487,7 +489,7 @@
         <div class="grid">
           <div class="card span-9">
             <div class="card-title">Token 列表</div>
-            <button class="btn btn-primary mb-4" onclick="loadTokens()">刷新列表</button> <input id="tokenSearch" placeholder="搜索 Token..." oninput="loadTokens()" style="width:200px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;" /> <select id="planGroupFilter" onchange="planGroupChanged()" style="width:180px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;margin-left:8px;"><option value="">全部套餐线</option><option value="dp-a4">DP-A4(BASIC)</option><option value="openclaw">DP-A4(Openclaw)</option><option value="hermes">DP-A4(Hermes)</option></select> <select id="planNameFilter" onchange="loadTokens()" style="width:320px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;margin-left:4px;"><option value="">全部套餐</option></select>
+            <button class="btn btn-primary mb-4" onclick="loadTokens()">刷新列表</button> <input id="tokenSearch" placeholder="搜索 Token..." oninput="loadTokens()" style="width:200px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;" /> <select id="planGroupFilter" onchange="planGroupChanged()" style="width:180px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;margin-left:8px;"><option value="">全部套餐线</option><option value="dp-a4">DP-A4(BASIC)</option><option value="openclaw">DP-A4(Openclaw)</option><option value="hermes">DP-A4(Hermes)</option><option value="glm-5.2">GLM-5.2</option><option value="kimi-k3">Kimi K3</option></select> <select id="planNameFilter" onchange="loadTokens()" style="width:320px;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);display:inline-block;margin-bottom:0;margin-left:4px;"><option value="">全部套餐</option></select>
             <div id="tokensTableWrap" class="muted">等待加载…</div>
           </div>
           <div class="card span-3">
@@ -498,6 +500,8 @@
               <option value="dp-a4">DP-A4(BASIC)</option>
               <option value="openclaw">DP-A4(Openclaw)</option>
               <option value="hermes">DP-A4(Hermes)</option>
+              <option value="glm-5.2">GLM-5.2</option>
+              <option value="kimi-k3">Kimi K3</option>
             </select>
             <select id="bp_planName" style="width:100%;padding:8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);margin-bottom:6px;">
               <option value="">选择套餐</option>
@@ -1158,7 +1162,9 @@
       const plans = {
         'dp-a4': ['basic|基础版 ¥29.9|8,000次|100','pro|专业版 ¥69|24,000次|300','starter|创业版 ¥99|30,000次|400','flagship|旗舰版 ¥129|50,000次|600','advanced|高级版 ¥299|100,000次|1,200','enterprise|企业版 ¥599|300,000次|3,000'],
         'openclaw': ['openclaw-basic|OpenClaw基础 ¥99|30,000次|500','openclaw-pro|OpenClaw进阶 ¥299|100,000次|2,000'],
-        'hermes': ['hermes-basic|Hermes基础 ¥149|50,000次|800','hermes-pro|Hermes进阶 ¥399|150,000次|3,000']
+        'hermes': ['hermes-basic|Hermes基础 ¥149|50,000次|800','hermes-pro|Hermes进阶 ¥399|150,000次|3,000'],
+        'glm-5.2': ['glm52-basic|GLM-5.2体验版 ¥49|500次|50','glm52-standard|GLM-5.2标准版 ¥99|1,200次|100','glm52-pro|GLM-5.2专业版 ¥299|4,000次|300'],
+        'kimi-k3': ['kimi-basic|Kimi K3体验版 ¥99|66次|30','kimi-standard|Kimi K3加强版 ¥199|100次|50']
       };
       const list = plans[pg] || [];
       pn.innerHTML = '<option value="">选择套餐</option>' + list.map(v => {
@@ -1219,7 +1225,7 @@
       // 千牛自动发货格式：密钥,,说明
       // 说明格式：套餐 | 到期 | 月配额
       const quota = window._lastBatchQuota || '';
-      const lines = data.map(t => t.key + ',,' + t.plan_display + ' | ' + t.expired_at + ' | 月' + quota);
+      const lines = data.map(t => t.key + ',,' + t.plan_name + ' | ' + t.expired_at + ' | 月' + quota);
       const text = lines.join('\n');
 
       // 复制到剪贴板（兼容 HTTP）
